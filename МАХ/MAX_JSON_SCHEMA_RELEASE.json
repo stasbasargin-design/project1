@@ -1,0 +1,73 @@
+{
+  "publicFrontendConfig": {
+    "MAX_SERVICE_BOT_ID": "public bot id only",
+    "MAX_CLIENT_BOT_ID": "public bot id only",
+    "MAX_MINI_APP_ID": "public mini app id"
+  },
+  "storedIn1COnly": {
+    "MAX_SERVICE_BOT_TOKEN": "secret",
+    "MAX_CLIENT_BOT_TOKEN": "secret",
+    "MAX_WEBHOOK_SECRET": "secret"
+  },
+  "frontendRequestMaxBlock": {
+    "webAppData": "window.WebApp.initData",
+    "platform": "window.WebApp.platform",
+    "serviceBotId": "MAX_SERVICE_BOT_ID",
+    "clientBotId": "MAX_CLIENT_BOT_ID",
+    "miniAppId": "MAX_MINI_APP_ID",
+    "userId": "ID пользователя MAX, равен ID авторизации в MAX",
+    "maxUserId": "Дублирует userId",
+    "authMode": "max | manual | qr"
+  },
+  "maxWebhookTo1C": {
+    "url": "https://<1c-host>/<publication>/hs/max-service/max/webhook",
+    "method": "POST",
+    "headers": {
+      "X-Max-Bot-Api-Secret": "MAX_WEBHOOK_SECRET"
+    },
+    "processingIn1C": [
+      "verify secret",
+      "normalize event",
+      "write to topic/register",
+      "send notification if needed"
+    ]
+  },
+  "frontendAuth": {
+    "loginMethods": [
+      "MAX WebApp initDataUnsafe.user.id",
+      "manual user ID input",
+      "QR code with userId/maxUserId/id"
+    ],
+    "outgoing1CFields": [
+      "userId",
+      "maxUserId",
+      "authId",
+      "authMode",
+      "max.userId",
+      "max.maxUserId"
+    ]
+  },
+  "notificationsFrom1C": {
+    "pollMethod": "/notifications/poll",
+    "eventTypes": [
+      "executor_assigned",
+      "quality_control_requested"
+    ],
+    "requiredFields": [
+      "eventId",
+      "type",
+      "title",
+      "message",
+      "orderRef",
+      "createdAt",
+      "payload"
+    ]
+  },
+  "messageRouting": {
+    "clientText": "/clients/messages/send",
+    "clientFile": "/clients/files/send",
+    "departmentText": "/internal-chat/messages/send",
+    "departmentFile": "/internal-chat/files/send",
+    "rule": "Приложение не обращается к токенам MAX напрямую; 1С хранит токены, отправляет и принимает сообщения, сохраняет историю и возвращает её приложению."
+  }
+}
