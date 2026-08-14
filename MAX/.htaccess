@@ -1,0 +1,11 @@
+Options -Indexes
+RewriteEngine On
+RewriteRule ^api/1c/(.*)$ api/1c/index.php [L,QSA]
+<IfModule mod_headers.c>
+  <Files "index.html">
+    Header set Cache-Control "no-cache"
+  </Files>
+  <Files "itus.config.js">
+    Header set Cache-Control "no-cache"
+  </Files>
+</IfModule>

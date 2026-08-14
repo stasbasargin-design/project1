@@ -1,0 +1,18 @@
+{
+  "name": "itus-service-release-1c-max",
+  "version": "2.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "start": "node server.mjs",
+    "build": "vite build",
+    "preview": "node server.mjs",
+    "test": "node tests/api-normalizers.test.mjs",
+    "check:api": "node scripts/check-api.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.4.11"
+  }
+}

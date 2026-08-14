@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c4f96">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ИТУС">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>ИТУС — управление сервисом</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/evroazia_emblem.svg">
+  <link rel="stylesheet" href="./assets/app.css">
+  <script>window.WebApp = window.WebApp || {ready(){},expand(){},close(){},platform:"web"};</script>
+  <script src="./config/itus.config.js"></script>
+  <script src="./assets/api-normalizers.js"></script>
+</head>
+<body>
+  <div class="brand-rail" aria-hidden="true"></div>
+  <main class="phone">
+    <header class="top">
+      <div class="logo"><img src="./assets/evroazia_emblem.svg" alt="Логотип ИТУС"></div>
+      <div class="product"><h1>ИТУС</h1><p>информационные технологии управления сервисом</p></div>
+      <button class="user-panel" id="userPanel" type="button" aria-label="Профиль и подключение к 1С"></button>
+    </header>
+    <nav class="tabs" id="tabs" aria-label="Разделы"></nav>
+    <section id="notifications"></section>
+    <section id="app"></section>
+    <footer>ИТУС · данные, анкеты, документы и сообщения синхронизируются с 1С Альфа-Авто 6.1.</footer>
+  </main>
+  <div class="overlay hidden" id="overlay">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="row"><h2 id="sheetTitle"></h2><button class="icon-button" id="closeSheetButton" aria-label="Закрыть">×</button></div>
+        <p id="sheetHint"></p>
+      </div>
+      <div class="sheet-body" id="sheetBody"></div>
+    </div>
+  </div>
+  <div class="toast hidden" id="toast" role="status"></div>
+  <input type="file" id="filePicker" class="hidden" accept="*/*">
+  <script src="./assets/app.js"></script>
+</body>
+</html>
