@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+await import('../assets/api-normalizers.js');
+const api=globalThis.ITUS_API;
+const contract=JSON.parse(readFileSync(new URL('../1C_HTTP_METHODS_RELEASE.json',import.meta.url),'utf8'));
+const process=api.normalizeProcess({success:true,data:{acceptance:{documentRef:'act',...contract.dynamicFormSchema}}},'acceptance');
+assert.equal(process.documentRef,'act');
+for(const id of ['engineHours','reason'])assert.equal(process.form.fields.find(f=>f.id===id).required,false);
+assert.equal(process.form.fields.find(f=>f.id==='mileage').required,true);
+assert.equal(contract.basePath,'/aa6_ea_test9/ru/hs/max-service');
+assert.ok(contract.methods['/defects/entries/add'].request.documentRef);
+console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');

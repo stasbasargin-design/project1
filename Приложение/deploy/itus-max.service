@@ -1,0 +1,21 @@
+[Unit]
+Description=ITUS MAX Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=itus
+Group=itus
+WorkingDirectory=/opt/itus-max
+EnvironmentFile=/etc/itus-max.env
+ExecStart=/usr/bin/node /opt/itus-max/server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
