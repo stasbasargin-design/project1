@@ -8,7 +8,21 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
 const staticRoot = existsSync(join(distRoot, 'config', 'itus.config.js')) ? distRoot : root;
 const port = Number(process.env.PORT || 8080);
-const basePath = '/' + String(process.env.APP_BASE_PATH || '/p/max-service').replace(/^\/+|\/+$/g, '');
+const configuredBasePath = process.env.APP_BASE_PATH && String(process.env.APP_BASE_PATH).trim();
+const normalizedConfiguredBasePath = configuredBasePath ? '/' + configuredBasePath.replace(/^\/+|\/+$/g, '') : null;
+
+function detectBasePath(host = '') {
+  if (normalizedConfiguredBasePath) return normalizedConfiguredBasePath;
+  const hostHeader = String(host || '').toLowerCase();
+  const previewHost = hostHeader.includes('app.github.dev')
+    || hostHeader.includes('github.dev')
+    || hostHeader.includes('githubpreview.dev')
+    || hostHeader.includes('localhost')
+    || hostHeader.includes('127.0.0.1')
+    || hostHeader.includes('0.0.0.0');
+  return previewHost ? '/' : '/p/max-service';
+}
+
 const oneCTarget = String(
   process.env.ONE_C_TARGET || 'https://1c.eazia.ru/aa6_ea_test9/ru/hs/max-service'
 ).replace(/\/+$/, '');
@@ -123,6 +137,7 @@ function serveStatic(req, res, pathname) {
 }
 
 const server = http.createServer(async (req, res) => {
+  const basePath = detectBasePath(req.headers.host);
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   if (basePath !== '/' && url.pathname === basePath) {
     res.writeHead(308, { Location: basePath + '/' + url.search });
