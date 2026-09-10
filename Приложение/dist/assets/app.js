@@ -255,7 +255,9 @@
   }
 
   function acceptanceHasPhoto(order = currentOrder()) {
-    return [...(order?._defectSheet?.entries || []), ...(order?.defects || [])]
+    const acceptanceEntries = order?._acceptance?.entries || [];
+    const defectEntries = [...(order?._defectSheet?.entries || []), ...(order?.defects || [])];
+    return [...acceptanceEntries, ...defectEntries]
       .some(entry => entry.type === 'photo' && entry.file);
   }
 
@@ -332,7 +334,7 @@
   function renderAcceptancePhoto(process) {
     const done = acceptanceHasPhoto();
     const required = process.photo?.required !== false;
-    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Отправьте фотографию через окно «Приём».'}</p><button data-action="open-defect-chat">Приём</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
+    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Отправьте фотографию через окно «Приём».'}</p><button data-action="open-acceptance-photo">Приём</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
   }
 
   function updateProcessProgress(processKey) {
@@ -352,7 +354,7 @@
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-defect-chat">Приём</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Приём</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
   }
 
   function renderExecutorView() {
@@ -596,6 +598,39 @@
     catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
+  async function openAcceptancePhotoSheet() {
+    const order = currentOrder();
+    const process = order?._acceptance;
+    if (!process?.documentRef) {
+      toast('Сначала создайте акт приёма', true);
+      return;
+    }
+    showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, `<div class="empty">Используйте фото/видео из секции акта приёма. Файлы в этом окне отправляются в документ приёма.</div><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" style="margin-top:8px" data-action="close-sheet">Закрыть</button>`);
+  }
+
+  async function uploadAcceptanceFile(file, kind) {
+    const order = currentOrder();
+    const process = order?._acceptance;
+    if (!process?.documentRef) throw new Error('Сначала создайте акт приёма');
+    toast('Подготавливаем файл для акта приёма…');
+    const payload = await fileToPayload(file, kind);
+    const clientEntryId = requestId();
+    const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
+
+    let response;
+    try {
+      response = await call1C('/acceptance/entries/add', requestBody);
+    } catch (error) {
+      if (error.status !== 404 && !/404|not found/i.test(error.message || '')) throw error;
+      response = await call1C('/defects/entries/add', requestBody);
+    }
+
+    const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
+    process.entries = Array.isArray(process.entries) ? process.entries : [];
+    process.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
+    render(); toast('Файл добавлен в акт приёма');
+  }
+
   async function sendDefectText() {
     const text = String($('defectText')?.value || '').trim();
     if (!text) return toast('Введите описание дефекта', true);
@@ -829,6 +864,7 @@
     const file = event.target.files?.[0], target = state.fileTarget; state.fileTarget = null;
     if (!file || !target) return;
     try {
+      if (target.type === 'acceptance') await uploadAcceptanceFile(file, target.kind);
       if (target.type === 'defect') await uploadDefectFile(file, target.kind);
       if (target.type === 'client') await sendClientFile(file, target.kind);
       if (target.type === 'chat') await sendChatFile(file, target.kind);
@@ -921,6 +957,8 @@
       if (action === 'service-history') return downloadServiceHistory();
       if (action === 'download-history') return downloadFile(state.historyFile);
       if (action === 'open-defect-chat') return openDefectSheet();
+      if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
+      if (action === 'acceptance-photo') return configureFilePicker({ type:'acceptance',kind:'photo' }, 'image/*', 'environment');
       if (action === 'defect-photo') return configureFilePicker({ type:'defect',kind:'photo' }, 'image/*', 'environment');
       if (action === 'defect-video') return configureFilePicker({ type:'defect',kind:'video' }, 'video/*', 'environment');
       if (action === 'send-defect-text') return sendDefectText();
