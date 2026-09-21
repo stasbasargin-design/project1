@@ -21,6 +21,7 @@ try{
   r=await fetch(root+base+'api/1c/orders/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:'123'})});const data=await r.json();assert.equal(data.path,'/mock-service/orders/list');assert.equal(data.body.userId,'123');assert.equal(data.token,'test-only-token');
   const scope={window:{},document:{baseURI:root+base},URL};vm.runInNewContext(readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8'),scope);assert.equal(scope.window.ITUS_CONFIG.ONE_C_API_BASE_URL,base+'api/1c');
  }
+ const legacyScope={window:{},document:{baseURI:root+'/p/max-service'},URL};vm.runInNewContext(readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8'),legacyScope);assert.equal(legacyScope.window.ITUS_CONFIG.ONE_C_API_BASE_URL,'/p/max-service/api/1c');
  r=await fetch(root+'/p/max-service/assets/missing.js');assert.equal(r.status,404);
  r=await fetch(root+'/p/max-service/health');assert.equal((await r.json()).success,true);
  r=await fetch(previewRoot+'/health');assert.equal((await r.json()).success,true);

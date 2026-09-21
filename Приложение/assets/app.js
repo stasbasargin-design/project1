@@ -52,6 +52,10 @@
   const requestId = () => crypto.randomUUID ? crypto.randomUUID() : `itus-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const currentOrder = () => state.orders.find(o => o.id === state.selectedOrderId) || state.orders[0] || null;
   const statusClass = value => /разреш|готов|заверш|закрыт|выполн/i.test(value) ? 'ok' : (/отклон|ошиб|нельзя/i.test(value) ? 'bad' : (/контрол|ожид|прием|приём|перерыв/i.test(value) ? 'warn' : ''));
+  const hasSpeechRecognition = () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  function speechButtonHtml(targetSelector, label = '🎤 Голос в текст') {
+    return hasSpeechRecognition() ? `<button type="button" class="secondary" data-action="speech-input" data-target="${escAttr(targetSelector)}">${esc(label)}</button>` : '';
+  }
 
   function toast(message, error = false) {
     const element = $('toast');
@@ -256,9 +260,7 @@
 
   function acceptanceHasPhoto(order = currentOrder()) {
     const acceptanceEntries = order?._acceptance?.entries || [];
-    const defectEntries = [...(order?._defectSheet?.entries || []), ...(order?.defects || [])];
-    return [...acceptanceEntries, ...defectEntries]
-      .some(entry => entry.type === 'photo' && entry.file);
+    return acceptanceEntries.some(entry => entry.type === 'photo' && entry.file);
   }
 
   function processProgress(process, processKey) {
@@ -305,8 +307,12 @@
 
         const tag = field.type === 'textarea' ? 'textarea' : 'input';
         const type = field.type === 'textarea' ? '' : ` type="${field.type}"`;
+        const inputId = `field-${processKey}-${field.id}`;
+        const textControl = tag === 'textarea'
+            ? `<textarea id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}">${esc(String(value ?? ''))}</textarea>${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`
+            : `<input id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}" value="${escAttr(String(value ?? ''))}">${tag === 'input' && hasSpeechRecognition() ? speechButtonHtml(`#${inputId}`, '🎤 Голос в текст') : ''}`;
 
-        return `<label>${label}</label><${tag}${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}" value="${tag === 'input' ? escAttr(String(value ?? '')) : ''}">${tag === 'textarea' ? esc(String(value ?? '')) : ''}</${tag}>${error ? '<div class="error-text">Поле обязательно</div>' : ''}`;
+        return `<label>${label}</label>${textControl}${error ? '<div class="error-text">Поле обязательно</div>' : ''}`;
     }
 
   function renderQuestion(processKey, question, process) {
@@ -317,7 +323,11 @@
     if (['text','textarea','number'].includes(question.type)) {
       const tag = question.type === 'textarea' ? 'textarea' : 'input';
       const type = question.type === 'textarea' ? '' : ` type="${question.type}"`;
-      return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<${tag}${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}" value="${tag === 'input' ? escAttr(value || '') : ''}">${tag === 'textarea' ? esc(value || '') : ''}</${tag}>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
+      const inputId = `question-${processKey}-${question.id}`;
+      const textControl = tag === 'textarea'
+        ? `<textarea id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}">${esc(value || '')}</textarea>${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`
+        : `<input id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}" value="${escAttr(value || '')}">${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`;
+      return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}${textControl}${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
     }
     const options = question.type === 'boolean' && !question.options.length ? [{value:'true',label:'Да'},{value:'false',label:'Нет'}] : question.options;
     if (question.type === 'select') return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<select data-process-answer="${processKey}" data-question="${escAttr(question.id)}"><option value="">Выберите ответ</option>${options.map(option => `<option value="${escAttr(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
@@ -374,21 +384,36 @@
     return `<button class="topic ${selected === topic.ref ? 'active' : ''}" data-action="select-${type}-topic" data-ref="${escAttr(topic.ref)}"><div class="topic-title"><span>${esc(topic.title)}</span>${topic.unread ? `<span class="badge bad">${topic.unread}</span>` : ''}</div><div class="topic-preview">${esc(topic.subtitle || topic.lastMessage || 'Нет сообщений')}</div>${topic.orderNumber || topic.vehiclePlate ? `<div class="topic-preview">ЗН ${esc(topic.orderNumber)} · ${esc(topic.vehiclePlate)}</div>` : ''}</button>`;
   }
 
+  function attachmentImageSource(file) {
+    if (!file || !/^image\//i.test(file.mimeType || '')) return '';
+    if (file.previewUrl || file.downloadUrl) return file.previewUrl || file.downloadUrl;
+    if (!file.contentBase64) return '';
+    return String(file.contentBase64).startsWith('data:')
+      ? file.contentBase64
+      : `data:${file.mimeType};base64,${file.contentBase64}`;
+  }
+
+  function renderAttachment(file) {
+    const source = attachmentImageSource(file);
+    const preview = source ? `<img class="attachment-preview" src="${escAttr(source)}" alt="${escAttr(file.fileName)}" loading="lazy">` : '';
+    return `<div class="attachment">${preview}<span>📎 ${esc(file.fileName)}</span></div>`;
+  }
+
   function renderMessages(messages) {
     if (!messages?.length) return '<div class="empty">Сообщений пока нет.</div>';
-    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.author)} · ${esc(message.createdAt)}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(file => `<span class="attachment">📎 ${esc(file.fileName)}</span>`).join('')}</div>` : ''}</div>`).join('')}</div>`;
+    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.author)} · ${esc(message.createdAt)}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(renderAttachment).join('')}</div>` : ''}</div>`).join('')}</div>`;
   }
 
   function renderClientsView() {
     const topic = state.clientTopics.find(item => item.ref === state.selectedClientTopic);
     const messages = topic ? (state.clientMessages[topic.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="client-photo">Фото</button><button data-action="client-video">Видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea>${speechButtonHtml('#clientMessage', '🎤 Голос в текст')}<button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="client-photo">Фото</button><button data-action="client-video">Видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
   }
 
   function renderChatView() {
     const group = state.chatGroups.find(item => item.ref === state.selectedChatGroup);
     const messages = group ? (state.chatMessages[group.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="chat-photo">Фото</button><button data-action="chat-video">Видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea>${speechButtonHtml('#chatMessage', '🎤 Голос в текст')}<button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="chat-photo">Фото</button><button data-action="chat-video">Видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
   }
 
   function validateProcess(process, allRequired = true) {
@@ -589,7 +614,7 @@
     if (!sheet) return;
     const entries = sheet.entries || [];
     const entryHtml = entries.length ? entries.map((entry, index) => `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(entry.createdAt || '')}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${entry.file ? `<div class="entry-file"><span class="file-icon">${entry.type === 'video' ? '🎥' : entry.type === 'voice' ? '🎤' : '📷'}</span><div><b>${esc(entry.file.fileName)}</b>${entry.transcript ? `<br><span class="tiny">Текст: ${esc(entry.transcript)}</span>` : ''}</div></div>` : ''}${entry.type === 'voice' && !entry.transcript ? `<button class="button" style="margin-top:7px" data-action="transcribe-voice" data-index="${index}">Преобразовать голос в текст</button>` : ''}</div>`).join('') : '<div class="empty">В дефектовке пока нет записей.</div>';
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Документ 1С: ${sheet.documentRef || 'не указан'}`, `${entryHtml}<label for="defectText">Информация о дефекте</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><button class="primary" data-action="send-defect-text">Добавить в дефектовку</button><div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="start-voice">Голос</button></div>${state.recording ? '<p class="recording">● Идёт запись голосового сообщения</p><button class="danger" data-action="stop-voice">Остановить и отправить</button>' : ''}<button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Документ 1С: ${sheet.documentRef || 'не указан'}`, `${entryHtml}<label for="defectText">Информация о дефекте</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea>${speechButtonHtml('#defectText', '🎤 Голос в текст')}<div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="start-voice">Голос</button></div>${state.recording ? '<p class="recording">● Идёт запись голосового сообщения</p><button class="danger" data-action="stop-voice">Остановить и отправить</button>' : ''}<button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
   }
 
   async function openDefectSheet() {
@@ -605,7 +630,7 @@
       toast('Сначала создайте акт приёма', true);
       return;
     }
-    showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, `<div class="empty">Используйте фото/видео из секции акта приёма. Файлы в этом окне отправляются в документ приёма.</div><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" style="margin-top:8px" data-action="close-sheet">Закрыть</button>`);
+    showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, `<div class="empty">Используйте фото/видео из секции акта приёма. Файлы в этом окне отправляются только в документ приёма.</div><div class="grid two" style="margin-top:8px"><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" data-action="acceptance-video">Видео</button></div><button class="secondary" style="margin-top:8px" data-action="close-sheet">Закрыть</button>`);
   }
 
   async function uploadAcceptanceFile(file, kind) {
@@ -616,14 +641,7 @@
     const payload = await fileToPayload(file, kind);
     const clientEntryId = requestId();
     const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
-
-    let response;
-    try {
-      response = await call1C('/acceptance/entries/add', requestBody);
-    } catch (error) {
-      if (error.status !== 404 && !/404|not found/i.test(error.message || '')) throw error;
-      response = await call1C('/defects/entries/add', requestBody);
-    }
+    const response = await call1C('/acceptance/entries/add', requestBody);
 
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     process.entries = Array.isArray(process.entries) ? process.entries : [];
@@ -654,7 +672,13 @@
     if (kind === 'photo' && /^image\//.test(file.type)) blob = await compressImage(file);
     if (blob.size > CONFIG.maxUploadBytes) throw new Error(`Файл превышает лимит ${Math.round(CONFIG.maxUploadBytes / 1024 / 1024)} МБ`);
     const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
-    return { fileName: file.name || `${kind}-${Date.now()}`, mimeType: blob.type || file.type || 'application/octet-stream', sizeBytes: blob.size, contentBase64: String(dataUrl).split(',')[1], clientFileId: requestId() };
+    const mimeType = blob.type || file.type || 'application/octet-stream';
+    const originalName = file.name || `${kind}-${Date.now()}`;
+    const imageExtension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[mimeType];
+    const fileName = kind === 'photo' && imageExtension
+      ? `${originalName.replace(/\.[^.]*$/, '') || `photo-${Date.now()}`}.${imageExtension}`
+      : originalName;
+    return { fileName, mimeType, sizeBytes: blob.size, contentBase64: String(dataUrl).split(',')[1], clientFileId: requestId() };
   }
 
   async function compressImage(file) {
@@ -736,6 +760,27 @@
     const ref = state.selectedClientTopic;
     await call1C('/clients/messages/send', { topicRef: ref, topicId: ref, clientMessageId: requestId(), text });
     await loadClientMessages(ref); render(); toast('Сообщение отправлено клиенту через 1С');
+  }
+
+  function startSpeechToText(targetSelector) {
+    const target = document.querySelector(targetSelector); if (!target) return toast('Поля ввода не найдено', true);
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return toast('Распознавание речи недоступно в этом браузере', true);
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ru-RU';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = event => {
+      const transcript = Array.from(event.results).map(result => result[0]?.transcript || '').join(' ').trim();
+      if (!transcript) return;
+      const prev = target.value ? `${target.value.trim()} ` : '';
+      target.value = `${prev}${transcript}`;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    recognition.onerror = event => toast(`Распознавание речи: ${event.error || 'не удалось начать'}`, true);
+    recognition.onend = () => toast('Голосовой ввод завершён');
+    recognition.start();
+    toast('Говорите…');
   }
 
   async function sendClientFile(file, kind) {
@@ -865,9 +910,9 @@
     if (!file || !target) return;
     try {
       if (target.type === 'acceptance') await uploadAcceptanceFile(file, target.kind);
-      if (target.type === 'defect') await uploadDefectFile(file, target.kind);
-      if (target.type === 'client') await sendClientFile(file, target.kind);
-      if (target.type === 'chat') await sendChatFile(file, target.kind);
+      else if (target.type === 'defect') await uploadDefectFile(file, target.kind);
+      else if (target.type === 'client') await sendClientFile(file, target.kind);
+      else if (target.type === 'chat') await sendChatFile(file, target.kind);
     } catch (error) { toast(error.message, true); }
   }
 
@@ -959,6 +1004,7 @@
       if (action === 'open-defect-chat') return openDefectSheet();
       if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
       if (action === 'acceptance-photo') return configureFilePicker({ type:'acceptance',kind:'photo' }, 'image/*', 'environment');
+      if (action === 'acceptance-video') return configureFilePicker({ type:'acceptance',kind:'video' }, 'video/*', 'environment');
       if (action === 'defect-photo') return configureFilePicker({ type:'defect',kind:'photo' }, 'image/*', 'environment');
       if (action === 'defect-video') return configureFilePicker({ type:'defect',kind:'video' }, 'video/*', 'environment');
       if (action === 'send-defect-text') return sendDefectText();
@@ -980,6 +1026,7 @@
       if (action === 'chat-photo') return configureFilePicker({type:'chat',kind:'photo'}, 'image/*', 'environment');
       if (action === 'chat-video') return configureFilePicker({type:'chat',kind:'video'}, 'video/*', 'environment');
       if (action === 'chat-file') return configureFilePicker({type:'chat',kind:'file'}, '*/*');
+      if (action === 'speech-input') return startSpeechToText(button.dataset.target);
       if (action === 'open-notification') return openNotification(button.dataset.event);
       if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return renderNotifications(); }
     } catch (error) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); }

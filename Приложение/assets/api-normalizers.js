@@ -59,7 +59,8 @@
       mimeType: text(value.mimeType || value.contentType),
       sizeBytes: Number(value.sizeBytes || value.size || 0),
       contentBase64: text(value.contentBase64 || value.base64),
-      downloadUrl: text(value.downloadUrl || value.url)
+      downloadUrl: text(value.downloadUrl || value.url),
+      previewUrl: text(value.previewUrl || value.thumbnailUrl)
     };
   }
 

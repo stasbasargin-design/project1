@@ -27,8 +27,11 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
   const body=JSON.parse(options.body); calls.push({url,body});let data={};let ok=true;
   if(url.endsWith('/acceptance/start')) data={acceptance:{documentRef:'act-1',photo:{required:photoRequired},form:{fields},survey:{surveyRef:'survey-1',questions:[{id:'required',text:'Кузов',required:true,options:['ok']},{id:'optional',text:'Комментарий',required:false}]}}};
   if(url.endsWith('/acceptance/entries/add')){
-    if (acceptanceUpload404) { ok=false; status=404; data={success:false,error:{message:'Not found'}}; }
-    else { ok=!(body.entry.type==='photo'&&failPhoto); data={entry:{...body.entry,entryRef:'entry-1'}}; }
+    if (acceptanceUpload404) {
+      ok=false; data={success:false,error:{message:'Acceptance endpoint not found'}};
+      return {ok,status:404,async text(){return JSON.stringify(data);}};
+    }
+    ok=!(body.entry.type==='photo'&&failPhoto); data={entry:{...body.entry,entryRef:'entry-1'}};
   }
   if(url.endsWith('/orders/get'))data={order};
   if(url.endsWith('/defects/start'))data={documentRef:'def-1',entries:[]};
@@ -38,10 +41,14 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
 context.window=context;
 vm.runInContext(fs.readFileSync(new URL('../assets/api-normalizers.js',import.meta.url),'utf8'),context);
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet, fileToPayload, renderMessages};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
+const photoPayload=await app.fileToPayload({name:'camera.heic',type:'image/jpeg',size:10},'photo');
+assert.equal(photoPayload.fileName,'camera.jpg');assert.equal(photoPayload.mimeType,'image/jpeg');
+assert.match(app.renderMessages([{side:'mine',author:'Я',createdAt:'сейчас',text:'',attachments:[{fileName:'camera.jpg',mimeType:'image/jpeg',contentBase64:'AA=='}]}]),/<img class="attachment-preview"/);
 assert.ok(!app.renderSelectedCard().includes('quick-actions'));
 assert.match(app.renderMpView(),/data-action="open-acceptance-photo">Приём</);
 assert.match(app.renderTechView(),/data-action="open-defect-chat">Приём</);
@@ -56,18 +63,25 @@ assert.ok(process.errors.has('question:required'));assert.ok(process.errors.has(
 assert.ok(!process.errors.has('field:engineHours'));assert.ok(!process.errors.has('field:reason'));
 process.answers.required='ok';
 assert.equal(app.processProgress(process,'_acceptance').done,2);
-await app.openDefectSheet();element('defectText').value='Test defect';await app.sendDefectText();
-assert.equal(app.acceptanceHasPhoto(),false);
+await app.openDefectSheet();
+assert.doesNotMatch(element('sheetBody').innerHTML,/Добавить в дефектовку/);
 const file={name:'test.png',type:'image/png',size:10};
 await assert.rejects(app.uploadDefectFile(file,'photo'),/Photo rejected/);
 assert.equal(app.acceptanceHasPhoto(),false);
 assert.equal(app.processProgress(process,'_acceptance').done,2);
 failPhoto=false;await app.uploadDefectFile(file,'photo');
+assert.equal(app.acceptanceHasPhoto(),false);
+assert.equal(app.processProgress(process,'_acceptance').done,2);
+assert.ok(app.renderAcceptancePhoto(process).includes('Отправьте хотя бы одну фотографию'));
+await app.uploadAcceptanceFile(file,'photo');
 assert.equal(app.acceptanceHasPhoto(),true);
 assert.equal(app.processProgress(process,'_acceptance').done,3);
 assert.ok(!app.renderAcceptancePhoto(process).includes('Отправьте хотя бы одну фотографию'));
-await app.completeAcceptance();
+assert.match(app.renderMpView(),/data-action="open-acceptance-photo">Приём</);
+await app.openAcceptancePhotoSheet();
+assert.match(element('sheetBody').innerHTML, /data-action="acceptance-video"/);
 const completions=()=>calls.filter(c=>c.url.endsWith('/acceptance/complete'));
+await app.completeAcceptance();
 assert.equal(completions().length,1);
 assert.deepEqual(completions()[0].body.formValues,{mileage:100,engineHours:'',reason:''});
 assert.equal(completions()[0].body.answers.required,'ok');assert.equal(completions()[0].body.userId,'123');
@@ -79,8 +93,9 @@ acceptanceUpload404=false;await app.uploadAcceptanceFile(file,'photo');
 assert.equal(calls.filter(c=>c.url.endsWith('/acceptance/entries/add')).at(-1).body.documentRef,process.documentRef);
 
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
-acceptanceUpload404=true;await app.uploadAcceptanceFile(file,'photo');
-assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).at(-1).body.documentRef,process.documentRef);
+const defectCallsBeforeAcceptanceFallback = calls.filter(c=>c.url.endsWith('/defects/entries/add')).length;
+acceptanceUpload404=true;await assert.rejects(app.uploadAcceptanceFile(file,'photo'), /acceptance|not found|endpoint/i);
+assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length, defectCallsBeforeAcceptanceFallback);
 
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
 assert.equal(app.processProgress(process,'_acceptance').total,2);
