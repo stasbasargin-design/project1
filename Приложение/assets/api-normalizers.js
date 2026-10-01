@@ -10,8 +10,12 @@
   const bool = (value, fallback = false) => value === undefined || value === null ? fallback : Boolean(value);
 
   function normalizeUser(value) {
-    if (Array.isArray(value)) return Object.assign({}, ...value.filter(isObject));
-    return isObject(value) ? value : null;
+    const x = Array.isArray(value) ? Object.assign({}, ...value.filter(isObject)) : value;
+    if (!isObject(x)) return null;
+    const name = text(x.name || x.fullName || x.displayName || x.userName || x.username || x.employeeName || x.employee?.name || x.employee?.fullName || x.contact?.name || x.profile?.name || x.max?.name);
+    const role = text(x.role?.code || x.role || x.roleCode);
+    const roleName = text(x.roleName || x.role?.name);
+    return { ...x, ...(name ? {name} : {}), ...(role ? {role} : {}), ...(roleName ? {roleName} : {}) };
   }
 
   function extractOrders(response) {
@@ -31,18 +35,34 @@
   }
 
   function normalizeDefects(value) {
-    return asArray(value).map((item, index) => {
-      if (typeof item === 'string') return { id: String(index), text: item, type: 'text' };
-      return {
+    const result = [];
+    asArray(value).forEach((item, index) => {
+      if (typeof item === 'string') {
+        result.push({ id: String(index), text: item, type: 'text' });
+        return;
+      }
+      const base = {
         id: text(item?.entryRef || item?.defectRef || item?.id, String(index)),
         type: text(item?.type, 'text'),
         text: text(item?.text || item?.description || item?.title),
         createdAt: text(item?.createdAt || item?.date),
         author: text(item?.authorName || item?.author),
-        file: normalizeFile(item?.file || item?.media),
+        file: normalizeFile(item?.file || (isObject(item?.media) ? item.media : item?.attachment)),
         transcript: text(item?.transcript)
       };
+      const attachments = asArray(item?.attachments || item?.files || (Array.isArray(item?.media) ? item.media : []))
+        .map(normalizeFile).filter(Boolean);
+      if (base.file) result.push(base);
+      else if (attachments.length) {
+        attachments.forEach((file, fileIndex) => result.push({
+          ...base,
+          id: `${base.id}-${fileIndex}`,
+          type: /^video\//i.test(file.mimeType || '') ? 'video' : (/^image\//i.test(file.mimeType || '') ? 'photo' : 'file'),
+          file
+        }));
+      } else result.push(base);
     });
+    return result;
   }
 
   function normalizeMedia(value) {
@@ -100,6 +120,7 @@
       executorRef: text(executor.employeeRef || executor.ref || x.executorRef),
       post: text(post.title || post.name || (typeof x.post === 'string' ? x.post : '') || x.workPost, 'Не выбран'),
       postRef: text(post.postRef || post.ref || x.postRef),
+      workshopRef: text(x.workshopRef || x.workshop?.workshopRef || x.workshop?.ref),
       packageRef: text(worktime.packageRef || x.packageRef),
       packageStatus: text(worktime.status || x.packageStatus || x.package, 'Не создан'),
       defectDocumentRef: text(x.defectDocumentRef || x.defectSheetRef || x.defectSheet?.documentRef || x.defectSheet?.ref || x.defectSheet?.document?.ref),
@@ -206,6 +227,12 @@
   function normalizeMessage(value, index) {
     const x = isObject(value) ? value : {};
     const direction = text(x.direction || x.side);
+    const poll = isObject(x.poll) ? {
+      question: text(x.poll.question || x.poll.title),
+      options: asArray(x.poll.options || x.poll.variants).map(item => isObject(item) ? {value:text(item.value || item.code || item.id),label:text(item.label || item.title || item.name)} : {value:text(item),label:text(item)}).filter(item => item.label),
+      selected: text(x.poll.selected || x.poll.answer || x.poll.selectedOption)
+    } : null;
+    const status = text(x.status || x.deliveryStatus || x.messageStatus || (x.readAt ? 'read' : x.deliveredAt ? 'delivered' : (direction === 'outgoing' || direction === 'mine' || x.isMine ? 'sent' : ''))).toLowerCase();
     return {
       id: text(x.messageRef || x.messageId || x.id, String(index)),
       author: text(x.authorName || x.senderName || x.from, 'Система'),
@@ -213,15 +240,16 @@
       createdAt: text(x.createdAt || x.date || x.time),
       side: direction === 'outgoing' || direction === 'mine' || x.isMine ? 'mine' : (direction === 'system' ? 'system' : 'theirs'),
       attachments: normalizeMedia(x.attachments || x.files),
-      status: text(x.status)
+      status,
+      poll
     };
   }
 
   function normalizeTopic(value, index) {
     const x = isObject(value) ? value : {};
     return {
-      ref: text(x.topicRef || x.topicId || x.ref || x.id, String(index)),
-      title: text(x.title || x.clientName || x.counterpartyName || x.name, `Тема ${index + 1}`),
+      ref: text(x.topicRef || x.topicId || x.groupRef || x.groupId || x.employeeRef || x.userRef || x.ref || x.id, String(index)),
+      title: text(x.title || x.clientName || x.counterpartyName || x.fullName || x.displayName || x.name, `Тема ${index + 1}`),
       subtitle: text(x.subtitle || x.contactName || x.description),
       lastMessage: text(x.lastMessage?.text || x.lastMessage || x.preview),
       unread: Number(x.unreadCount || x.unread || 0),

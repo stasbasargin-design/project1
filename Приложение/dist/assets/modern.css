@@ -26,7 +26,7 @@ button:focus-visible,a:focus-visible{outline:3px solid #b9282470;outline-offset:
 .stat{border-radius:12px;background:#f8f9fb;padding:12px;border:1px solid #eceef1}.stat b{font-size:15px;font-weight:650}.reason{border-left:3px solid #b92824;border-radius:10px;background:#f8f9fb;padding:12px;font-size:15px}.reason b{font-weight:650}
 .empty{border:1px dashed #d4d9e1;border-radius:14px;background:#f8f9fb;font-size:14px;padding:20px}.notice{border-radius:14px;box-shadow:none}
 .question{border-radius:14px;padding:14px;background:#fff}.question-title{font-size:15px;font-weight:650}.question.done{background:#f6fbf8;border-color:#cbe3d5}.answer{font-size:15px;min-height:46px;border-radius:10px;font-weight:550}.answer.selected{background:#fff0ee;border-color:#c45850;color:#982720}.progress{height:6px;background:#edeff2;margin:12px 0 18px}.progress span{background:#b92824;transition:width .2s}
-.topic{border-radius:13px}.topic.active{background:#fff7f6;border-color:#d9807b}.topic-title{font-weight:650;font-size:15px}.topic-preview{font-size:13px}.message{border-radius:14px;font-size:15px}.message.mine{background:#a62a26}.message-meta{font-size:12px}.attachment{font-size:13px;overflow-wrap:anywhere}.message.mine .attachment{color:#762622}
+.topic{border-radius:13px}.topic.active{background:#fff7f6;border-color:#d9807b}.topic-title{font-weight:650;font-size:15px}.topic-preview{font-size:13px}.message{border-radius:14px;font-size:15px}.message.mine{background:#a62a26}.message-meta{font-size:12px}.attachment{font-size:13px;overflow-wrap:anywhere}.message.mine .attachment{color:#762622}.attachment-preview{max-height:240px}
 .entry{border-radius:12px}.entry-head{font-size:12px}.entry-file{font-size:14px;overflow-wrap:anywhere}.entry-file>div{min-width:0}
 .overlay{background:#141a2670;backdrop-filter:blur(4px)}.sheet{border-radius:24px 24px 18px 18px;padding:20px;max-width:560px;box-shadow:0 24px 80px #10182030}.sheet-head{top:-20px;margin:-20px -20px 16px;padding:20px;background:#fffffffa;border-bottom:1px solid var(--line)}.sheet-head h2{font-size:19px;line-height:1.35;font-weight:700}.sheet-head p{font-size:13px}.icon-button{flex:0 0 44px;width:44px;height:44px;border-radius:12px}
 .toast{border-radius:14px;background:#303947;font-size:14px;font-weight:600;box-shadow:0 8px 24px #20263225}.toast.error{background:#a62623}footer{font-size:12px;line-height:1.5}.connection-status{display:block;margin-bottom:6px;font-size:12px;color:var(--muted)}.connection-status[data-status="ok"]{color:var(--ok)}.connection-status[data-status="error"]{color:var(--bad)}
@@ -35,3 +35,35 @@ button:focus-visible,a:focus-visible{outline:3px solid #b9282470;outline-offset:
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .tabs{top:var(--header-height,90px)}
+
+/* Review 2.2: opaque surfaces and readable text, preserving screen structure. */
+:root{--muted:#4b5563;--line:#cbd1da}
+body{font-family:Arial,'Segoe UI',sans-serif;color:#17212f;line-height:1.55}
+.top,.tabs{background:#f4f5f7;backdrop-filter:none;-webkit-backdrop-filter:none}
+.top{flex-wrap:wrap}.product{flex:1;min-width:100px}
+.user-panel{max-width:210px}.user-name{white-space:normal;overflow-wrap:anywhere;font-size:14px}
+.sheet,.sheet-head,.card,.question{background:#fff;backdrop-filter:none}
+.overlay{background:rgba(18,24,34,.7);backdrop-filter:none;-webkit-backdrop-filter:none}
+.tiny,.message-meta,.entry-head,.topic-preview{font-size:14px}
+.message-meta{display:block;line-height:1.5;color:#435063}
+.message.mine .message-meta{color:#fff}.message.mine .attachment{color:#762622}
+.card h2,.card h3{letter-spacing:normal;font-weight:700}
+input,textarea,select{background:#fff;border-color:#aeb8c5}
+.bot-unread{margin-left:auto;border:1px solid #b92824;border-radius:10px;background:#fff;color:#9e201c;padding:8px 12px;font-weight:700;font-size:14px}
+.bot-unread[hidden]{display:none}
+.setting-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #d1d7df}
+.setting-row input{width:22px;height:22px;min-height:22px;flex:0 0 22px;margin:0}
+.review-banner{background:#fff3cd;color:#5c4300;padding:12px;font:16px Arial,sans-serif}
+
+/* v2.6.1: compact fixed application header */
+.top{position:fixed;top:0;left:50%;transform:translateX(-50%);width:min(520px,100%);padding:calc(8px + env(safe-area-inset-top)) 14px 10px;margin-bottom:0}
+.phone{padding-top:calc(var(--header-height,78px) + 12px + env(safe-area-inset-top))}
+.product p{display:none}
+.tabs{top:var(--header-height,78px)}
+@media(max-width:390px){.top{padding-left:11px;padding-right:11px}.phone{padding-top:calc(var(--header-height,70px) + 10px + env(safe-area-inset-top))}.tabs{top:var(--header-height,70px)}}
+
+/* Compact unread badge belongs to the Chats navigation button. */
+.tab{position:relative}
+.tab .chat-unread-dot{position:absolute;top:4px;right:6px;display:flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 4px;border-radius:999px;background:#c52b27;color:#fff;border:2px solid #fff;font-size:10px;font-weight:800;line-height:1;box-sizing:border-box;pointer-events:none}
+.tab .chat-unread-dot[hidden]{display:none}
+.tab.active .chat-unread-dot{background:#fff;color:#b92824;border-color:#fff}

@@ -1,14 +1,15 @@
 {
   "name": "itus-service-release-1c-max",
-  "version": "2.1.7",
+  "version": "2.6.6",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "start": "node server.mjs",
-    "build": "node scripts/build-static.mjs",
+    "build": "node scripts/build-static.mjs && node scripts/build-review.mjs",
+    "test:review": "node tests/review-features.test.mjs",
     "preview": "node server.mjs",
-    "test": "node tests/api-normalizers.test.mjs",
+    "test": "node tests/api-normalizers.test.mjs && node tests/acceptance-regression.test.mjs && node tests/messenger.test.mjs && node tests/static-path.test.mjs && node tests/source-contract.test.mjs && node tests/subpath.test.mjs && node tests/worktime.test.mjs && node tests/worktime-proxy.test.mjs",
     "check:api": "node scripts/check-api.mjs"
   },
   "dependencies": {

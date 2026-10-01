@@ -1,0 +1,7 @@
+.itus-message-inline-card-hidden { display: none !important; }
+.itus-sticky-user-header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 50 !important;
+  background: inherit;
+}

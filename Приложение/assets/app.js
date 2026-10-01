@@ -5,6 +5,8 @@
   window.WebApp?.expand?.();
 
   const API = window.ITUS_API;
+  const FEATURES = window.ITUS_FEATURES;
+  const AUTH_STORAGE = window.ITUS_REVIEW_MODE ? 'itus.review.maxUserId' : 'itus.maxUserId';
   const $ = id => document.getElementById(id);
   const CONFIG = {
     apiBase: window.ITUS_CONFIG?.ONE_C_API_BASE_URL || '/api/1c',
@@ -18,7 +20,7 @@
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'itus-max-2.1.7'
+    version: 'itus-max-2.6.6-worktime'
   };
 
   const ALL_VIEWS = {
@@ -40,11 +42,18 @@
 
   const state = {
     view: 'orders', views: { ...ALL_VIEWS }, orders: [], selectedOrderId: '',
-    user: null, userId: '', authMode: '', loading: false, error: '', busy: false,
-    notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
+    user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
+    unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', recording: null, pollTimer: null, initialized: false
+    search: '', pollTimer: null, initialized: false
   };
+
+  const messenger = window.ITUS_MESSENGER?.create({
+    api:API,call:call1C,user:()=>state.user,
+    allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
+    toast,pickFile:configureFilePicker,photo:choosePhoto,filePayload:fileToPayload,
+    closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead
+  });
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const escAttr = esc;
@@ -52,10 +61,6 @@
   const requestId = () => crypto.randomUUID ? crypto.randomUUID() : `itus-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const currentOrder = () => state.orders.find(o => o.id === state.selectedOrderId) || state.orders[0] || null;
   const statusClass = value => /разреш|готов|заверш|закрыт|выполн/i.test(value) ? 'ok' : (/отклон|ошиб|нельзя/i.test(value) ? 'bad' : (/контрол|ожид|прием|приём|перерыв/i.test(value) ? 'warn' : ''));
-  const hasSpeechRecognition = () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
-  function speechButtonHtml(targetSelector, label = '🎤 Голос в текст') {
-    return hasSpeechRecognition() ? `<button type="button" class="secondary" data-action="speech-input" data-target="${escAttr(targetSelector)}">${esc(label)}</button>` : '';
-  }
 
   function toast(message, error = false) {
     const element = $('toast');
@@ -74,7 +79,8 @@
   }
 
   function closeSheet() {
-    if (state.recording) stopVoiceRecording(true);
+    state.cameraStream?.getTracks().forEach(track => track.stop());
+    state.cameraStream = null;
     $('overlay').classList.add('hidden');
     $('sheetBody').innerHTML = '';
   }
@@ -84,14 +90,17 @@
     const max = window.WebApp || {};
     const telegram = window.Telegram?.WebApp || {};
     const user = max.initDataUnsafe?.user || telegram.initDataUnsafe?.user || max.user || {};
-    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem('itus.maxUserId') || '').trim();
+    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem(AUTH_STORAGE) || '').trim();
   }
 
   function setAuth(id, mode) {
     state.userId = /^\d+$/.test(String(id || '').trim()) ? String(id).trim() : '';
     state.authMode = mode || 'max';
-    if (state.userId) localStorage.setItem('itus.maxUserId', state.userId);
-    else localStorage.removeItem('itus.maxUserId');
+    // Bot IDs belong to the authenticated session; never carry them across logins.
+    state.clientBotId = '';
+    state.serviceBotId = '';
+    if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
+    else localStorage.removeItem(AUTH_STORAGE);
   }
 
   function authPayload() {
@@ -101,7 +110,7 @@
   function maxContext() {
     return {
       webAppData: window.WebApp?.initData || '', platform: window.WebApp?.platform || 'web',
-      serviceBotId: CONFIG.serviceBotId, clientBotId: CONFIG.clientBotId,
+      serviceBotId: state.serviceBotId, clientBotId: state.clientBotId,
       miniAppId: CONFIG.miniAppId, userId: state.userId, maxUserId: state.userId,
       authMode: state.authMode || 'max'
     };
@@ -125,6 +134,7 @@
   }
 
   async function call1C(method, payload = {}, options = {}) {
+    window.ITUS_WORKTIME?.validateRequest(method, payload);
     const base = String(CONFIG.apiBase || '').replace(/\/+$/, '');
     if (!base) throw new Error('Не заполнен ONE_C_API_BASE_URL');
     const controller = new AbortController();
@@ -136,16 +146,17 @@
       max: maxContext(), miniApp: 'ITUS', version: CONFIG.version
     };
     try {
+      window.ITUS_WORKTIME?.record(method, payload);
       const response = await fetch(base + method, { method: 'POST', headers, body: JSON.stringify(envelope), signal: controller.signal });
       const raw = (await response.text()).replace(/^\uFEFF/, '');
       let data;
       try { data = raw ? JSON.parse(raw) : {}; }
-      catch { throw Object.assign(new Error('1С вернула не JSON'), { code: 'BAD_JSON', status: response.status }); }
+      catch { throw Object.assign(new Error(response.status === 404 ? `Метод ${method} не найден на сервере 1С (404). Файл не отправлен.` : '1С вернула не JSON'), { code: 'BAD_JSON', status: response.status }); }
       if (!response.ok || data.success === false) {
         const err = data.error || {};
-        throw Object.assign(new Error(err.message || data.message || `HTTP ${response.status}`), { code: err.code || 'ONE_C_ERROR', status: response.status, details: err.details });
+        throw Object.assign(new Error(err.message || data.message || (response.status === 404 ? `Метод ${method} не найден в 1С (404)` : `HTTP ${response.status}`)), { code: err.code || 'ONE_C_ERROR', status: response.status, details: err.details });
       }
-      connectionStatus('ok', `1С доступна · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
+      connectionStatus('ok', window.ITUS_REVIEW_MODE ? 'Проверочный режим · без соединения с 1С' : `1С доступна · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
       return data;
     } catch (error) {
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
@@ -173,9 +184,25 @@
     state.loading = true; state.error = ''; render();
     try {
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
-      state.user = API.normalizeUser(auth.user || auth.data?.user || null);
-      const tabs = auth.availableTabs || auth.data?.availableTabs;
-      if (CONFIG.enforceTabs && Array.isArray(tabs) && tabs.length) {
+      // Альфа-Авто может вернуть data как массив блоков: [{user:[...]},{availableTabs:[...]}].
+      // Сначала объединяем эти блоки, чтобы имя, роль и вкладки не терялись.
+      const authData = Array.isArray(auth.data)
+        ? Object.assign({}, ...auth.data.filter(item => item && typeof item === 'object' && !Array.isArray(item)))
+        : (auth.data || {});
+      // Идентификаторы ботов являются частью авторизации и приходят из 1С.
+      // Не используем константы приложения: новая авторизация всегда заменяет значения сессии.
+      const botSources = [authData, auth, authData.max, auth.max].filter(item => item && typeof item === 'object');
+      state.clientBotId = String(botSources.map(item => item.clientBotId).find(value => value != null) || '').trim();
+      state.serviceBotId = String(botSources.map(item => item.serviceBotId).find(value => value != null) || '').trim();
+      state.user = API.normalizeUser(auth.user || authData.user || authData.profile || authData.employee || auth.employee || authData || auth);
+      const identity = [authData.user,auth.user,authData.profile,authData.employee,auth.employee,authData,auth]
+        .map(API.normalizeUser).find(candidate => candidate?.name);
+      if (identity?.name) state.user = {...state.user, name:identity.name};
+      const tabs = auth.availableTabs || authData.availableTabs || auth.data?.find?.(item => Array.isArray(item?.availableTabs))?.availableTabs;
+      const roleCode = String(state.user?.roleName || state.user?.role || '').trim().toLowerCase();
+      const isAdmin = roleCode === 'admin' || roleCode === 'administrator' || roleCode.includes('админ');
+      if (isAdmin) state.views = { ...ALL_VIEWS };
+      else if (CONFIG.enforceTabs && Array.isArray(tabs) && tabs.length) {
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
       await loadOrders(false);
@@ -209,6 +236,7 @@
   }
 
   function renderAuth() {
+    if ($('botUnread')) $('botUnread').hidden = true;
     $('tabs').innerHTML = '';
     $('notifications').innerHTML = '';
     $('userPanel').innerHTML = '<div class="avatar">ID</div><div class="user-meta"><div class="user-name">Вход</div><div class="user-role">MAX ID или QR</div></div>';
@@ -216,24 +244,53 @@
   }
 
   function renderUser() {
-    const name = state.user?.name || `ID ${state.userId}`;
-    const role = state.user?.roleName || state.user?.role || (state.loading ? 'Подключение к 1С' : `MAX ID: ${state.userId}`);
+    const badge = $('botUnread');
+    const unread = Number(state.unreadMessages);
+    if (badge) {
+      badge.hidden = !Number.isFinite(unread) || unread <= 0;
+      badge.textContent = Number.isFinite(unread) ? String(unread) : '';
+      badge.setAttribute('aria-label', 'Непрочитанные сообщения: ' + (Number.isFinite(unread) ? unread : 0));
+    }
+    // После успешной авторизации в шапке показываем имя из ответа 1С.
+    // Идентификатор нужен только для обмена и не должен занимать место имени.
+    const name = state.user?.name || 'Сотрудник';
+    const roleLabels = {master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог',admin:'Администратор'};
+    const roleCode = String(state.user?.roleName || '').toLowerCase();
+    const role = (state.user?.role && !/^[a-z0-9_-]+$/i.test(String(state.user.role)))
+      ? state.user.role
+      : (roleLabels[roleCode] || state.user?.role || (state.loading ? 'Подключение к 1С' : 'Авторизованный пользователь'));
     $('userPanel').innerHTML = `<div class="avatar">${esc((name || 'И').slice(0,1).toUpperCase())}</div><div class="user-meta"><div class="user-name">${esc(name)}</div><div class="user-role">${esc(role)}</div></div>`;
   }
 
   function renderTabs() {
-    $('tabs').innerHTML = Object.keys(state.views).map(key => `<button class="tab ${state.view === key ? 'active' : ''}" data-action="view" data-view="${key}" title="${escAttr(VIEW_TITLES[key])}" aria-label="${escAttr(VIEW_TITLES[key])}">${ICONS[key]}<span>${esc(state.views[key])}</span></button>`).join('');
+    const keys=Object.keys(state.views).filter(k=>k!=='clients'&&k!=='chat');
+    if(state.views.clients||state.views.chat)keys.push('chat');
+    $('tabs').innerHTML = keys.map(key => `<button class="tab ${state.view === key ? 'active' : ''}" data-action="view" data-view="${key}" title="${escAttr(VIEW_TITLES[key])}" aria-label="${escAttr(VIEW_TITLES[key])}">${ICONS[key]}<span>${esc(key === 'chat' ? 'Чаты' : state.views[key])}</span>${key === 'chat' ? `<span id="botUnread" class="chat-unread-dot" aria-label="Непрочитанные сообщения: ${Number(state.unreadMessages) || 0}" ${Number(state.unreadMessages) > 0 ? '' : 'hidden'}>${Number(state.unreadMessages) || ''}</span>` : ''}</button>`).join('');
   }
 
   function renderNotifications() {
-    $('notifications').innerHTML = state.notifications.slice(0, 3).map(event => `<div class="notice"><strong>${esc(event.title || 'Уведомление из 1С')}</strong><span class="tiny">${esc(event.message || '')}</span><div class="notice-actions">${event.orderRef ? `<button data-action="open-notification" data-event="${escAttr(event.eventId)}">Открыть ЗН</button>` : ''}<button data-action="dismiss-notification" data-event="${escAttr(event.eventId)}">Скрыть</button></div></div>`).join('');
+    // No in-app notification cards. The Chats tab badge is the indicator.
+    $('notifications').innerHTML = '';
+  }
+
+  function messagesRead({previousUnread, remainingUnread, totalUnread}) {
+    state.unreadRevision++;
+    if (typeof totalUnread === 'number' && Number.isFinite(totalUnread) && totalUnread >= 0) state.unreadMessages = totalUnread;
+    else if (state.unreadMessages !== null) state.unreadMessages = Math.max(0, state.unreadMessages - Math.max(0, previousUnread - remainingUnread));
+    state.notifications = state.notifications.filter(e => e.type !== 'new_messages');
+    renderUser(); renderNotifications();
+    // An older in-flight poll cannot restore the count from before this read receipt.
+    if (!state.polling) void pollNotifications();
   }
 
   function render() {
+    document.body?.classList.toggle('messenger-view', state.view === 'chat' && Boolean(state.userId));
+    if (state.view !== 'chat') messenger?.leave();
     if (!state.userId) return renderAuth();
     renderUser(); renderTabs(); renderNotifications();
     if (state.loading) return $('app').innerHTML = '<div class="card loading"><span class="spinner"></span><div><h2>Подключение к 1С</h2><span class="tiny">Получаем пользователя и доступные заказ-наряды</span></div></div>';
     if (state.error) return $('app').innerHTML = `<div class="card"><h2>Нет подключения к 1С</h2><p class="muted">${esc(state.error)}</p><div class="grid two"><button data-action="retry-init">Повторить</button><button data-action="settings">Настройки</button></div></div>`;
+    if (state.view === 'chat' && messenger) { messenger.enter(); return; }
     const renderers = { orders: renderOrdersView, mp: renderMpView, executor: renderExecutorView, tech: renderTechView, clients: renderClientsView, chat: renderChatView };
     $('app').innerHTML = (renderers[state.view] || renderOrdersView)();
   }
@@ -251,7 +308,11 @@
   function renderSelectedCard() {
     const order = currentOrder();
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><div class="stat"><span class="tiny">Пакет УРВ</span><br><b>${esc(order.packageStatus)}</b></div><div class="stat"><span class="tiny">Дефектовка</span><br><b>${order.defectDocumentRef || order._defectSheet?.documentRef ? 'Создана' : 'Не создана'}</b></div></div></div>`;
+    const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
+    const defectCell = defectRef
+      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
+      : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><div class="stat"><span class="tiny">Пакет УРВ</span><br><b>${esc(order.packageStatus)}</b></div>${defectCell}</div></div>`;
   }
 
   function renderOrdersView() {
@@ -309,8 +370,8 @@
         const type = field.type === 'textarea' ? '' : ` type="${field.type}"`;
         const inputId = `field-${processKey}-${field.id}`;
         const textControl = tag === 'textarea'
-            ? `<textarea id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}">${esc(String(value ?? ''))}</textarea>${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`
-            : `<input id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}" value="${escAttr(String(value ?? ''))}">${tag === 'input' && hasSpeechRecognition() ? speechButtonHtml(`#${inputId}`, '🎤 Голос в текст') : ''}`;
+            ? `<textarea id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}">${esc(String(value ?? ''))}</textarea>`
+            : `<input id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}" value="${escAttr(String(value ?? ''))}">`;
 
         return `<label>${label}</label>${textControl}${error ? '<div class="error-text">Поле обязательно</div>' : ''}`;
     }
@@ -325,8 +386,8 @@
       const type = question.type === 'textarea' ? '' : ` type="${question.type}"`;
       const inputId = `question-${processKey}-${question.id}`;
       const textControl = tag === 'textarea'
-        ? `<textarea id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}">${esc(value || '')}</textarea>${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`
-        : `<input id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}" value="${escAttr(value || '')}">${speechButtonHtml(`#${inputId}`, '🎤 Голос в текст')}`;
+        ? `<textarea id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}">${esc(value || '')}</textarea>`
+        : `<input id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}" value="${escAttr(value || '')}">`;
       return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}${textControl}${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
     }
     const options = question.type === 'boolean' && !question.options.length ? [{value:'true',label:'Да'},{value:'false',label:'Нет'}] : question.options;
@@ -401,19 +462,19 @@
 
   function renderMessages(messages) {
     if (!messages?.length) return '<div class="empty">Сообщений пока нет.</div>';
-    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.author)} · ${esc(message.createdAt)}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(renderAttachment).join('')}</div>` : ''}</div>`).join('')}</div>`;
+    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.side === 'mine' ? (state.user?.name || message.author) : message.author)} · ${esc(FEATURES.dateTime(message.createdAt))}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(renderAttachment).join('')}</div>` : ''}</div>`).join('')}</div>`;
   }
 
   function renderClientsView() {
     const topic = state.clientTopics.find(item => item.ref === state.selectedClientTopic);
     const messages = topic ? (state.clientMessages[topic.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea>${speechButtonHtml('#clientMessage', '🎤 Голос в текст')}<button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="client-photo">Фото</button><button data-action="client-video">Видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="client-photo">Фото</button><button data-action="client-video">Видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
   }
 
   function renderChatView() {
     const group = state.chatGroups.find(item => item.ref === state.selectedChatGroup);
     const messages = group ? (state.chatMessages[group.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea>${speechButtonHtml('#chatMessage', '🎤 Голос в текст')}<button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="chat-photo">Фото</button><button data-action="chat-video">Видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="chat-photo">Фото</button><button data-action="chat-video">Видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
   }
 
   function validateProcess(process, allRequired = true) {
@@ -509,14 +570,109 @@
     } finally { state.busy = false; render(); }
   }
 
+  let worktimeDraft = null;
+
+  function renderWorktimeStep() {
+    const d = worktimeDraft; if (!d) return;
+    const button = (action, text) => `<button class="primary" data-action="${action}">${text}</button>`;
+    let body = '';
+    if (d.step === 'works') {
+      body = `<h3>Работы без активных пакетов</h3>${d.works.length ? d.works.map(x => `<label class="setting-row"><input type="checkbox" data-worktime-work="${escAttr(x.ref)}" ${d.workRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('') : '<p>В этом ЗН нет доступных работ без активных пакетов.</p>'}${d.works.length ? button('worktime-works-next','Подтвердить работы') : ''}`;
+    } else if (d.step === 'employees') {
+      const self = d.employees.find(x => x.ref === state.user?.employeeRef);
+      body = `${self ? button('worktime-self','Делаю сам') : '<p>1С не вернула вас в списке доступных исполнителей.</p>'}<h3>Другие исполнители цеха</h3><p>Выберите исполнителей. Чтобы участвовать вместе с коллегами, отметьте «Я участвую».</p>${self ? `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(self.ref)}" ${d.employeeRefs.includes(self.ref) ? 'checked' : ''}>Я участвую</label>` : ''}${d.employees.filter(x => x.ref !== self?.ref).map(x => `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(x.ref)}" ${d.employeeRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}${button('worktime-employees-next','Подтвердить исполнителей')}<button data-action="worktime-back-works">Назад к работам</button>`;
+    } else if (d.step === 'shares') {
+      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}${button('worktime-shares-next','Подтвердить распределение')}<button data-action="worktime-back-employees">Назад к исполнителям</button>`;
+    } else {
+      body = `<h3>Подтверждение пакета</h3><h4>Работы</h4><ul>${d.workRefs.map(ref => `<li>${esc(d.works.find(x => x.ref === ref)?.name)}</li>`).join('')}</ul><h4>Исполнители</h4><ul>${d.participants.map(p => `<li>${esc(d.employees.find(x => x.ref === p.employeeRef)?.name)} — ${p.percent}%</li>`).join('')}</ul>${button('worktime-submit','Подтвердить и создать пакет')}${!d.sent ? '<button data-action="worktime-back-employees">Изменить исполнителей</button>' : '<p>При повторе отправляется тот же состав с тем же идентификатором.</p>'}`;
+    }
+    showSheet('Создание пакета УРВ', ({works:'Шаг 1 · работы ЗН',employees:'Шаг 2 · исполнители',shares:'Шаг 3 · проценты',confirm:'Проверьте состав перед отправкой в 1С'})[d.step], body + '<p id="worktimeError" role="alert"></p>');
+  }
+
+  async function preparePackage() {
+    if (!currentOrder() || state.busy) return;
+    // Preserve an uncertain creation attempt rather than issuing a new ID.
+    if (worktimeDraft?.sent && worktimeDraft.context.orderRef === (currentOrder().orderRef || currentOrder().id)) return renderWorktimeStep();
+    state.busy = true;
+    const context = orderPayload();
+    worktimeDraft = null;
+    showSheet('Создание пакета УРВ', 'Получаем работы без активных пакетов', '<p>Загрузка…</p>');
+    try {
+      const response = await call1C('/worktime/orders/works', {...context, withoutActivePackages:true});
+      const data = response.data || response;
+      const workshopRef = String(data.workshopRef || currentOrder()?.workshopRef || state.user?.workshopRef || '');
+      if (!workshopRef) throw new Error('1С не вернула цех для заказ-наряда');
+      const works = API.extractItems(response, ['works']).filter(x => x.available !== false && x.hasActivePackage !== true && !x.activePackageRef && !(x.activePackages?.length)).map(x => ({ref:String(x.workRef || x.ref || ''),name:String(x.name || x.title || x.workRef || ''),available:true})).filter(x => x.ref);
+      worktimeDraft = {context,workshopRef,works,employees:[],workRefs:[],employeeRefs:[],participants:[],step:'works',clientPackageId:requestId(),busy:false,sent:false};
+      renderWorktimeStep();
+    } catch(error) { $('sheetBody').innerHTML = `<p role="alert">${esc(error.message)}</p><button data-action="package-create">Повторить загрузку</button>`; }
+    finally { state.busy = false; }
+  }
+
+  async function worktimeStep(action) {
+    const d = worktimeDraft; if (!d || d.busy || state.busy || d.sent) return;
+    try {
+      if ((currentOrder()?.orderRef || currentOrder()?.id) !== d.context.orderRef) throw new Error('Заказ-наряд изменился. Откройте форму заново');
+      if (action === 'worktime-works-next') {
+        d.workRefs = [...$('sheetBody').querySelectorAll('[data-worktime-work]:checked')].map(el => el.dataset.worktimeWork);
+        if (!d.workRefs.length) throw new Error('Выберите хотя бы одну работу');
+        if (d.workRefs.some(ref => !d.works.some(x => x.ref === ref))) throw new Error('Выбрана недоступная работа');
+        d.busy = true; state.busy = true;
+        const response = await call1C('/worktime/executors/list', {...d.context,workshopRef:d.workshopRef});
+        d.employees = API.extractItems(response,['executors','employees']).filter(x => x.available !== false && (!x.workshopRef || String(x.workshopRef) === d.workshopRef)).map(x => ({ref:String(x.employeeRef || x.ref || ''),name:String(x.name || x.fullName || x.employeeRef || '')})).filter(x => x.ref);
+        d.employeeRefs = d.employeeRefs.filter(ref => d.employees.some(x => x.ref === ref));
+        d.step = 'employees';
+      } else if (action === 'worktime-self' || action === 'worktime-employees-next') {
+        d.employeeRefs = action === 'worktime-self' ? [state.user?.employeeRef] : [...$('sheetBody').querySelectorAll('[data-worktime-employee]:checked')].map(el => el.dataset.worktimeEmployee);
+        if (!d.employeeRefs.length || d.employeeRefs.some(ref => !d.employees.some(x => x.ref === ref))) throw new Error('Выберите доступных исполнителей');
+        d.participants = d.employeeRefs.length === 1 ? [{employeeRef:d.employeeRefs[0],percent:100}] : d.participants.filter(p => d.employeeRefs.includes(p.employeeRef));
+        d.step = d.employeeRefs.length === 1 ? 'confirm' : 'shares';
+      } else if (action === 'worktime-shares-next') {
+        const values = new Map([...$('sheetBody').querySelectorAll('[data-worktime-percent]')].map(el => [el.dataset.worktimePercent,Number(el.value)]));
+        d.participants = window.ITUS_WORKTIME.participation(d.employeeRefs.map(employeeRef => ({employeeRef,percent:values.get(employeeRef)})));
+        d.step = 'confirm';
+      } else if (action === 'worktime-back-works') d.step = 'works';
+      else if (action === 'worktime-back-employees') d.step = 'employees';
+      renderWorktimeStep();
+    } catch(error) { $('worktimeError').textContent = error.message; }
+    finally { d.busy = false; state.busy = false; }
+  }
+
+  async function submitPackage() {
+    const d = worktimeDraft; if (!d || d.step !== 'confirm' || d.busy || state.busy) return;
+    try {
+      if ((currentOrder()?.orderRef || currentOrder()?.id) !== d.context.orderRef) throw new Error('Заказ-наряд изменился. Откройте форму заново');
+      const payload = {...d.context,workshopRef:d.workshopRef,workRefs:d.workRefs,participants:d.participants,clientPackageId:d.clientPackageId};
+      window.ITUS_WORKTIME.validateRequest('/worktime/packages/create',payload);
+      d.busy = true; state.busy = true;
+      $('sheetBody').querySelectorAll('button').forEach(el => el.disabled = true);
+      const checked = await call1C('/worktime/participation/validate',payload);
+      if ((checked.data || checked).valid !== true) throw new Error('1С не подтвердила распределение участия');
+      d.sent = true;
+      const response = await call1C('/worktime/packages/create',payload);
+      const data = response.package || response.data?.package;
+      if (!data?.packageRef) throw new Error('1С не вернула ссылку пакета. Повторите подтверждение с тем же составом');
+      const order = state.orders.find(x => (x.orderRef || x.id) === d.context.orderRef);
+      if (order) { order.packageRef = String(data.packageRef); order.packageStatus = String(data.status || 'Создан'); }
+      worktimeDraft = null; closeSheet(); render(); toast('Пакет создан из выбранных работ');
+    } catch(error) { renderWorktimeStep(); $('worktimeError').textContent = error.message; }
+    finally { d.busy = false; state.busy = false; }
+  }
+
   async function packageAction(action) {
-    const order = currentOrder(); if (!order) return;
-    const map = { create: '/worktime/packages/create', start: '/worktime/packages/start', pause: '/worktime/packages/pause', close: '/worktime/packages/close' };
-    const response = await call1C(map[action], orderPayload({ packageRef: order.packageRef || '' }));
-    const data = response.package || response.data?.package || response.data || response;
-    order.packageRef = String(data.packageRef || data.ref || order.packageRef || '');
-    order.packageStatus = String(data.status || ({create:'Создан',start:'В работе',pause:'Перерыв',close:'Закрыт'}[action]));
-    render(); toast(`Пакет УРВ: ${order.packageStatus}`);
+    const order = currentOrder(); if (!order || state.busy) return;
+    const map = { start: '/worktime/packages/start', pause: '/worktime/packages/pause', close: '/worktime/packages/close' };
+    if (!map[action]) throw new Error('Неизвестное действие пакета');
+    const payload = orderPayload({ packageRef: order.packageRef || '' });
+    window.ITUS_WORKTIME.validateRequest(map[action], payload);
+    state.busy = true;
+    try {
+      const response = await call1C(map[action], payload);
+      const data = response.package || response.data?.package || response.data || response;
+      order.packageRef = String(data.packageRef || data.ref || order.packageRef);
+      order.packageStatus = String(data.status || ({start:'В работе',pause:'Перерыв',close:'Закрыт'}[action]));
+      render(); toast('Пакет УРВ: ' + order.packageStatus);
+    } finally { state.busy = false; }
   }
 
   async function showProduction() {
@@ -554,7 +710,7 @@
     try {
       const response = await call1C('/quality/current-appeal', orderPayload());
       const appeal = response.appeal || response.data?.appeal || response.data || {};
-      $('sheetBody').innerHTML = `<div class="reason"><b>Причина обращения:</b><br>${esc(appeal.reason || appeal.text || currentOrder()?.reason || 'Не заполнена')}</div>${appeal.createdAt ? `<p class="tiny">Создано: ${esc(appeal.createdAt)}</p>` : ''}<button class="primary" data-action="close-sheet">Закрыть</button>`;
+      $('sheetBody').innerHTML = `<div class="reason"><b>Причина обращения:</b><br>${esc(appeal.reason || appeal.text || currentOrder()?.reason || 'Не заполнена')}</div>${appeal.createdAt ? `<p class="tiny">Создано: ${esc(FEATURES.dateTime(appeal.createdAt))}</p>` : ''}<button class="primary" data-action="close-sheet">Закрыть</button>`;
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
@@ -582,7 +738,7 @@
 
   const pendingDefectSheets = new Map();
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
-  async function ensureDefectSheet(order = currentOrder()) {
+  async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
     if (hasDocumentRef(order._defectSheet?.documentRef)) return order._defectSheet;
     const ref = order.orderRef || order.id;
@@ -595,15 +751,19 @@
       return process;
     };
     const existing = (documentRef, entries) => attach(API.normalizeProcess({documentRef, entries:entries || []}, 'defectSheet'));
-    if (hasDocumentRef(order.defectDocumentRef)) return existing(order.defectDocumentRef, order.defects);
+    if (!refreshExisting && hasDocumentRef(order._defectSheet?.documentRef)) return order._defectSheet;
+    if (!refreshExisting && hasDocumentRef(order.defectDocumentRef)) return existing(order.defectDocumentRef, order.defects);
     const pending = (async () => {
       // Read the current order first; a stale list must not trigger creation.
       const response = await call1C('/orders/get', {orderRef:ref,orderId:ref});
       const fresh = API.mapOrder(response.order || response.data?.order || response.data || response);
       if ((fresh.orderRef || fresh.id) !== ref) throw new Error('Не удалось проверить действующий документ выбранного ЗН');
-      if (hasDocumentRef(fresh.defectDocumentRef)) return existing(fresh.defectDocumentRef, fresh.defects);
-      const started = await call1C('/defects/start', {orderRef:ref,orderId:ref,existingDocumentRef:''});
-      return attach(API.normalizeProcess(started, 'defectSheet'));
+      const existingRef = fresh.defectDocumentRef || order.defectDocumentRef || order._defectSheet?.documentRef || '';
+      if (!refreshExisting && hasDocumentRef(existingRef)) return existing(existingRef, fresh.defects || order.defects);
+      const started = await call1C('/defects/start', {orderRef:ref,orderId:ref,existingDocumentRef:existingRef});
+      const process = API.normalizeProcess(started, 'defectSheet');
+      if (!process.entries.length && Array.isArray(fresh.defects)) process.entries = API.normalizeProcess({entries:fresh.defects}, 'defectSheet').entries;
+      return attach(process);
     })();
     pendingDefectSheets.set(ref,pending);
     try { return await pending; } finally { pendingDefectSheets.delete(ref); }
@@ -613,14 +773,36 @@
     const order = currentOrder(), sheet = order?._defectSheet;
     if (!sheet) return;
     const entries = sheet.entries || [];
-    const entryHtml = entries.length ? entries.map((entry, index) => `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(entry.createdAt || '')}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${entry.file ? `<div class="entry-file"><span class="file-icon">${entry.type === 'video' ? '🎥' : entry.type === 'voice' ? '🎤' : '📷'}</span><div><b>${esc(entry.file.fileName)}</b>${entry.transcript ? `<br><span class="tiny">Текст: ${esc(entry.transcript)}</span>` : ''}</div></div>` : ''}${entry.type === 'voice' && !entry.transcript ? `<button class="button" style="margin-top:7px" data-action="transcribe-voice" data-index="${index}">Преобразовать голос в текст</button>` : ''}</div>`).join('') : '<div class="empty">В дефектовке пока нет записей.</div>';
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Документ 1С: ${sheet.documentRef || 'не указан'}`, `${entryHtml}<label for="defectText">Информация о дефекте</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea>${speechButtonHtml('#defectText', '🎤 Голос в текст')}<div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="start-voice">Голос</button></div>${state.recording ? '<p class="recording">● Идёт запись голосового сообщения</p><button class="danger" data-action="stop-voice">Остановить и отправить</button>' : ''}<button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
+    const entryHtml = entries.length ? entries.map((entry, index) => {
+      const file = entry.file;
+      const fileButton = file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b><br><span class="tiny">Открыть вложение</span></span></button>` : '';
+      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
+    }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
   }
 
   async function openDefectSheet() {
     showSheet('Дефектовочная ведомость', 'Проверяем документ в 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
-    try { await ensureDefectSheet(); if (state.view === 'mp' && currentOrder()?._acceptance?.active) render(); renderDefectSheet(); }
+    try { await ensureDefectSheet(currentOrder(), {refreshExisting:true}); if (state.view === 'mp' && currentOrder()?._acceptance?.active) render(); renderDefectSheet(); }
     catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+  }
+
+  function openDefectMedia(index) {
+    const entry = currentOrder()?._defectSheet?.entries?.[index], file = entry?.file;
+    if (!file) return;
+    const mime = file.mimeType || 'application/octet-stream';
+    let url = file.downloadUrl;
+    if (!url && file.contentBase64) {
+      try {
+        const raw = atob(file.contentBase64.replace(/^data:[^,]*,/, ''));
+        const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+        url = URL.createObjectURL(new Blob([bytes], {type:mime}));
+      } catch { return toast('Не удалось открыть вложение', true); }
+    }
+    if (!url) return toast('1С не передала ссылку или содержимое файла', true);
+    if (/^image\//.test(mime)) showSheet('Фото дефекта', file.fileName, `<img src="${esc(url)}" alt="${esc(file.fileName)}" style="max-width:100%;border-radius:12px">`);
+    else if (/^video\//.test(mime)) showSheet('Видео дефекта', file.fileName, `<video controls playsinline preload="metadata" src="${esc(url)}" style="width:100%;border-radius:12px"></video>`);
+    else { const link=document.createElement('a'); link.href=url; link.download=file.fileName||'attachment'; link.target='_blank'; link.click(); }
   }
 
   async function openAcceptancePhotoSheet() {
@@ -641,7 +823,12 @@
     const payload = await fileToPayload(file, kind);
     const clientEntryId = requestId();
     const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
-    const response = await call1C('/acceptance/entries/add', requestBody);
+    let response;
+    try { response = await call1C('/acceptance/entries/add', requestBody, {silent:true}); }
+    catch (error) {
+      if (error.status === 404) throw new Error('Фото получено, но метод /acceptance/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
+      throw error;
+    }
 
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     process.entries = Array.isArray(process.entries) ? process.entries : [];
@@ -658,6 +845,11 @@
     const entry = response.entry || response.data?.entry || { id: clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
+  }
+
+  function choosePhoto(target) {
+    state.photoTarget = target;
+    showSheet('Добавить фотографию', 'Выберите источник изображения', '<div class="grid two"><button data-action="photo-camera">Камера</button><button data-action="photo-gallery">Галерея</button></div><p class="tiny">Камера требует HTTPS и разрешения браузера. В старом APK камера может требовать обновления Android-оболочки.</p>');
   }
 
   function configureFilePicker(target, accept, capture, multiple = false) {
@@ -683,7 +875,16 @@
 
   async function compressImage(file) {
     if (file.size < 900 * 1024) return file;
-    const image = await createImageBitmap(file);
+    let image;
+    try {
+      if (typeof createImageBitmap === 'function') image = await createImageBitmap(file);
+      else {
+        const url = URL.createObjectURL(file);
+        try { image = await new Promise((resolve,reject) => {
+          const img = new Image(); img.onload=()=>resolve(img); img.onerror=reject; img.src=url;
+        }); } finally { URL.revokeObjectURL(url); }
+      }
+    } catch { return file; } // Unsupported phone format: retain original file and size checks.
     const max = 1600, scale = Math.min(1, max / Math.max(image.width, image.height));
     const canvas = document.createElement('canvas'); canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale);
     canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
@@ -702,38 +903,6 @@
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
-  }
-
-  async function startVoiceRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      configureFilePicker({ type: 'defect', kind: 'voice' }, 'audio/*', true); return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream); const chunks = [];
-      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        state.recording = null;
-        try { await uploadDefectFile(new File([blob], `voice-${Date.now()}.webm`, { type: blob.type }), 'voice'); }
-        catch (error) { toast(error.message, true); renderDefectSheet(); }
-      };
-      recorder.start(); state.recording = { recorder, stream }; renderDefectSheet();
-    } catch (error) { toast(`Микрофон недоступен: ${error.message}`, true); }
-  }
-
-  function stopVoiceRecording(cancel = false) {
-    const active = state.recording; if (!active) return;
-    if (cancel) { active.recorder.onstop = null; active.stream.getTracks().forEach(track => track.stop()); state.recording = null; return; }
-    active.recorder.stop();
-  }
-
-  async function transcribeVoice(index) {
-    const sheet = currentOrder()?._defectSheet, entry = sheet?.entries?.[index]; if (!entry) return;
-    const response = await call1C('/voice/transcribe', orderPayload({ documentRef: sheet.documentRef, entryRef: entry.id, fileRef: entry.file?.fileRef || '', language: 'ru-RU' }));
-    entry.transcript = String(response.transcript || response.data?.transcript || response.text || '');
-    renderDefectSheet(); toast(entry.transcript ? 'Голос преобразован в текст' : '1С не вернула распознанный текст', !entry.transcript);
   }
 
   async function completeDefectSheet() {
@@ -760,27 +929,6 @@
     const ref = state.selectedClientTopic;
     await call1C('/clients/messages/send', { topicRef: ref, topicId: ref, clientMessageId: requestId(), text });
     await loadClientMessages(ref); render(); toast('Сообщение отправлено клиенту через 1С');
-  }
-
-  function startSpeechToText(targetSelector) {
-    const target = document.querySelector(targetSelector); if (!target) return toast('Поля ввода не найдено', true);
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return toast('Распознавание речи недоступно в этом браузере', true);
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'ru-RU';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.onresult = event => {
-      const transcript = Array.from(event.results).map(result => result[0]?.transcript || '').join(' ').trim();
-      if (!transcript) return;
-      const prev = target.value ? `${target.value.trim()} ` : '';
-      target.value = `${prev}${transcript}`;
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    recognition.onerror = event => toast(`Распознавание речи: ${event.error || 'не удалось начать'}`, true);
-    recognition.onend = () => toast('Голосовой ввод завершён');
-    recognition.start();
-    toast('Говорите…');
   }
 
   async function sendClientFile(file, kind) {
@@ -819,31 +967,105 @@
 
   function startPolling() {
     clearInterval(state.pollTimer);
-    if (CONFIG.pollMs < 5000) return;
+    if (CONFIG.pollMs < 2000) return;
     pollNotifications();
-    state.pollTimer = setInterval(pollNotifications, CONFIG.pollMs);
+    state.pollTimer = setInterval(pollNotifications, Math.max(3000, CONFIG.pollMs));
+  }
+
+  async function notificationRegistration() {
+    if (!('serviceWorker' in navigator)) return null;
+    await navigator.serviceWorker.register(new URL('./notification-sw.js', document.baseURI), {scope:new URL('./', document.baseURI).pathname});
+    return navigator.serviceWorker.ready;
+  }
+
+  const nativeNotifications = window.ITUSNativeNotifications;
+  function notificationPermission() {
+    if (nativeNotifications) return nativeNotifications.permission();
+    return 'Notification' in window ? Notification.permission : 'не поддерживается';
+  }
+  function enableSystemPreference() {
+    if (notificationPermission() !== 'granted') return false;
+    localStorage.setItem('itus.notifications.'+state.userId,
+      JSON.stringify({...FEATURES.preferences(state.userId),system:true}));
+    showNotificationSettings();
+    toast('Уведомления разрешены');
+    return true;
+  }
+  window.addEventListener('itus-notification-permission', () => {
+    if (!enableSystemPreference()) {showNotificationSettings();toast('Разрешение не получено',true);}
+  });
+
+  function showNotificationSettings() {
+    const prefs = FEATURES.preferences(state.userId);
+    const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',quality_control_requested:'Запрос выходного контроля'};
+    const types = FEATURES.typesFor(state.user);
+    showSheet('Уведомления', 'Настройки этого пользователя на этом устройстве',
+      types.map(type => '<label class="setting-row"><input type="checkbox" data-notification-pref="'+type+'" '+(prefs[type]?'checked':'')+'>'+labels[type]+'</label>').join('') +
+      (!types.length ? '<p>1С не передала известную роль. Уведомления не запрашиваются.</p>' : '') +
+      '<label class="setting-row"><input type="checkbox" data-notification-pref="system" '+(prefs.system?'checked':'')+'>Показывать системные уведомления</label>' +
+      '<p>Разрешение устройства: '+esc(notificationPermission())+'</p>' +
+      '<div class="grid"><button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="save-notifications">Сохранить</button></div>' +
+      '<p class="tiny">Доставка работает, пока приложение открыто. При закрытом приложении необходим сервер Push или доставка через MAX.</p>');
   }
 
   async function pollNotifications() {
-    if (!state.userId || document.hidden) return;
+    const types = FEATURES.typesFor(state.user);
+    if (!state.userId || !state.initialized || !types.length || state.polling) return;
+    const userId = state.userId;
+    const unreadRevision = state.unreadRevision;
+    state.polling = true;
     try {
-      const response = await call1C('/notifications/poll', { cursor: state.notificationCursor, limit: 20 }, { silent: true });
+      // Лёгкий запрос: 1С возвращает только новые события и счётчики.
+      // История чатов, документы и медиа здесь не запрашиваются.
+      const response = await call1C('/notifications/poll', {
+        cursor: state.notificationCursor, limit: 5, light: true, onlyUnread: true,
+        includeChatHistory: false, role: state.user.roleName || state.user.role,
+        roleName: state.user.roleName || '',
+        types, ...(types.length === 1 ? {type:types[0]} : {}),
+        includeUnreadCount: types.includes('new_messages'),
+        botId: state.clientBotId
+      }, { silent:true });
+      if (state.userId !== userId) return;
       const data = response.data || response;
-      const events = API.extractItems(response, ['events','notifications']);
+      const count = FEATURES.unread(data);
+      if (count !== null && state.unreadRevision === unreadRevision) state.unreadMessages = count;
       state.notificationCursor = String(data.nextCursor || data.cursor || state.notificationCursor || '');
-      for (const raw of events) {
-        const event = {
-          eventId: String(raw.eventId || raw.id || requestId()), type: String(raw.type || raw.eventType || ''),
-          title: String(raw.title || 'Уведомление из 1С'), message: String(raw.message || raw.text || ''),
-          orderRef: String(raw.orderRef || raw.orderId || raw.payload?.orderRef || ''), payload: raw.payload || {}
-        };
-        if (state.notifications.some(item => item.eventId === event.eventId)) continue;
+      const prefs = FEATURES.preferences(userId);
+      for (const raw of API.extractItems(response, ['events','notifications'])) {
+        const type = String(raw.type || raw.eventType || '');
+        if (!types.includes(type)) continue;
+        const event = {eventId:String(raw.eventId || raw.id || JSON.stringify(raw)), type,
+          title:String(raw.title || 'Уведомление из 1С'),message:String(raw.message || raw.text || ''),
+          orderRef:String(raw.orderRef || raw.orderId || raw.payload?.orderRef || ''),payload:raw.payload || {}};
+        if (state.seenEvents.has(event.eventId)) continue;
+        if (type === 'new_messages' && count === null && state.unreadRevision === unreadRevision) {
+          const eventCount = FEATURES.unread(raw.payload || raw);
+          if (eventCount !== null) state.unreadMessages = eventCount;
+        }
+        state.seenEvents.add(event.eventId);
+        if (state.seenEvents.size > 2000) state.seenEvents.delete(state.seenEvents.values().next().value);
+        await messenger?.notify(event);
+        if (!prefs[type]) continue;
         state.notifications.unshift(event);
-        if (event.type === 'quality_control_requested' && event.orderRef) await openQualityNotification(event);
-        else if (event.type === 'executor_assigned') toast(event.message || 'Вам назначен заказ-наряд');
+        state.notifications = state.notifications.slice(0,100);
+        if (document.hidden && prefs.system && nativeNotifications && nativeNotifications.permission() === 'granted') {
+          nativeNotifications.show(event.title,event.message,event.eventId);
+        } else if (document.hidden && prefs.system && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            const registration = await notificationRegistration();
+            if (registration) await registration.showNotification(event.title,{body:event.message,tag:event.eventId,
+              icon:new URL('./assets/itus-logo.png',document.baseURI).href,
+              data:{url:new URL('./',document.baseURI).href}});
+            else new Notification(event.title,{body:event.message,tag:event.eventId});
+          } catch (error) {
+            try { if ('Notification' in window && Notification.permission === 'granted') new Notification(event.title,{body:event.message,tag:event.eventId}); }
+            catch { console.warn('System notification:',error.message); }
+          }
+        }
       }
-      renderNotifications();
-    } catch (error) { console.warn('Notification poll:', error.message); }
+      renderNotifications(); renderUser();
+    } catch(error) { console.warn('Notification poll:',error.message); }
+    finally { state.polling = false; }
   }
 
   async function openQualityNotification(event) {
@@ -859,12 +1081,13 @@
 
   async function openNotification(eventId) {
     const event = state.notifications.find(item => item.eventId === eventId); if (!event) return;
+    if (event.type === 'new_messages') return setView('clients');
     if (event.type === 'quality_control_requested') return openQualityNotification(event);
     if (event.orderRef) { await loadSingleOrder(event.orderRef); state.view = event.type === 'executor_assigned' ? 'executor' : 'orders'; render(); }
   }
 
   function showSettings() {
-    showSheet('Подключение ИТУС', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
+    showSheet('Настройки ИТУС', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
   }
 
   async function test1C() {
@@ -881,6 +1104,8 @@
   }
 
   function manualQr() {
+    state.cameraStream?.getTracks().forEach(track => track.stop());
+    state.cameraStream = null;
     showSheet('Вход по QR-коду', 'Вставьте значение QR вручную', '<label for="qrValue">QR может содержать ID, ссылку или JSON</label><input id="qrValue" placeholder="Значение QR"><button class="primary" data-action="submit-auth-qr">Войти</button>');
   }
 
@@ -890,6 +1115,8 @@
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (!$('qrVideo')) { stream.getTracks().forEach(track => track.stop()); return; }
+      state.cameraStream = stream;
       const video = $('qrVideo'); video.srcObject = stream;
       const detector = new BarcodeDetector({ formats: ['qr_code'] });
       const scan = async () => {
@@ -909,6 +1136,8 @@
     const file = event.target.files?.[0], target = state.fileTarget; state.fileTarget = null;
     if (!file || !target) return;
     try {
+      if (target.type === 'messenger') { await messenger.upload(file,target); return; }
+      toast(`Загрузка файла «${file.name || 'вложения'}»…`);
       if (target.type === 'acceptance') await uploadAcceptanceFile(file, target.kind);
       else if (target.type === 'defect') await uploadDefectFile(file, target.kind);
       else if (target.type === 'client') await sendClientFile(file, target.kind);
@@ -917,6 +1146,11 @@
   }
 
   async function setView(view) {
+    if (messenger && (view === 'chat' || view === 'clients') && (state.views.chat || state.views.clients)) {
+      state.view='chat';document.body.classList.add('messenger-view');renderUser();renderTabs();renderNotifications();
+      return messenger.enter(view === 'clients' ? 'clients' : undefined);
+    }
+    messenger?.leave();
     if (!state.views[view]) view = 'orders';
     state.view = view; render();
     try {
@@ -966,15 +1200,38 @@
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
     try {
+      if (action.startsWith('msg-')) return messenger?.handle(action,button);
       if (action === 'view') return setView(button.dataset.view);
       if (action === 'login') { const id = String($('authUserId')?.value || '').trim(); if (!/^\d+$/.test(id)) return toast('ID пользователя MAX должен содержать только цифры', true); setAuth(id, 'manual'); return initialize(); }
       if (action === 'scan-auth-qr') return scanAuthQr();
       if (action === 'manual-auth-qr') return manualQr();
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return initialize(); }
       if (action === 'settings') return showSettings();
+      if (action === 'photo-camera' || action === 'photo-gallery') {
+        const target = state.photoTarget;
+        if (target) configureFilePicker(target, 'image/*', action === 'photo-camera' ? 'environment' : null);
+        return;
+      }
+      if (action === 'notification-settings') return showNotificationSettings();
+      if (action === 'save-notifications') {
+        const prefs = FEATURES.preferences(state.userId);
+        document.querySelectorAll('[data-notification-pref]').forEach(input => prefs[input.dataset.notificationPref] = input.checked);
+        localStorage.setItem('itus.notifications.'+state.userId, JSON.stringify(prefs));
+        state.notifications = state.notifications.filter(e => prefs[e.type]);
+        renderNotifications(); toast('Настройки уведомлений сохранены'); return;
+      }
+      if (action === 'enable-system-notifications') {
+        if (nativeNotifications) { nativeNotifications.requestPermission(); return; }
+        if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext) return toast('Нужен браузер с поддержкой уведомлений и HTTPS (или localhost)', true);
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {await notificationRegistration();enableSystemPreference();}
+        else {showNotificationSettings();toast('Разрешение не получено',true);}
+        return;
+      }
+      if (action === 'bot-messages') return setView('clients');
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
-      if (action === 'logout') { clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'' }); closeSheet(); return render(); }
+      if (action === 'logout') { messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
       if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); return render(); }
@@ -991,7 +1248,9 @@
       if (action === 'set-executor') return setExecutor(button.dataset.ref, button.dataset.name);
       if (action === 'start-executor-work') return startExecutorWork();
       if (action === 'complete-checklist') return completeChecklist();
-      if (action === 'package-create') return packageAction('create');
+      if (action === 'package-create') return preparePackage();
+      if (['worktime-works-next','worktime-self','worktime-employees-next','worktime-shares-next','worktime-back-works','worktime-back-employees'].includes(action)) return worktimeStep(action);
+      if (action === 'worktime-submit') return submitPackage();
       if (action === 'package-start') return packageAction('start');
       if (action === 'package-pause') return packageAction('pause');
       if (action === 'package-close') return packageAction('close');
@@ -1003,30 +1262,27 @@
       if (action === 'download-history') return downloadFile(state.historyFile);
       if (action === 'open-defect-chat') return openDefectSheet();
       if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
-      if (action === 'acceptance-photo') return configureFilePicker({ type:'acceptance',kind:'photo' }, 'image/*', 'environment');
+      if (action === 'acceptance-photo') return choosePhoto({ type:'acceptance',kind:'photo' });
       if (action === 'acceptance-video') return configureFilePicker({ type:'acceptance',kind:'video' }, 'video/*', 'environment');
-      if (action === 'defect-photo') return configureFilePicker({ type:'defect',kind:'photo' }, 'image/*', 'environment');
+      if (action === 'defect-photo') return choosePhoto({ type:'defect',kind:'photo' });
       if (action === 'defect-video') return configureFilePicker({ type:'defect',kind:'video' }, 'video/*', 'environment');
       if (action === 'send-defect-text') return sendDefectText();
-      if (action === 'start-voice') return startVoiceRecording();
-      if (action === 'stop-voice') return stopVoiceRecording(false);
-      if (action === 'transcribe-voice') return transcribeVoice(Number(button.dataset.index));
+      if (action === 'defect-media') return openDefectMedia(Number(button.dataset.index));
       if (action === 'complete-defect-sheet') return completeDefectSheet();
       if (action === 'load-client-topics') return loadClientTopics();
       if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return render(); }
       if (action === 'refresh-client-messages') { await loadClientMessages(state.selectedClientTopic); return render(); }
       if (action === 'send-client-message') return sendClientMessage();
-      if (action === 'client-photo') return configureFilePicker({type:'client',kind:'photo'}, 'image/*', 'environment');
+      if (action === 'client-photo') return choosePhoto({type:'client',kind:'photo'});
       if (action === 'client-video') return configureFilePicker({type:'client',kind:'video'}, 'video/*', 'environment');
       if (action === 'client-file') return configureFilePicker({type:'client',kind:'file'}, '*/*');
       if (action === 'load-chat-groups') return loadChatGroups();
       if (action === 'select-chat-topic') { state.selectedChatGroup = button.dataset.ref; await loadChatMessages(button.dataset.ref); return render(); }
       if (action === 'refresh-chat-messages') { await loadChatMessages(state.selectedChatGroup); return render(); }
       if (action === 'send-chat-message') return sendChatMessage();
-      if (action === 'chat-photo') return configureFilePicker({type:'chat',kind:'photo'}, 'image/*', 'environment');
+      if (action === 'chat-photo') return choosePhoto({type:'chat',kind:'photo'});
       if (action === 'chat-video') return configureFilePicker({type:'chat',kind:'video'}, 'video/*', 'environment');
       if (action === 'chat-file') return configureFilePicker({type:'chat',kind:'file'}, '*/*');
-      if (action === 'speech-input') return startSpeechToText(button.dataset.target);
       if (action === 'open-notification') return openNotification(button.dataset.event);
       if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return renderNotifications(); }
     } catch (error) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); }
@@ -1037,6 +1293,10 @@
   $('userPanel').addEventListener('click', () => state.userId ? showSettings() : null);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && state.initialized) pollNotifications(); });
 
+  window.ITUS_BACK = () => {
+    if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
+    return messenger?.back() || false;
+  };
   setAuth(readAuthFromContext(), 'max');
   render();
   if (state.userId) initialize();

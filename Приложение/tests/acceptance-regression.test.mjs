@@ -9,7 +9,7 @@ const handlers = {}, elements = new Map(), calls = [];
 function element(id) {
   if (!elements.has(id)) elements.set(id, { id, value:'', innerHTML:'', textContent:'', dataset:{}, style:{},
     classList:{ add(){}, remove(){}, toggle(){}, contains(){return true;} },
-    addEventListener(){}, focus(){}, setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;} });
+    setAttribute(){}, addEventListener(){}, focus(){}, setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;} });
   return elements.get(id);
 }
 const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,value:100},
@@ -39,6 +39,7 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
   return {ok,status:ok?200:500,async text(){return JSON.stringify(ok?{success:true,data}:{success:false,error:{message:'Photo rejected'}});}};
  }});
 context.window=context;
+vm.runInContext(fs.readFileSync(new URL('../assets/review-features.js',import.meta.url),'utf8'),context);
 vm.runInContext(fs.readFileSync(new URL('../assets/api-normalizers.js',import.meta.url),'utf8'),context);
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
 source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
@@ -125,4 +126,3 @@ await Promise.all([app.ensureDefectSheet(),app.ensureDefectSheet()]);
 assert.equal(calls.filter(c=>c.url.endsWith('/defects/start')).length,startCount+1);
 assert.equal(context.ITUS_API.mapOrder({...order,defectSheet:{documentRef:'nested-doc'}}).defectDocumentRef,'nested-doc');
 console.log('Existing document regression: OK — direct append, refresh before create, single concurrent start, nested reference.');
-

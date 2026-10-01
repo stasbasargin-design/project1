@@ -35,3 +35,35 @@ button:focus-visible,a:focus-visible{outline:3px solid #b9282470;outline-offset:
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .tabs{top:var(--header-height,90px)}
+
+/* Review 2.2: opaque surfaces and readable text, preserving screen structure. */
+:root{--muted:#4b5563;--line:#cbd1da}
+body{font-family:Arial,'Segoe UI',sans-serif;color:#17212f;line-height:1.55}
+.top,.tabs{background:#f4f5f7;backdrop-filter:none;-webkit-backdrop-filter:none}
+.top{flex-wrap:wrap}.product{flex:1;min-width:100px}
+.user-panel{max-width:210px}.user-name{white-space:normal;overflow-wrap:anywhere;font-size:14px}
+.sheet,.sheet-head,.card,.question{background:#fff;backdrop-filter:none}
+.overlay{background:rgba(18,24,34,.7);backdrop-filter:none;-webkit-backdrop-filter:none}
+.tiny,.message-meta,.entry-head,.topic-preview{font-size:14px}
+.message-meta{display:block;line-height:1.5;color:#435063}
+.message.mine .message-meta{color:#fff}.message.mine .attachment{color:#762622}
+.card h2,.card h3{letter-spacing:normal;font-weight:700}
+input,textarea,select{background:#fff;border-color:#aeb8c5}
+.bot-unread{margin-left:auto;border:1px solid #b92824;border-radius:10px;background:#fff;color:#9e201c;padding:8px 12px;font-weight:700;font-size:14px}
+.bot-unread[hidden]{display:none}
+.setting-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #d1d7df}
+.setting-row input{width:22px;height:22px;min-height:22px;flex:0 0 22px;margin:0}
+.review-banner{background:#fff3cd;color:#5c4300;padding:12px;font:16px Arial,sans-serif}
+
+/* v2.6.1: compact fixed application header */
+.top{position:fixed;top:0;left:50%;transform:translateX(-50%);width:min(520px,100%);padding:calc(8px + env(safe-area-inset-top)) 14px 10px;margin-bottom:0}
+.phone{padding-top:calc(var(--header-height,78px) + 12px + env(safe-area-inset-top))}
+.product p{display:none}
+.tabs{top:var(--header-height,78px)}
+@media(max-width:390px){.top{padding-left:11px;padding-right:11px}.phone{padding-top:calc(var(--header-height,70px) + 10px + env(safe-area-inset-top))}.tabs{top:var(--header-height,70px)}}
+
+/* Compact unread badge belongs to the Chats navigation button. */
+.tab{position:relative}
+.tab .chat-unread-dot{position:absolute;top:4px;right:6px;display:flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 4px;border-radius:999px;background:#c52b27;color:#fff;border:2px solid #fff;font-size:10px;font-weight:800;line-height:1;box-sizing:border-box;pointer-events:none}
+.tab .chat-unread-dot[hidden]{display:none}
+.tab.active .chat-unread-dot{background:#fff;color:#b92824;border-color:#fff}

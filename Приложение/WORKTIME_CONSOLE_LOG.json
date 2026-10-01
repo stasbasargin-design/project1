@@ -1,0 +1,26 @@
+[
+  {
+    "level": "info",
+    "message": "[ITUS worktime] /worktime/orders/works {\"orderRef\":\"review-order\"}",
+    "timestamp": "2026-09-30T07:54:02.194Z",
+    "url": "http://localhost:18085/assets/worktime.js"
+  },
+  {
+    "level": "info",
+    "message": "[ITUS worktime] /worktime/executors/list {\"orderRef\":\"review-order\",\"workshopRef\":\"review-workshop\"}",
+    "timestamp": "2026-09-30T07:54:08.482Z",
+    "url": "http://localhost:18085/assets/worktime.js"
+  },
+  {
+    "level": "info",
+    "message": "[ITUS worktime] /worktime/participation/validate {\"orderRef\":\"review-order\",\"workshopRef\":\"review-workshop\",\"workRefs\":[\"review-work-1\"],\"participants\":[{\"employeeRef\":\"review-self\",\"percent\":60},{\"employeeRef\":\"review-colleague\",\"percent\":40}],\"clientPackageId\":\"fee69e2c-e4ec-4ce0-9bf3-ab50ef890923\"}",
+    "timestamp": "2026-09-30T07:54:41.304Z",
+    "url": "http://localhost:18085/assets/worktime.js"
+  },
+  {
+    "level": "info",
+    "message": "[ITUS worktime] /worktime/packages/create {\"orderRef\":\"review-order\",\"workshopRef\":\"review-workshop\",\"workRefs\":[\"review-work-1\"],\"participants\":[{\"employeeRef\":\"review-self\",\"percent\":60},{\"employeeRef\":\"review-colleague\",\"percent\":40}],\"clientPackageId\":\"fee69e2c-e4ec-4ce0-9bf3-ab50ef890923\"}",
+    "timestamp": "2026-09-30T07:54:41.308Z",
+    "url": "http://localhost:18085/assets/worktime.js"
+  }
+]

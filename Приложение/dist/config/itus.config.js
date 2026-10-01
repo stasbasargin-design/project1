@@ -8,10 +8,25 @@
   ID ботов MAX заполните ниже. Токены ботов и webhook secret должны
   храниться только в 1С.
 */
+const runtimeApiBase = (() => {
+  if (typeof window === 'undefined') return '/api/1c';
+  const explicit = window.__ITUS_API_BASE__ || window.ITUS_API_BASE_URL || '';
+  if (explicit) return explicit.replace(/\/$/, '');
+  if (window.location.protocol === 'file:') {
+    // Android / Capacitor запускает приложение как файл. Для нативной сборки используем
+    // тот же HTTPS-прокси, что и на продакшн-домене: /p/max-service/api/1c.
+    return 'https://ea-itus.ru/p/max-service/api/1c';
+  }
+  const baseUrl = new URL(document.baseURI);
+  const normalizedPath = baseUrl.pathname.endsWith('/') ? baseUrl.pathname : `${baseUrl.pathname}/`;
+  return new URL('./api/1c', `${baseUrl.origin}${normalizedPath}`).pathname.replace(/\/$/, '');
+})();
+
 window.ITUS_CONFIG = {
   // Единый адрес для локального и production-запуска.
   // Vite (npm run dev) и server.mjs (npm start) проксируют его в 1С.
-  ONE_C_API_BASE_URL: new URL("./api/1c", document.baseURI).pathname.replace(/\/$/, ""),
+  // Для Android APK используйте HTTPS-домен, а не file:// или localhost.
+  ONE_C_API_BASE_URL: runtimeApiBase,
 
   // Фактический адрес опубликованного HTTP-сервиса 1С — для отображения и диагностики.
   ONE_C_PUBLIC_BASE_URL: "https://1c.eazia.ru/aa6_ea_test9/ru/hs/max-service",
@@ -25,7 +40,8 @@ window.ITUS_CONFIG = {
   REQUEST_TIMEOUT_MS: 35000,
 
   // Проверка уведомлений о назначении исполнителя и запросе выходного контроля.
-  POLL_INTERVAL_MS: 15000,
+  // Лёгкий опрос счётчиков и событий. История чатов и вложения здесь не запрашиваются.
+  POLL_INTERVAL_MS: 3000,
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
   MAX_UPLOAD_BYTES: 15728640,

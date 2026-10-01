@@ -10,10 +10,14 @@
   <title>ИТУС — управление сервисом</title>
   <link rel="stylesheet" href="./assets/app.css">
   <link rel="stylesheet" href="./assets/modern.css">
+  <link rel="stylesheet" href="./assets/messenger.css">
   <link rel="icon" type="image/png" href="./assets/itus-logo.png">
   <script>window.WebApp = window.WebApp || {ready(){},expand(){},close(){},platform:"web"};</script>
   <script src="./config/itus.config.js"></script>
   <script src="./assets/api-normalizers.js"></script>
+  <script src="./assets/review-features.js"></script>
+  <script src="./assets/messenger.js"></script>
+  <link rel="stylesheet" href="./assets/hotfix-v263.css">
 </head>
 <body>
   <div class="brand-rail" aria-hidden="true"></div>
@@ -22,7 +26,6 @@
       <div class="logo"><img src="./assets/itus-logo.png" alt="Логотип ИТУС"></div>
       <div class="product">
         <h1>ИТУС</h1>
-        <p>информационные технологии управления сервисом</p>
       </div>
       <button class="user-panel" id="userPanel" type="button" aria-label="Профиль и подключение к 1С"></button>
     </header>
@@ -43,6 +46,8 @@
     </div>
   </div>
   <input id="filePicker" class="hidden" type="file">
+  <script src="./assets/hotfix-v263.js"></script>
+  <script src="./assets/worktime.js"></script>
   <script src="./assets/app.js"></script>
 </body>
 </html>

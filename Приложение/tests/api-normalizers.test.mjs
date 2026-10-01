@@ -48,6 +48,15 @@ assert.equal(process.form.fields[0].type, 'number');
 assert.equal(process.survey.questions[0].options[1].value, 'bad');
 
 assert.deepEqual(api.normalizeUser([{ maxUserId: 1 }, { name: 'Пользователь' }, { role: 'master' }]), { maxUserId: 1, name: 'Пользователь', role: 'master' });
+assert.equal(api.normalizeUser({employee:{fullName:'Иванов Иван'},maxUserId:'123'}).name,'Иванов Иван');
+assert.equal(api.normalizeTopic({groupRef:'shift',title:'Передача смены'},0).ref,'shift');
+const defectMedia = api.normalizeProcess({entries:[{entryRef:'d1',text:'Осмотр',attachments:[
+  {fileRef:'p1',fileName:'photo.jpg',mimeType:'image/jpeg'},
+  {fileRef:'v1',fileName:'video.mp4',mimeType:'video/mp4'}
+]}]}, 'defectSheet');
+assert.equal(defectMedia.entries.length, 2);
+assert.equal(defectMedia.entries[0].type, 'photo');
+assert.equal(defectMedia.entries[1].type, 'video');
 
 const messages = api.extractItems({ data: { messages: [{ messageId: 'm1', direction: 'outgoing', text: 'Тест' }] } }, ['messages']).map(api.normalizeMessage);
 assert.equal(messages[0].side, 'mine');

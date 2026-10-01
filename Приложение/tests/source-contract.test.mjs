@@ -9,4 +9,5 @@ for(const id of ['engineHours','reason'])assert.equal(process.form.fields.find(f
 assert.equal(process.form.fields.find(f=>f.id==='mileage').required,true);
 assert.equal(contract.basePath,'/aa6_ea_test9/ru/hs/max-service');
 assert.ok(contract.methods['/defects/entries/add'].request.documentRef);
+for (const route of ['/acceptance/entries/add','/clients/messages/read','/internal-chat/messages/read','/internal-chat/contacts/list','/internal-chat/direct/open']) assert.ok(contract.methods[route]);
 console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');
