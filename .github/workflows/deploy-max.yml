@@ -1,0 +1,40 @@
+name: Deploy MAX Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app-max/**"
+      - ".github/workflows/deploy-max.yml"
+
+  workflow_dispatch:
+
+concurrency:
+  group: max-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Timeweb
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
+          SSH_HOST: ${{ secrets.TIMEWEB_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy MAX Service
+        env:
+          SSH_HOST: ${{ secrets.TIMEWEB_HOST }}
+          SSH_USER: ${{ secrets.TIMEWEB_USER }}
+        run: |
+          ssh "$SSH_USER@$SSH_HOST" \
+            "sudo /usr/local/bin/deploy-max.sh"
