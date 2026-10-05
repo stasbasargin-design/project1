@@ -94,6 +94,7 @@
     const executor = isObject(x.executor) ? x.executor : {};
     const post = isObject(x.post) ? x.post : {};
     const worktime = isObject(x.worktime) ? x.worktime : {};
+    const worktimePackages = Array.isArray(worktime.packages) ? worktime.packages : (Array.isArray(x.worktimePackages) ? x.worktimePackages : []);
     const unread = isObject(x.unread) ? x.unread : {};
     const counters = isObject(x.counters) ? x.counters : {};
     const id = text(x.orderRef || x.ref || x.orderId || x.id || x.orderNumber || x.number);
@@ -123,6 +124,11 @@
       workshopRef: text(x.workshopRef || x.workshop?.workshopRef || x.workshop?.ref),
       packageRef: text(worktime.packageRef || x.packageRef),
       packageStatus: text(worktime.status || x.packageStatus || x.package, 'Не создан'),
+      worktimePackages: worktimePackages.map(item => ({
+        packageRef: text(item?.packageRef || item?.ref || item?.id),
+        number: text(item?.packageNumber || item?.number || item?.name),
+        status: text(item?.status?.title || item?.status?.name || item?.statusTitle || (typeof item?.status === 'string' ? item.status : '') || item?.status?.code, 'Не стартовал')
+      })).filter(item => item.packageRef),
       defectDocumentRef: text(x.defectDocumentRef || x.defectSheetRef || x.defectSheet?.documentRef || x.defectSheet?.ref || x.defectSheet?.document?.ref),
       defects: normalizeDefects(x.defects || x.defectEntries),
       media: normalizeMedia(x.media || x.files || x.photos),

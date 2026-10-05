@@ -1,5 +1,5 @@
 {
-  "contractVersion": "2.6.6",
+  "contractVersion": "2.6.7",
   "application": "ITUS Service MAX",
   "transport": "HTTPS POST, application/json; charset=utf-8, without BOM",
   "basePath": "/aa6_ea_test9/ru/hs/max-service",
@@ -11,7 +11,7 @@
     "authId": "same as userId for compatibility",
     "authMode": "max | manual | qr",
     "miniApp": "ITUS",
-    "version": "itus-max-2.6.6-worktime",
+    "version": "itus-max-2.6.7-worktime",
     "max": "MAX WebApp context"
   },
   "commonSuccess": {
@@ -471,6 +471,26 @@
         "entryRef": "ENTRY_GUID",
         "transcript": "Распознанный текст голосового сообщения"
       }
+    },
+    "/worktime/packages/list": {
+      "purpose": "Получить незакрытые пакеты работ выбранного заказ-наряда",
+      "request": {
+        "orderRef": "ORDER_GUID",
+        "onlyOpen": true
+      },
+      "responseData": {
+        "packages": [
+          {
+            "packageRef": "PACKAGE_GUID",
+            "packageNumber": "УРВ-0007",
+            "status": "Не стартовал | В работе | Перерыв"
+          }
+        ]
+      },
+      "validation": [
+        "Возвращать только пакеты указанного ЗН, доступные текущему пользователю",
+        "При onlyOpen:true не возвращать закрытые пакеты"
+      ]
     },
     "/worktime/packages/create": {
       "purpose": "Атомарное создание пакета из работ ЗН и участников; packageRef не требуется",

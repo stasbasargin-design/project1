@@ -2,6 +2,7 @@
   'use strict';
   const methods = Object.freeze({
     works: '/worktime/orders/works',
+    packages: '/worktime/packages/list',
     executors: '/worktime/executors/list',
     participation: '/worktime/participation/validate',
     create: '/worktime/packages/create',
@@ -32,6 +33,7 @@
   function validateRequest(method, body) {
     if (!Object.values(methods).includes(method)) return body;
     requireRef(body?.orderRef, 'Заказ-наряд');
+    if (method === methods.packages) return body;
     if ([methods.start, methods.pause, methods.close].includes(method)) {
       requireRef(body.packageRef, 'Пакет');
       return body;
@@ -57,7 +59,7 @@
   function record(method, body) {
     if (!tracing || !Object.values(methods).includes(method)) return;
     const request = {};
-    for (const key of ['orderRef','withoutActivePackages','workshopRef','workRefs','participants','clientPackageId','packageRef']) if (body[key] !== undefined) request[key] = body[key];
+    for (const key of ['orderRef','onlyOpen','withoutActivePackages','workshopRef','workRefs','participants','clientPackageId','packageRef']) if (body[key] !== undefined) request[key] = body[key];
     requests.push(JSON.parse(JSON.stringify({method,request})));
     if (requests.length > 30) requests.shift();
     console.info('[ITUS worktime]', method, JSON.stringify(request));

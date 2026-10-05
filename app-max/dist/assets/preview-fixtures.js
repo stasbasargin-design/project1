@@ -13,7 +13,7 @@
   let clientUnread = 1;
   const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2}];
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
-  let packageData = null;
+  let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();
   const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
   window.fetch = async (url,options={}) => {
@@ -27,6 +27,7 @@
       try { window.ITUS_WORKTIME.validateRequest(method,body); }
       catch(error) { return new Response(JSON.stringify({success:false,error:{code:'VALIDATION_ERROR',message:error.message}}),{status:400,headers:{'Content-Type':'application/json'}}); }
       if(method === '/worktime/orders/works') data={workshopRef:'review-workshop',works:[{workRef:'review-work-1',name:'Диагностика',available:true},{workRef:'review-work-2',name:'Замена масла',available:true},{workRef:'review-work-3',name:'Работа с активным пакетом',available:true,hasActivePackage:true,activePackageRef:'other-package'}].filter(work => ![...created.values()].some(entry => entry.workRefs.includes(work.workRef) && entry.package.status !== 'Закрыт'))};
+      else if(method === '/worktime/packages/list') data={packages:packageData && packageData.status !== 'Закрыт' ? [packageData] : []};
       else if(method === '/worktime/executors/list') data={executors:[{employeeRef:'review-self',name:'Тестовый сотрудник ИТУС',workshopRef:'review-workshop',available:true},{employeeRef:'review-colleague',name:'Петров Алексей',workshopRef:'review-workshop',available:true}]};
       else if(method === '/worktime/participation/validate') data={valid:true};
       else if(method === '/worktime/packages/create') {

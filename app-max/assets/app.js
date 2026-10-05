@@ -20,7 +20,7 @@
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'itus-max-2.6.6-worktime'
+    version: 'itus-max-2.6.7-worktime'
   };
 
   const ALL_VIEWS = {
@@ -312,7 +312,8 @@
     const defectCell = defectRef
       ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
       : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><div class="stat"><span class="tiny">Пакет УРВ</span><br><b>${esc(order.packageStatus)}</b></div>${defectCell}</div></div>`;
+    const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
   }
 
   function renderOrdersView() {
@@ -431,8 +432,9 @@
   function renderExecutorView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    const packageReady = Boolean(order.packageRef);
-    return renderSelectedCard() + `<div class="card"><h2>Действия исполнителя</h2><div class="grid two"><button data-action="start-executor-work">Начать работу</button><button data-action="open-defect-chat">Добавить дефект</button><button data-action="package-create">Создать пакет УРВ</button><button data-action="package-start" ${!packageReady ? 'disabled' : ''}>Начать пакет</button><button data-action="package-pause" ${!packageReady ? 'disabled' : ''}>Начать перерыв</button><button data-action="package-close" ${!packageReady ? 'disabled' : ''}>Закрыть пакет</button><button data-action="production">Выработка</button></div></div>` + renderProcess('_checklist', order._checklist, 'complete-checklist', 'Завершить контрольный лист');
+    const packageReady = Boolean(order.packageRef) && !/закрыт|closed/i.test(order.packageStatus);
+    const packageRunning = /в работе|работает|started|running/i.test(order.packageStatus);
+    return renderSelectedCard() + `<div class="card"><h2>Действия исполнителя</h2><div class="grid two"><button data-action="start-executor-work">Начать работу</button><button data-action="open-defect-chat">Добавить дефект</button><button data-action="package-create">Создать пакет УРВ</button><button data-action="package-start" ${!packageReady || packageRunning ? 'disabled' : ''}>Старт</button><button data-action="package-pause" ${!packageReady || !packageRunning ? 'disabled' : ''}>Пауза</button><button data-action="package-close" ${!packageReady ? 'disabled' : ''}>Закрыть</button><button data-action="production">Выработка</button></div></div>` + renderProcess('_checklist', order._checklist, 'complete-checklist', 'Завершить контрольный лист');
   }
 
   function renderTechView() {
@@ -582,7 +584,7 @@
       const self = d.employees.find(x => x.ref === state.user?.employeeRef);
       body = `${self ? button('worktime-self','Делаю сам') : '<p>1С не вернула вас в списке доступных исполнителей.</p>'}<h3>Другие исполнители цеха</h3><p>Выберите исполнителей. Чтобы участвовать вместе с коллегами, отметьте «Я участвую».</p>${self ? `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(self.ref)}" ${d.employeeRefs.includes(self.ref) ? 'checked' : ''}>Я участвую</label>` : ''}${d.employees.filter(x => x.ref !== self?.ref).map(x => `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(x.ref)}" ${d.employeeRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}${button('worktime-employees-next','Подтвердить исполнителей')}<button data-action="worktime-back-works">Назад к работам</button>`;
     } else if (d.step === 'shares') {
-      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}${button('worktime-shares-next','Подтвердить распределение')}<button data-action="worktime-back-employees">Назад к исполнителям</button>`;
+      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}<button class="secondary" data-action="worktime-shares-equal">Распределить % поровну</button>${button('worktime-shares-next','Подтвердить распределение')}<button data-action="worktime-back-employees">Назад к исполнителям</button>`;
     } else {
       body = `<h3>Подтверждение пакета</h3><h4>Работы</h4><ul>${d.workRefs.map(ref => `<li>${esc(d.works.find(x => x.ref === ref)?.name)}</li>`).join('')}</ul><h4>Исполнители</h4><ul>${d.participants.map(p => `<li>${esc(d.employees.find(x => x.ref === p.employeeRef)?.name)} — ${p.percent}%</li>`).join('')}</ul>${button('worktime-submit','Подтвердить и создать пакет')}${!d.sent ? '<button data-action="worktime-back-employees">Изменить исполнителей</button>' : '<p>При повторе отправляется тот же состав с тем же идентификатором.</p>'}`;
     }
@@ -627,6 +629,10 @@
         if (!d.employeeRefs.length || d.employeeRefs.some(ref => !d.employees.some(x => x.ref === ref))) throw new Error('Выберите доступных исполнителей');
         d.participants = d.employeeRefs.length === 1 ? [{employeeRef:d.employeeRefs[0],percent:100}] : d.participants.filter(p => d.employeeRefs.includes(p.employeeRef));
         d.step = d.employeeRefs.length === 1 ? 'confirm' : 'shares';
+      } else if (action === 'worktime-shares-equal') {
+        const totalCents = 10000, count = d.employeeRefs.length;
+        const base = Math.floor(totalCents / count), remainder = totalCents - base * count;
+        d.participants = d.employeeRefs.map((employeeRef, index) => ({employeeRef, percent:(base + (index < remainder ? 1 : 0)) / 100}));
       } else if (action === 'worktime-shares-next') {
         const values = new Map([...$('sheetBody').querySelectorAll('[data-worktime-percent]')].map(el => [el.dataset.worktimePercent,Number(el.value)]));
         d.participants = window.ITUS_WORKTIME.participation(d.employeeRefs.map(employeeRef => ({employeeRef,percent:values.get(employeeRef)})));
@@ -636,6 +642,41 @@
       renderWorktimeStep();
     } catch(error) { $('worktimeError').textContent = error.message; }
     finally { d.busy = false; state.busy = false; }
+  }
+
+  function normalizeWorktimePackage(item) {
+    const status = item?.status?.title || item?.status?.name || item?.statusTitle || (typeof item?.status === 'string' ? item.status : '') || item?.status?.code || 'Не стартовал';
+    return { packageRef:String(item?.packageRef || item?.ref || item?.id || ''), number:String(item?.packageNumber || item?.number || item?.name || ''), status:String(status) };
+  }
+
+  function availablePackages(order, remote = []) {
+    const current = order.packageRef ? [{packageRef:order.packageRef, packageNumber:order.packageNumber, status:order.packageStatus}] : [];
+    return [...remote, ...(order.worktimePackages || []), ...current].map(normalizeWorktimePackage)
+      .filter((item, index, all) => item.packageRef && !/закрыт|closed/i.test(item.status) && all.findIndex(x => x.packageRef === item.packageRef) === index);
+  }
+
+  function renderPackageChoices(packages, warning = '') {
+    $('sheetBody').innerHTML = `${warning ? `<p class="tiny">${esc(warning)}</p>` : ''}${packages.length ? `<div class="grid">${packages.map(item => `<button data-action="package-use" data-ref="${escAttr(item.packageRef)}" data-number="${escAttr(item.number)}" data-status="${escAttr(item.status)}"><b>${esc(item.number || 'Пакет УРВ')}</b><br><span class="tiny">${esc(item.status)}</span></button>`).join('')}</div>` : '<div class="empty">У этого ЗН нет незакрытых пакетов работ.</div>'}`;
+  }
+
+  async function selectPackage() {
+    const order = currentOrder(); if (!order || state.busy) return;
+    showSheet('Пакеты работ', `Незакрытые пакеты ЗН ${order.num}`, '<div class="loading"><span class="spinner"></span>Загрузка из 1С…</div>');
+    try {
+      const response = await call1C('/worktime/packages/list', orderPayload({onlyOpen:true}));
+      const remote = API.extractItems(response, ['packages','worktimePackages']).map(normalizeWorktimePackage);
+      renderPackageChoices(availablePackages(order, remote));
+    } catch (error) {
+      const embedded = availablePackages(order);
+      if (embedded.length) renderPackageChoices(embedded, 'Показаны пакеты из карточки ЗН; обновить полный список из 1С не удалось.');
+      else $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button data-action="package-select">Повторить</button>`;
+    }
+  }
+
+  function usePackage(ref, number, status) {
+    const order = currentOrder(); if (!order || !ref) return;
+    order.packageRef = ref; order.packageNumber = number || ''; order.packageStatus = status || 'Не стартовал';
+    closeSheet(); render(); toast('Пакет УРВ выбран');
   }
 
   async function submitPackage() {
@@ -1249,7 +1290,9 @@
       if (action === 'start-executor-work') return startExecutorWork();
       if (action === 'complete-checklist') return completeChecklist();
       if (action === 'package-create') return preparePackage();
-      if (['worktime-works-next','worktime-self','worktime-employees-next','worktime-shares-next','worktime-back-works','worktime-back-employees'].includes(action)) return worktimeStep(action);
+      if (action === 'package-select') return selectPackage();
+      if (action === 'package-use') return usePackage(button.dataset.ref, button.dataset.number, button.dataset.status);
+      if (['worktime-works-next','worktime-self','worktime-employees-next','worktime-shares-equal','worktime-shares-next','worktime-back-works','worktime-back-employees'].includes(action)) return worktimeStep(action);
       if (action === 'worktime-submit') return submitPackage();
       if (action === 'package-start') return packageAction('start');
       if (action === 'package-pause') return packageAction('pause');

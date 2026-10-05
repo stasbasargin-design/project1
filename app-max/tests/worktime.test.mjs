@@ -33,6 +33,7 @@ const c=vm.createContext({console,URL,URLSearchParams,AbortController,crypto:web
     const body=JSON.parse(options.body);calls.push({url,body});let data={};
     if(url.endsWith('/notifications/poll')) data=resolvePoll === true ? await new Promise(resolve=>{resolvePoll=resolve;}) : pollData;
     if(url.endsWith('/orders/works'))data={workshopRef:'shop',works:[{workRef:'row',name:'Работа'},{workRef:'blocked',name:'Активный пакет',hasActivePackage:true},{workRef:'blocked2',name:'Ссылка активного пакета',activePackageRef:'active'}]};
+    if(url.endsWith('/packages/list'))data={packages:[{packageRef:'open-package',packageNumber:'УРВ-7',status:'Не стартовал'},{packageRef:'closed-package',packageNumber:'УРВ-6',status:'Закрыт'}]};
     if(url.endsWith('/executors/list'))data={executors:[{employeeRef:'self',name:'Я'},{employeeRef:'colleague',name:'Коллега'}]};
     if(url.endsWith('/participation/validate'))data={valid:!rejectValidation};
     if(url.endsWith('/packages/create')){if(failCreate)throw Error('Connection lost');data=missingPackage?{}:{package:{packageRef:'created',status:'Создан'}};}
@@ -41,7 +42,7 @@ const c=vm.createContext({console,URL,URLSearchParams,AbortController,crypto:web
 });c.window=c;
 for(const f of ['review-features.js','api-normalizers.js','worktime.js'])vm.runInContext(fs.readFileSync(new URL('../assets/'+f,import.meta.url),'utf8'),c);
 let src=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-src=src.replace("  setAuth(readAuthFromContext(), 'max');", "  window.testApp={state,preparePackage,submitPackage,packageAction,renderTabs,worktimeStep,messagesRead,pollNotifications,renderNotifications};\n  setAuth(readAuthFromContext(), 'max');");
+src=src.replace("  setAuth(readAuthFromContext(), 'max');", "  window.testApp={state,preparePackage,submitPackage,packageAction,selectPackage,usePackage,renderTabs,worktimeStep,messagesRead,pollNotifications,renderNotifications};\n  setAuth(readAuthFromContext(), 'max');");
 vm.runInContext(src,c);
 const app=c.testApp;app.state.user={employeeRef:'self'};app.state.userId='123';app.state.orders=[{id:'order',orderRef:'order'}];app.state.selectedOrderId='order';
 await app.preparePackage();
@@ -53,6 +54,9 @@ assert.equal(calls.at(-1).url,'/api/1c/worktime/executors/list');
 assert.match(element('sheetBody').innerHTML,/Делаю сам/);
 await app.worktimeStep('worktime-employees-next');
 assert.match(element('sheetBody').innerHTML,/Распределение участия/);
+assert.match(element('sheetBody').innerHTML,/Распределить % поровну/);
+await app.worktimeStep('worktime-shares-equal');
+assert.match(element('sheetBody').innerHTML,/value="50"/);
 percent=30;await app.worktimeStep('worktime-shares-next');assert.equal(calls.length,2);assert.match(element('worktimeError').textContent,/100%/);
 percent=40;await app.worktimeStep('worktime-shares-next');assert.match(element('sheetBody').innerHTML,/Подтверждение пакета/);
 rejectValidation=true;await app.submitPackage();assert.equal(calls.length,3);assert.equal(app.state.orders[0].packageRef,undefined);
@@ -65,7 +69,9 @@ assert.equal(creates.length,3);assert.equal(new Set(creates.map(x=>x.body.client
 assert.ok(creates.every(x=>!('packageRef' in x.body)));
 assert.deepEqual(creates.at(-1).body.participants,participants);
 assert.equal(creates.at(-1).body.userId,'123');assert.ok(creates.at(-1).body.max);
-await app.packageAction('start');assert.equal(calls.at(-1).body.packageRef,'created');
+await app.selectPackage();assert.match(element('sheetBody').innerHTML,/УРВ-7/);assert.doesNotMatch(element('sheetBody').innerHTML,/УРВ-6/);
+app.usePackage('open-package','УРВ-7','Не стартовал');assert.equal(app.state.orders[0].packageRef,'open-package');
+await app.packageAction('start');assert.equal(calls.at(-1).body.packageRef,'open-package');
 await app.preparePackage();await app.worktimeStep('worktime-works-next');await app.worktimeStep('worktime-self');
 assert.match(element('sheetBody').innerHTML,/Подтверждение пакета/);assert.doesNotMatch(element('sheetBody').innerHTML,/data-worktime-percent/);
 await app.submitPackage();assert.deepEqual(calls.filter(x=>x.url.endsWith('/packages/create')).at(-1).body.participants,[{employeeRef:'self',percent:100}]);
