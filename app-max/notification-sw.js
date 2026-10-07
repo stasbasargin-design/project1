@@ -7,7 +7,7 @@ self.addEventListener('push', event => {
   try { payload = event.data ? event.data.json() : {}; }
   catch (_) { payload = { body: event.data ? event.data.text() : '' }; }
 
-  const title = payload.title || 'ИТУС';
+  const title = payload.title || 'I-MAX';
   const options = {
     body: payload.body || 'Новое уведомление',
     tag: payload.tag || 'itus-max-push',

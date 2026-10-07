@@ -68,7 +68,7 @@
     }
     function conversationHtml(){
       const item=current(),k=selectedKey();
-      if(!item)return '<div class="msg-placeholder"><span>ИТУС</span><h2>Выберите переписку</h2><p>Клиенты и сотрудники в одном разделе</p></div>';
+      if(!item)return '<div class="msg-placeholder"><span>I-MAX</span><h2>Выберите переписку</h2><p>Клиенты и сотрудники в одном разделе</p></div>';
       const uploadState=sending[k]==='upload';
       return `<header class="msg-conversation-head"><button class="msg-back" data-action="msg-back" aria-label="Назад к чатам">←</button><span class="msg-avatar">${escape(initials(item.title))}</span><div><strong>${escape(item.title)}</strong><small>${escape(item.subtitle||labels[source])}</small></div><button data-action="msg-refresh-messages" aria-label="Обновить сообщения" ${busy[k]?'disabled':''}>↻</button></header>${errors[k]?`<div class="msg-error" role="alert">${escape(errors[k])}</div>`:''}<div class="msg-history" role="log" aria-label="История переписки">${historyHtml()}</div>${uploadState?'<div class="msg-uploading" role="status"><span class="spinner"></span>Загрузка вложения в 1С…</div>':''}<div class="msg-compose"><button data-action="msg-attach" aria-label="Прикрепить файл">＋</button>${source==='clients'?'<button class="msg-poll-button" data-action="msg-poll" aria-label="Создать опрос">☑</button>':''}<textarea id="msgDraft" rows="1" aria-label="Сообщение" placeholder="Сообщение">${escape(drafts[k]||'')}</textarea><button class="msg-send" data-action="msg-send" ${sending[k]?'disabled':''} aria-label="Отправить сообщение">${sending[k]?'…':'➤'}</button></div>`;
     }

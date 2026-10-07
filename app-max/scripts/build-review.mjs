@@ -5,7 +5,7 @@ html=html.replace('</body>','<script src="./assets/worktime-review-console.js"><
 html=html.replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script>\n  <script src="./config/itus.config.js">');
 html=html.replace('<body>','<body><div class="review-banner">Проверочный режим · тестовые данные · записи в 1С нет. Роль: <a href="?role=master">МП</a> / <a href="?role=executor">Исполнитель</a> / <a href="?role=tech">Технолог</a></div>');
 html=html.replace('Связь с 1С ещё не проверена','Тестовый источник данных');
-html=html.replace('ИТУС · данные, анкеты, документы и сообщения синхронизируются с 1С Альфа-Авто 6.1.','ИТУС · проверочные данные в памяти браузера; соединения с 1С нет.');
+html=html.replace('I-MAX · данные, анкеты, документы и сообщения синхронизируются с 1С Альфа-Авто 6.1.','I-MAX · проверочные данные в памяти браузера; соединения с 1С нет.');
 writeFileSync(new URL('dist/preview.html',root),html);
 // A portable review file: no install and no connection to the service required.
 let portable=html.replace(/<link rel="stylesheet" href="\.\/(.*?)">/g,(_,path)=>'<style>'+readFileSync(new URL(path,root),'utf8')+'</style>');

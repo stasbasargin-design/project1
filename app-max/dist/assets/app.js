@@ -20,7 +20,7 @@
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'itus-max-2.6.9-max-qr'
+    version: 'i-max-2.7.0'
   };
 
   const ALL_VIEWS = {
@@ -242,7 +242,7 @@
     $('tabs').innerHTML = '';
     $('notifications').innerHTML = '';
     $('userPanel').innerHTML = '<div class="avatar">ID</div><div class="user-meta"><div class="user-name">Вход</div><div class="user-role">MAX ID или QR</div></div>';
-    $('app').innerHTML = `<div class="card"><h2>Вход в ИТУС</h2><p class="muted">Безопасная авторизация выполняется через подтверждение учётной записи в MAX.</p><button class="primary" data-action="max-qr-auth">Войти через MAX</button><div class="grid two" style="margin-top:8px"><button data-action="scan-auth-qr">Считать QR-код</button><button data-action="manual-auth-qr">Ввести код вручную</button></div><details><summary class="tiny">Резервный вход по ID</summary><label for="authUserId">ID пользователя MAX</label><input id="authUserId" inputmode="numeric" autocomplete="off" placeholder="Только цифры"><button class="secondary" data-action="login">Войти по ID</button></details></div>`;
+    $('app').innerHTML = `<div class="card"><h2>Вход в I-MAX</h2><p class="muted">Безопасная авторизация выполняется через подтверждение учётной записи в MAX.</p><button class="primary" data-action="max-qr-auth">Войти через MAX</button><div class="grid two" style="margin-top:8px"><button data-action="scan-auth-qr">Считать QR-код</button><button data-action="manual-auth-qr">Ввести код вручную</button></div><details><summary class="tiny">Резервный вход по ID</summary><label for="authUserId">ID пользователя MAX</label><input id="authUserId" inputmode="numeric" autocomplete="off" placeholder="Только цифры"><button class="secondary" data-action="login">Войти по ID</button></details></div>`;
   }
 
   function renderUser() {
@@ -1130,7 +1130,7 @@
   }
 
   function showSettings() {
-    showSheet('Настройки ИТУС', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
+    showSheet('Настройки I-MAX', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
   }
 
   async function test1C() {
