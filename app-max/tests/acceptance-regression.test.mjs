@@ -26,7 +26,7 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
  async fetch(url,options){
   const body=JSON.parse(options.body); calls.push({url,body});let data={};let ok=true;
   if(url.endsWith('/acceptance/start')) data={acceptance:{documentRef:'act-1',photo:{required:photoRequired},form:{fields},survey:{surveyRef:'survey-1',questions:[{id:'required',text:'Кузов',required:true,options:['ok']},{id:'optional',text:'Комментарий',required:false}]}}};
-  if(url.endsWith('/acceptance/entries/add')){
+  if(url.endsWith('/defects/entries/add') && body.entry?.type !== 'text'){
     if (acceptanceUpload404) {
       ok=false; data={success:false,error:{message:'Acceptance endpoint not found'}};
       return {ok,status:404,async text(){return JSON.stringify(data);}};
@@ -88,15 +88,16 @@ assert.deepEqual(completions()[0].body.formValues,{mileage:100,engineHours:'',re
 assert.equal(completions()[0].body.answers.required,'ok');assert.equal(completions()[0].body.userId,'123');
 assert.equal(app.currentOrder()._acceptance,null);
 
-// MP photo payload must use the acceptance document, not the executor defect sheet.
+// MP photo payload uses the shared defects endpoint but keeps the acceptance document reference.
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
 acceptanceUpload404=false;await app.uploadAcceptanceFile(file,'photo');
-assert.equal(calls.filter(c=>c.url.endsWith('/acceptance/entries/add')).at(-1).body.documentRef,process.documentRef);
+assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).at(-1).body.documentRef,process.documentRef);
 
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
 const defectCallsBeforeAcceptanceFallback = calls.filter(c=>c.url.endsWith('/defects/entries/add')).length;
-acceptanceUpload404=true;await assert.rejects(app.uploadAcceptanceFile(file,'photo'), /acceptance|not found|endpoint/i);
-assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length, defectCallsBeforeAcceptanceFallback);
+acceptanceUpload404=true;await assert.rejects(app.uploadAcceptanceFile(file,'photo'), /defects\/entries\/add|не сохранён/i);
+assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length, defectCallsBeforeAcceptanceFallback + 1);
+acceptanceUpload404=false;
 
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
 assert.equal(app.processProgress(process,'_acceptance').total,2);

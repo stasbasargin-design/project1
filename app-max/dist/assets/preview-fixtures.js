@@ -11,6 +11,7 @@
   let poll = 0;
   let reviewUnread = 3;
   let clientUnread = 1;
+  let qrSession = null;
   const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2}];
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
@@ -20,7 +21,10 @@
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
     let data = {};
-    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat']};
+    if(method === '/auth/qr/start') { qrSession='review-qr-session'; data={sessionId:qrSession,deepLink:'https://max.ru/ITUSBot?startapp=itus_auth_'+qrSession,status:'pending'}; }
+    else if(method === '/auth/qr/status') data={status:body.sessionId===qrSession?'confirmed':'expired',maxUserId:body.sessionId===qrSession?'900000001':''};
+    else if(method === '/auth/qr/confirm') data={status:'confirmed'};
+    else if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat']};
     else if(method === '/orders/list') data={orders:allowedRole === 'executor' ? [reviewOrder()] : []};
     else if(method === '/orders/get') data={order:reviewOrder()};
     else if(method.startsWith('/worktime/')) {

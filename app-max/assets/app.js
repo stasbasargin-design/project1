@@ -20,7 +20,7 @@
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'itus-max-2.6.8-chat'
+    version: 'itus-max-2.6.9-max-qr'
   };
 
   const ALL_VIEWS = {
@@ -45,7 +45,7 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false
+    search: '', pollTimer: null, qrAuthTimer: null, initialized: false
   };
 
   const messenger = window.ITUS_MESSENGER?.create({
@@ -79,6 +79,7 @@
   }
 
   function closeSheet() {
+    clearInterval(state.qrAuthTimer); state.qrAuthTimer = null;
     state.cameraStream?.getTracks().forEach(track => track.stop());
     state.cameraStream = null;
     $('overlay').classList.add('hidden');
@@ -183,6 +184,7 @@
     if (!state.userId) return render();
     state.loading = true; state.error = ''; render();
     try {
+      await confirmMaxQrLaunch();
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
       // Альфа-Авто может вернуть data как массив блоков: [{user:[...]},{availableTabs:[...]}].
       // Сначала объединяем эти блоки, чтобы имя, роль и вкладки не терялись.
@@ -240,7 +242,7 @@
     $('tabs').innerHTML = '';
     $('notifications').innerHTML = '';
     $('userPanel').innerHTML = '<div class="avatar">ID</div><div class="user-meta"><div class="user-name">Вход</div><div class="user-role">MAX ID или QR</div></div>';
-    $('app').innerHTML = `<div class="card"><h2>Вход в ИТУС</h2><p class="muted">ID пользователя MAX передаётся в каждом JSON-запросе и используется 1С для проверки прав и записи автора действия.</p><label for="authUserId">ID пользователя MAX</label><input id="authUserId" inputmode="numeric" autocomplete="off" placeholder="Только цифры"><div class="grid two"><button class="primary" data-action="login">Войти по ID</button><button data-action="scan-auth-qr">Считать QR-код</button></div></div>`;
+    $('app').innerHTML = `<div class="card"><h2>Вход в ИТУС</h2><p class="muted">Безопасная авторизация выполняется через подтверждение учётной записи в MAX.</p><button class="primary" data-action="max-qr-auth">Войти через MAX</button><div class="grid two" style="margin-top:8px"><button data-action="scan-auth-qr">Считать QR-код</button><button data-action="manual-auth-qr">Ввести код вручную</button></div><details><summary class="tiny">Резервный вход по ID</summary><label for="authUserId">ID пользователя MAX</label><input id="authUserId" inputmode="numeric" autocomplete="off" placeholder="Только цифры"><button class="secondary" data-action="login">Войти по ID</button></details></div>`;
   }
 
   function renderUser() {
@@ -865,9 +867,9 @@
     const clientEntryId = requestId();
     const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
     let response;
-    try { response = await call1C('/acceptance/entries/add', requestBody, {silent:true}); }
+    try { response = await call1C('/defects/entries/add', requestBody, {silent:true}); }
     catch (error) {
-      if (error.status === 404) throw new Error('Фото получено, но метод /acceptance/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
+      if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
 
@@ -1144,6 +1146,58 @@
     try { const url = new URL(raw, location.href); return String(url.searchParams.get('max_user_id') || url.searchParams.get('maxUserId') || url.searchParams.get('userId') || url.searchParams.get('id') || raw).trim(); } catch { return raw; }
   }
 
+  function qrSessionFrom(value) {
+    const raw = String(value || '').trim(); if (!raw) return '';
+    try {
+      const json = JSON.parse(raw);
+      return String(json.sessionId || json.qrSessionId || '').trim();
+    } catch {}
+    try {
+      const url = new URL(raw, location.href);
+      const start = String(url.searchParams.get('startapp') || url.searchParams.get('start') || '');
+      return start.replace(/^itus_auth_/, '') || String(url.searchParams.get('sessionId') || '');
+    } catch { return raw.replace(/^itus_auth_/, ''); }
+  }
+
+  function openMaxLink(url) {
+    const link = document.createElement('a'); link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.click();
+  }
+
+  async function pollQrAuthorization(sessionId) {
+    if (!sessionId || state.qrAuthTimer) return;
+    const check = async () => {
+      try {
+        const response = await call1C('/auth/qr/status', {sessionId}, {silent:true});
+        const data = response.data || response;
+        if (!/confirmed|authorized|подтверж/i.test(String(data.status || '')) || !/^\d+$/.test(String(data.maxUserId || data.userId || ''))) return;
+        clearInterval(state.qrAuthTimer); state.qrAuthTimer = null;
+        setAuth(String(data.maxUserId || data.userId), 'max-qr'); closeSheet(); await initialize();
+      } catch (error) { if (error.status !== 404) console.warn('MAX QR status:', error.message); }
+    };
+    state.qrAuthTimer = setInterval(check, 2000); await check();
+  }
+
+  async function startMaxQrAuthorization() {
+    showSheet('Авторизация через MAX', 'Создаём одноразовый запрос в 1С', '<div class="loading"><span class="spinner"></span>Подготовка…</div>');
+    try {
+      const response = await call1C('/auth/qr/start', {command:'authorize_max_user',source:'ITUS_ANDROID'});
+      const data = response.data || response, sessionId = String(data.sessionId || data.qrSessionId || ''), deepLink = String(data.deepLink || data.maxDeepLink || '');
+      if (!sessionId || !/^https:\/\/max\.ru\//i.test(deepLink)) throw new Error('1С не вернула QR-сессию или ссылку MAX');
+      $('sheetBody').innerHTML = `<p>Откройте MAX и подтвердите вход. После подтверждения это окно завершит авторизацию автоматически.</p><button class="primary" data-action="open-max-auth" data-url="${escAttr(deepLink)}">Открыть MAX</button><button class="secondary" style="margin-top:8px" data-action="close-sheet">Отмена</button>`;
+      $('sheetBody').dataset.qrSession = sessionId; await pollQrAuthorization(sessionId);
+    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="max-qr-auth">Повторить</button>`; }
+  }
+
+  async function confirmMaxQrLaunch() {
+    const startParam = String(window.WebApp?.initDataUnsafe?.start_param || '');
+    const sessionId = startParam.replace(/^itus_auth_/, '');
+    const initData = String(window.WebApp?.initData || '');
+    if (!sessionId || sessionId === startParam || !initData) return;
+    const key = `itus.qr.confirmed.${sessionId}`; if (sessionStorage.getItem(key)) return;
+    await call1C('/auth/qr/confirm', {sessionId,command:'authorize_max_user',initData,maxUserId:String(window.WebApp?.initDataUnsafe?.user?.id || '')}, {silent:true});
+    sessionStorage.setItem(key, '1');
+  }
+
   function manualQr() {
     state.cameraStream?.getTracks().forEach(track => track.stop());
     state.cameraStream = null;
@@ -1164,13 +1218,23 @@
         if ($('overlay').classList.contains('hidden')) return stream.getTracks().forEach(track => track.stop());
         const codes = await detector.detect(video).catch(() => []);
         if (codes.length) {
-          const id = parseQr(codes[0].rawValue); stream.getTracks().forEach(track => track.stop());
-          if (/^\d+$/.test(id)) { setAuth(id, 'qr'); closeSheet(); initialize(); return; }
+          const raw = codes[0].rawValue; stream.getTracks().forEach(track => track.stop());
+          await acceptAuthQr(raw); return;
         }
         requestAnimationFrame(scan);
       };
       scan();
     } catch { manualQr(); toast('Камера недоступна — используйте ручной ввод', true); }
+  }
+
+  async function acceptAuthQr(raw) {
+    const sessionId = qrSessionFrom(raw), id = parseQr(raw);
+    if (sessionId && /^https:\/\/max\.ru\//i.test(String(raw))) {
+      showSheet('Авторизация через MAX', 'Подтвердите вход в приложении MAX', `<button class="primary" data-action="open-max-auth" data-url="${escAttr(raw)}">Открыть MAX</button><p class="tiny">После подтверждения авторизация завершится автоматически.</p>`);
+      $('sheetBody').dataset.qrSession = sessionId; openMaxLink(raw); await pollQrAuthorization(sessionId); return;
+    }
+    if (/^\d+$/.test(id)) { setAuth(id, 'qr'); closeSheet(); await initialize(); return; }
+    manualQr(); toast('QR не содержит ссылку авторизации MAX или корректный ID', true);
   }
 
   async function handleFilePicked(event) {
@@ -1189,7 +1253,7 @@
   async function setView(view) {
     if (messenger && (view === 'chat' || view === 'clients') && (state.views.chat || state.views.clients)) {
       state.view='chat';document.body.classList.add('messenger-view');renderUser();renderTabs();renderNotifications();
-      return messenger.enter(view === 'clients' ? 'clients' : undefined);
+      return messenger.enter(view === 'clients' ? 'clients' : 'staff');
     }
     messenger?.leave();
     if (!state.views[view]) view = 'orders';
@@ -1244,9 +1308,11 @@
       if (action.startsWith('msg-')) return messenger?.handle(action,button);
       if (action === 'view') return setView(button.dataset.view);
       if (action === 'login') { const id = String($('authUserId')?.value || '').trim(); if (!/^\d+$/.test(id)) return toast('ID пользователя MAX должен содержать только цифры', true); setAuth(id, 'manual'); return initialize(); }
+      if (action === 'max-qr-auth') return startMaxQrAuthorization();
+      if (action === 'open-max-auth') return openMaxLink(button.dataset.url);
       if (action === 'scan-auth-qr') return scanAuthQr();
       if (action === 'manual-auth-qr') return manualQr();
-      if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return initialize(); }
+      if (action === 'submit-auth-qr') return acceptAuthQr($('qrValue')?.value);
       if (action === 'settings') return showSettings();
       if (action === 'photo-camera' || action === 'photo-gallery') {
         const target = state.photoTarget;

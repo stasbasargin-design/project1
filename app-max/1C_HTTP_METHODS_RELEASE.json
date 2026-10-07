@@ -1,5 +1,5 @@
 {
-  "contractVersion": "2.6.7",
+  "contractVersion": "2.6.9",
   "application": "ITUS Service MAX",
   "transport": "HTTPS POST, application/json; charset=utf-8, without BOM",
   "basePath": "/aa6_ea_test9/ru/hs/max-service",
@@ -11,7 +11,7 @@
     "authId": "same as userId for compatibility",
     "authMode": "max | manual | qr",
     "miniApp": "ITUS",
-    "version": "itus-max-2.6.7-worktime",
+    "version": "itus-max-2.6.9-max-qr",
     "max": "MAX WebApp context"
   },
   "commonSuccess": {
@@ -134,6 +134,53 @@
           "chat"
         ]
       }
+    },
+    "/auth/qr/start": {
+      "purpose": "Создать одноразовую сессию авторизации через MAX",
+      "request": {
+        "command": "authorize_max_user",
+        "source": "ITUS_ANDROID"
+      },
+      "responseData": {
+        "sessionId": "CRYPTO_RANDOM_SINGLE_USE_TOKEN",
+        "deepLink": "https://max.ru/BOT_NAME?startapp=itus_auth_CRYPTO_RANDOM_SINGLE_USE_TOKEN",
+        "expiresAt": "2026-10-07T12:05:00+05:00"
+      },
+      "validation": [
+        "sessionId должен быть криптографически случайным, одноразовым и действовать не более 5 минут",
+        "В payload диплинка нельзя помещать MAX ID или другие персональные данные"
+      ]
+    },
+    "/auth/qr/confirm": {
+      "purpose": "Подтвердить QR-сессию подписанными данными запуска Mini App MAX",
+      "request": {
+        "sessionId": "CRYPTO_RANDOM_SINGLE_USE_TOKEN",
+        "command": "authorize_max_user",
+        "initData": "RAW_SIGNED_WINDOW_WEBAPP_INITDATA",
+        "maxUserId": "13970179"
+      },
+      "responseData": {
+        "status": "confirmed"
+      },
+      "validation": [
+        "1С обязана проверить hash initData по токену бота MAX и отклонить просроченный auth_date",
+        "maxUserId брать только из проверенного initData, а не доверять отдельному полю запроса",
+        "sessionId должен существовать, не быть просроченным и подтверждаться только один раз"
+      ]
+    },
+    "/auth/qr/status": {
+      "purpose": "Получить результат одноразовой QR-авторизации",
+      "request": {
+        "sessionId": "CRYPTO_RANDOM_SINGLE_USE_TOKEN"
+      },
+      "responseData": {
+        "status": "pending | confirmed | expired",
+        "maxUserId": "13970179"
+      },
+      "validation": [
+        "maxUserId возвращать только для подтверждённой сессии",
+        "После успешной выдачи результата сессию пометить использованной"
+      ]
     },
     "/orders/list": {
       "purpose": "Orders available to the current user",

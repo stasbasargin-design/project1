@@ -157,7 +157,7 @@
         }catch(e){errors[key(source,id)]=e.message;toast(e.message,true);return;}
         finally{openingContact=false;}
       }
-      selected=id;if(!current()){selected='';return paint();}paint({bottom:true});await loadMessages(source,id);
+      selected=id;if(!current()){selected='';return paint();}paint({bottom:true});await loadMessages(source,id,{force:true});
     }
     async function send(file,kind,target){
       const s=target?.source||source,id=target?.ref||selected,k=key(s,id);
@@ -206,7 +206,7 @@
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
     function back(){if(!visible||!selected)return false;selected='';paint();return true;}
-    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();if(!loaded[source])await loadList();}
+    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected,{force:true});}
     async function handle(action,button){
       if(action==='msg-new-chat'){if(!permitted('staff'))return;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
       if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
