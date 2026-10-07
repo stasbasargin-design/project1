@@ -9,13 +9,22 @@
   function create(options) {
     const {api,call,user,allowed,toast,pickFile,photo,filePayload,closeSheet}=options;
     let source='clients',section='chats',selected='',query='',visible=false,epoch=0;
-    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={};
+    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={};
     const blobUrls=new Map();
     let openingContact=false;
     const key=(s,id)=>s+':'+id;
     const selectedKey=()=>key(source,selected);
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
+    const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    function sortedMessages(messages){return messages.map((message,index)=>({message,index})).sort((a,b)=>{
+      const at=Date.parse(a.message.createdAt),bt=Date.parse(b.message.createdAt);
+      if(Number.isFinite(at)&&Number.isFinite(bt)&&at!==bt)return at-bt;
+      if(Number.isFinite(at)!==Number.isFinite(bt))return Number.isFinite(at)?-1:1;
+      return a.index-b.index;
+    }).map(item=>item.message);}
+    function attempt(s,id,signature){const k=key(s,id),existing=attempts[k];if(existing?.signature===signature)return existing.id;const idempotencyId=newMessageId();attempts[k]={signature,id:idempotencyId};return idempotencyId;}
+    function finishAttempt(s,id,signature){const k=key(s,id);if(attempts[k]?.signature===signature)delete attempts[k];}
     function permitted(s){return allowed().includes(s);}
     function revokeMedia(){for(const url of blobUrls.values())URL.revokeObjectURL(url);blobUrls.clear();}
     function current(){return records[source].find(x=>x.ref===selected);}
@@ -35,7 +44,10 @@
     function fileHtml(file,mi,fi){
       const mime=file.mimeType||'',video=/^video\//.test(mime),image=/^image\//.test(mime);
       const bytes=Number(file.sizeBytes)||0;
-      return `<div class="msg-file"><div id="msg-media-${mi}-${fi}" class="msg-media"></div><span>${escape(file.fileName)}</span><small>${bytes? (bytes/1024/1024).toFixed(1)+' МБ':''}</small><button data-action="msg-media" data-mi="${mi}" data-fi="${fi}">${video?'▶ Смотреть видео':image?'Открыть фото':'Открыть файл'}</button></div>`;
+      const direct=safeUrl(file.previewUrl||file.downloadUrl),embedded=image&&file.contentBase64?`data:${escape(mime||'image/jpeg')};base64,${String(file.contentBase64).replace(/^data:[^,]*,/,'')}`:'';
+      const imageHtml=image&&(direct||embedded)?`<img src="${escape(direct||embedded)}" alt="${escape(file.fileName)}" loading="lazy">`:'';
+      const action=image?(imageHtml?'':`<button class="msg-image-load" data-action="msg-media" data-auto-image="true" data-mi="${mi}" data-fi="${fi}" aria-label="Загрузить фото"></button>`):`<button data-action="msg-media" data-mi="${mi}" data-fi="${fi}">${video?'▶ Смотреть видео':'Открыть файл'}</button>`;
+      return `<div class="msg-file"><div id="msg-media-${mi}-${fi}" class="msg-media">${imageHtml}</div><span>${escape(file.fileName)}</span><small>${bytes? (bytes/1024/1024).toFixed(1)+' МБ':''}</small>${action}</div>`;
     }
     function pollHtml(message){
       if(!message.poll?.question)return '';
@@ -69,6 +81,7 @@
       revokeMedia();
       app.innerHTML=`<div class="messenger ${selected?'has-conversation':''}"><aside class="msg-sidebar"><div class="msg-sidebar-head"><h2>Чаты</h2><button data-action="msg-settings" aria-label="Настройки уведомлений">⚙</button><button data-action="msg-refresh" aria-label="Обновить список">↻</button></div><div class="msg-filters">${allowed().map(s=>`<button class="${source===s?'active':''}" data-action="msg-source" data-source="${s}">${labels[s]}</button>`).join('')}</div>${source==='staff'?'<button class="msg-new-chat" data-action="msg-new-chat">＋ Новый чат с сотрудником</button>':''}<div class="msg-sections"><button class="${section==='chats'?'active':''}" data-action="msg-section" data-section="chats">Переписки</button><button class="${section==='contacts'?'active':''}" data-action="msg-section" data-section="contacts">Контакты</button></div><input id="msgSearch" type="search" placeholder="Поиск" aria-label="Поиск чатов и контактов" value="${escape(query)}">${section==='contacts'?'<p class="msg-contact-note">Выберите сотрудника, который авторизовался в приложении</p>':''}<div class="msg-thread-list">${listHtml()}</div></aside><section class="msg-conversation">${conversationHtml()}</section></div>`;
       const history=app.querySelector('.msg-history');if(history)history.scrollTop=bottom||nearBottom?history.scrollHeight:oldTop;
+      app.querySelectorAll?.('[data-auto-image="true"]').forEach(button=>void media(Number(button.dataset.mi),Number(button.dataset.fi)));
       resize();
     }
     async function loadList(s=source){
@@ -118,7 +131,7 @@
       try{
         const response=await call(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:false},{silent:true});
         if(epoch!==generation)return;
-        cache[k]=api.extractItems(response,['messages']).map(api.normalizeMessage);
+        cache[k]=sortedMessages(api.extractItems(response,['messages']).map(api.normalizeMessage));
         const data=response.data||response;
         const item=records[s].find(x=>x.ref===id);
         if(item){
@@ -150,9 +163,11 @@
       const s=target?.source||source,id=target?.ref||selected,k=key(s,id);
       const text=drafts[k]?.trim()||'';
       if(!id||!permitted(s)||(!file&&!text)||sending[k])return;
+      const signature=file?`file:${kind||''}:${file.name||''}:${file.size||0}:${file.lastModified||0}`:`text:${text}`;
+      const clientMessageId=attempt(s,id,signature);
       const generation=epoch,original=drafts[k];sending[k]=file?'upload':true;errors[k]='';paint();
       try{
-        const payload={...params(s,id),clientMessageId:root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now())};
+        const payload={...params(s,id),clientMessageId};
         if(file){payload.file=await filePayload(file,kind);payload.kind=kind;}else payload.text=text;
         if(generation!==epoch)return;
         const response=await call(endpoints(s)+(file?'/files/send':'/messages/send'),payload,{silent:true});
@@ -163,10 +178,10 @@
           // Ответ /send иногда возвращает только messageRef и имя контакта.
           // Для исходящего сообщения автором всегда является текущий пользователь.
           const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,authorName:user()?.name||data.message.authorName,status:data.message.status||'sent'},Date.now());
-          cache[k]=[...(cache[k]||[]).filter(x=>x.id!==message.id),message];
+          cache[k]=sortedMessages([...(cache[k]||[]).filter(x=>x.id!==message.id),message]);
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
         }else await loadMessages(s,id,{force:true});
-        toast('Отправлено');if(file)closeSheet();
+        finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
       }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}}
       finally{if(generation===epoch){sending[k]=false;paint({bottom:true});}}
     }
@@ -177,7 +192,7 @@
       if(!url&&!file.contentBase64&&file.fileRef){
         try{
           const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,attachmentRef:file.fileRef},{silent:true});
-          const fresh=api.extractItems(response,['messages']).map(api.normalizeMessage);
+          const fresh=sortedMessages(api.extractItems(response,['messages']).map(api.normalizeMessage));
           if(fresh.length){cache[selectedKey()]=fresh;file=cache[selectedKey()]?.[mi]?.attachments?.[fi]||file;url=safeUrl(file.downloadUrl);}
         }catch(e){return toast('Не удалось загрузить вложение: '+e.message,true);}
       }
@@ -235,7 +250,7 @@
     });
     return {enter,paint,back,handle,upload:(file,target)=>send(file,target.kind,target),
       leave(){visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
-      reset(){epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};selected='';query='';},
+      reset(){epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}
     };
   }

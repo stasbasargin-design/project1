@@ -27,6 +27,7 @@ body::after{content:"";position:fixed;right:-76px;bottom:7vh;width:290px;height:
 .card{position:relative;overflow:hidden;margin-bottom:12px;padding:16px;border:1px solid var(--line);border-radius:24px;background:var(--card);box-shadow:var(--shadow)}.card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:linear-gradient(180deg,var(--blue),var(--red));opacity:.85}.card>*{position:relative}.card.compact{padding:13px}.card h2{margin:0 0 9px;font-size:19px}.card h3{margin:13px 0 8px;font-size:15px}.card p{line-height:1.42}
 .row,.section-title,.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:9px}.section-title{align-items:center}.muted{color:var(--muted)}.tiny{color:var(--muted);font-size:11px;line-height:1.35}.empty{padding:16px;border:1px dashed #b9c9da;border-radius:17px;background:#f8fafc;color:var(--muted);text-align:center}.loading{display:flex;align-items:center;gap:10px}.spinner{width:18px;height:18px;border:3px solid #d7e1ed;border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 button,input,textarea,select{font:inherit}button{cursor:pointer}.button,.grid button,.primary,.secondary,.danger,.success,.icon-button{border:0;border-radius:16px;padding:12px 11px;background:var(--soft);color:var(--blue);font-weight:850}.button:disabled,.grid button:disabled,.primary:disabled{cursor:not-allowed;opacity:.46}.primary{width:100%;background:linear-gradient(135deg,var(--blue),#174f8c 62%,var(--red));color:#fff;box-shadow:0 11px 24px rgba(12,79,150,.2)}.secondary{width:100%;border:1px solid var(--line);background:#fff;color:var(--text)}.danger{background:#ffeaec!important;color:var(--bad)!important}.success{background:#e7f8ef!important;color:var(--ok)!important}.warning{background:#fff4db!important;color:var(--warn)!important}.icon-button{width:42px;height:42px;padding:0;border:1px solid var(--line);background:#fff;color:var(--text);font-size:25px;font-weight:500}.link-button{padding:0;border:0;background:none;color:var(--blue);font-weight:850;text-decoration:underline}
+.sheet-body>.primary+.primary{margin-top:8px}
 input,textarea,select{width:100%;margin:4px 0 8px;padding:12px 13px;border:1px solid var(--line);border-radius:15px;background:#fdfefe;color:var(--text)}textarea{min-height:88px;resize:vertical}label{display:block;margin-top:5px;font-size:12px;font-weight:850}.field-error{border-color:var(--red)!important;background:#fff8f8!important}.error-text{margin:-3px 0 8px;color:var(--bad);font-size:11px;font-weight:750}
 .grid{display:grid;gap:8px}.grid.two{grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}.quick-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:11px}.quick-actions button{min-height:72px;border:1px dashed #9abff7;border-radius:16px;background:linear-gradient(135deg,#dcecff,#fff);color:var(--text);font-size:23px}.quick-actions button span{display:block;margin-top:4px;color:var(--blue);font-size:11px;font-weight:850}
 .order{width:100%;margin-bottom:8px;padding:13px;border:1px solid var(--line);border-radius:19px;background:#fff;color:var(--text);box-shadow:0 9px 21px rgba(20,67,140,.07);text-align:left}.order.active{border-color:var(--blue);background:#f4f9ff}.order .tiny{margin-top:4px}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:#edf3f9;color:var(--blue);font-size:11px;font-weight:850;white-space:nowrap}.badge.ok{background:#e7f8ef;color:var(--ok)}.badge.warn{background:#fff4db;color:var(--warn)}.badge.bad{background:#ffeaec;color:var(--bad)}.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{padding:11px;border:1px solid var(--line);border-radius:17px;background:#f8fafc}.stat b{font-size:15px}.stat-button{display:block;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.stat-button:hover,.stat-button:focus-visible{background:#fff4f3;border-color:#d36a65;outline:none;transform:translateY(-1px)}.reason{padding:11px;border-left:4px solid var(--blue);border-radius:13px;background:#f8fafc}
@@ -145,6 +146,7 @@ input,textarea,select{background:#fff;border-color:#aeb8c5}
 .msg-date{align-self:center;background:#dce2e8;border-radius:12px;padding:4px 12px;font-size:12px;color:#344254}
 .msg-file{display:flex;flex-direction:column;gap:5px;margin-top:8px}.msg-file small{color:#536273}.msg-file button{background:white;border:1px solid #bdc7d2;border-radius:9px;font-size:14px}.msg-uploading{display:flex;align-items:center;gap:8px;padding:9px 14px;background:#fff7e6;border-top:1px solid #f3dfae;color:#7b5a16;font-size:13px;font-weight:700}.msg-uploading .spinner{width:14px;height:14px;border-width:2px}.msg-poll-button{font-size:22px!important;background:#f5e9df!important;color:#9d3026!important}
 .msg-media:empty{display:none}.msg-media img,.msg-media video{display:block;max-width:100%;width:280px;max-height:300px;object-fit:contain;border-radius:9px}
+.msg-image-load{display:none!important}
 .msg-compose{display:flex;align-items:flex-end;gap:8px;padding:10px 14px max(10px,env(safe-area-inset-bottom));border-top:1px solid #d6dce4;background:#fff}
 .msg-compose>button{flex:0 0 44px;border-radius:50%;font-size:26px}
 .msg-compose .msg-send{background:#b92824;color:white;font-size:22px}
@@ -607,13 +609,22 @@ window.ITUS_CONFIG = {
   function create(options) {
     const {api,call,user,allowed,toast,pickFile,photo,filePayload,closeSheet}=options;
     let source='clients',section='chats',selected='',query='',visible=false,epoch=0;
-    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={};
+    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={};
     const blobUrls=new Map();
     let openingContact=false;
     const key=(s,id)=>s+':'+id;
     const selectedKey=()=>key(source,selected);
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
+    const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    function sortedMessages(messages){return messages.map((message,index)=>({message,index})).sort((a,b)=>{
+      const at=Date.parse(a.message.createdAt),bt=Date.parse(b.message.createdAt);
+      if(Number.isFinite(at)&&Number.isFinite(bt)&&at!==bt)return at-bt;
+      if(Number.isFinite(at)!==Number.isFinite(bt))return Number.isFinite(at)?-1:1;
+      return a.index-b.index;
+    }).map(item=>item.message);}
+    function attempt(s,id,signature){const k=key(s,id),existing=attempts[k];if(existing?.signature===signature)return existing.id;const idempotencyId=newMessageId();attempts[k]={signature,id:idempotencyId};return idempotencyId;}
+    function finishAttempt(s,id,signature){const k=key(s,id);if(attempts[k]?.signature===signature)delete attempts[k];}
     function permitted(s){return allowed().includes(s);}
     function revokeMedia(){for(const url of blobUrls.values())URL.revokeObjectURL(url);blobUrls.clear();}
     function current(){return records[source].find(x=>x.ref===selected);}
@@ -633,7 +644,10 @@ window.ITUS_CONFIG = {
     function fileHtml(file,mi,fi){
       const mime=file.mimeType||'',video=/^video\//.test(mime),image=/^image\//.test(mime);
       const bytes=Number(file.sizeBytes)||0;
-      return `<div class="msg-file"><div id="msg-media-${mi}-${fi}" class="msg-media"></div><span>${escape(file.fileName)}</span><small>${bytes? (bytes/1024/1024).toFixed(1)+' МБ':''}</small><button data-action="msg-media" data-mi="${mi}" data-fi="${fi}">${video?'▶ Смотреть видео':image?'Открыть фото':'Открыть файл'}</button></div>`;
+      const direct=safeUrl(file.previewUrl||file.downloadUrl),embedded=image&&file.contentBase64?`data:${escape(mime||'image/jpeg')};base64,${String(file.contentBase64).replace(/^data:[^,]*,/,'')}`:'';
+      const imageHtml=image&&(direct||embedded)?`<img src="${escape(direct||embedded)}" alt="${escape(file.fileName)}" loading="lazy">`:'';
+      const action=image?(imageHtml?'':`<button class="msg-image-load" data-action="msg-media" data-auto-image="true" data-mi="${mi}" data-fi="${fi}" aria-label="Загрузить фото"></button>`):`<button data-action="msg-media" data-mi="${mi}" data-fi="${fi}">${video?'▶ Смотреть видео':'Открыть файл'}</button>`;
+      return `<div class="msg-file"><div id="msg-media-${mi}-${fi}" class="msg-media">${imageHtml}</div><span>${escape(file.fileName)}</span><small>${bytes? (bytes/1024/1024).toFixed(1)+' МБ':''}</small>${action}</div>`;
     }
     function pollHtml(message){
       if(!message.poll?.question)return '';
@@ -667,6 +681,7 @@ window.ITUS_CONFIG = {
       revokeMedia();
       app.innerHTML=`<div class="messenger ${selected?'has-conversation':''}"><aside class="msg-sidebar"><div class="msg-sidebar-head"><h2>Чаты</h2><button data-action="msg-settings" aria-label="Настройки уведомлений">⚙</button><button data-action="msg-refresh" aria-label="Обновить список">↻</button></div><div class="msg-filters">${allowed().map(s=>`<button class="${source===s?'active':''}" data-action="msg-source" data-source="${s}">${labels[s]}</button>`).join('')}</div>${source==='staff'?'<button class="msg-new-chat" data-action="msg-new-chat">＋ Новый чат с сотрудником</button>':''}<div class="msg-sections"><button class="${section==='chats'?'active':''}" data-action="msg-section" data-section="chats">Переписки</button><button class="${section==='contacts'?'active':''}" data-action="msg-section" data-section="contacts">Контакты</button></div><input id="msgSearch" type="search" placeholder="Поиск" aria-label="Поиск чатов и контактов" value="${escape(query)}">${section==='contacts'?'<p class="msg-contact-note">Выберите сотрудника, который авторизовался в приложении</p>':''}<div class="msg-thread-list">${listHtml()}</div></aside><section class="msg-conversation">${conversationHtml()}</section></div>`;
       const history=app.querySelector('.msg-history');if(history)history.scrollTop=bottom||nearBottom?history.scrollHeight:oldTop;
+      app.querySelectorAll?.('[data-auto-image="true"]').forEach(button=>void media(Number(button.dataset.mi),Number(button.dataset.fi)));
       resize();
     }
     async function loadList(s=source){
@@ -716,7 +731,7 @@ window.ITUS_CONFIG = {
       try{
         const response=await call(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:false},{silent:true});
         if(epoch!==generation)return;
-        cache[k]=api.extractItems(response,['messages']).map(api.normalizeMessage);
+        cache[k]=sortedMessages(api.extractItems(response,['messages']).map(api.normalizeMessage));
         const data=response.data||response;
         const item=records[s].find(x=>x.ref===id);
         if(item){
@@ -748,9 +763,11 @@ window.ITUS_CONFIG = {
       const s=target?.source||source,id=target?.ref||selected,k=key(s,id);
       const text=drafts[k]?.trim()||'';
       if(!id||!permitted(s)||(!file&&!text)||sending[k])return;
+      const signature=file?`file:${kind||''}:${file.name||''}:${file.size||0}:${file.lastModified||0}`:`text:${text}`;
+      const clientMessageId=attempt(s,id,signature);
       const generation=epoch,original=drafts[k];sending[k]=file?'upload':true;errors[k]='';paint();
       try{
-        const payload={...params(s,id),clientMessageId:root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now())};
+        const payload={...params(s,id),clientMessageId};
         if(file){payload.file=await filePayload(file,kind);payload.kind=kind;}else payload.text=text;
         if(generation!==epoch)return;
         const response=await call(endpoints(s)+(file?'/files/send':'/messages/send'),payload,{silent:true});
@@ -761,10 +778,10 @@ window.ITUS_CONFIG = {
           // Ответ /send иногда возвращает только messageRef и имя контакта.
           // Для исходящего сообщения автором всегда является текущий пользователь.
           const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,authorName:user()?.name||data.message.authorName,status:data.message.status||'sent'},Date.now());
-          cache[k]=[...(cache[k]||[]).filter(x=>x.id!==message.id),message];
+          cache[k]=sortedMessages([...(cache[k]||[]).filter(x=>x.id!==message.id),message]);
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
         }else await loadMessages(s,id,{force:true});
-        toast('Отправлено');if(file)closeSheet();
+        finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
       }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}}
       finally{if(generation===epoch){sending[k]=false;paint({bottom:true});}}
     }
@@ -775,7 +792,7 @@ window.ITUS_CONFIG = {
       if(!url&&!file.contentBase64&&file.fileRef){
         try{
           const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,attachmentRef:file.fileRef},{silent:true});
-          const fresh=api.extractItems(response,['messages']).map(api.normalizeMessage);
+          const fresh=sortedMessages(api.extractItems(response,['messages']).map(api.normalizeMessage));
           if(fresh.length){cache[selectedKey()]=fresh;file=cache[selectedKey()]?.[mi]?.attachments?.[fi]||file;url=safeUrl(file.downloadUrl);}
         }catch(e){return toast('Не удалось загрузить вложение: '+e.message,true);}
       }
@@ -833,7 +850,7 @@ window.ITUS_CONFIG = {
     });
     return {enter,paint,back,handle,upload:(file,target)=>send(file,target.kind,target),
       leave(){visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
-      reset(){epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};selected='';query='';},
+      reset(){epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}
     };
   }
@@ -1073,7 +1090,7 @@ window.ITUS_CONFIG = {
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'itus-max-2.6.7-worktime'
+    version: 'itus-max-2.6.8-chat'
   };
 
   const ALL_VIEWS = {
@@ -1635,11 +1652,11 @@ window.ITUS_CONFIG = {
       body = `<h3>Работы без активных пакетов</h3>${d.works.length ? d.works.map(x => `<label class="setting-row"><input type="checkbox" data-worktime-work="${escAttr(x.ref)}" ${d.workRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('') : '<p>В этом ЗН нет доступных работ без активных пакетов.</p>'}${d.works.length ? button('worktime-works-next','Подтвердить работы') : ''}`;
     } else if (d.step === 'employees') {
       const self = d.employees.find(x => x.ref === state.user?.employeeRef);
-      body = `${self ? button('worktime-self','Делаю сам') : '<p>1С не вернула вас в списке доступных исполнителей.</p>'}<h3>Другие исполнители цеха</h3><p>Выберите исполнителей. Чтобы участвовать вместе с коллегами, отметьте «Я участвую».</p>${self ? `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(self.ref)}" ${d.employeeRefs.includes(self.ref) ? 'checked' : ''}>Я участвую</label>` : ''}${d.employees.filter(x => x.ref !== self?.ref).map(x => `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(x.ref)}" ${d.employeeRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}${button('worktime-employees-next','Подтвердить исполнителей')}<button data-action="worktime-back-works">Назад к работам</button>`;
+      body = `${self ? button('worktime-self','Делаю сам') : '<p>1С не вернула вас в списке доступных исполнителей.</p>'}<h3>Другие исполнители цеха</h3><p>Выберите исполнителей. Чтобы участвовать вместе с коллегами, отметьте «Я участвую».</p>${self ? `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(self.ref)}" ${d.employeeRefs.includes(self.ref) ? 'checked' : ''}>Я участвую</label>` : ''}${d.employees.filter(x => x.ref !== self?.ref).map(x => `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(x.ref)}" ${d.employeeRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}${button('worktime-employees-next','Подтвердить исполнителей')}${button('worktime-back-works','Назад к работам')}`;
     } else if (d.step === 'shares') {
-      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}<button class="secondary" data-action="worktime-shares-equal">Распределить % поровну</button>${button('worktime-shares-next','Подтвердить распределение')}<button data-action="worktime-back-employees">Назад к исполнителям</button>`;
+      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}<button class="secondary" data-action="worktime-shares-equal">Распределить % поровну</button>${button('worktime-shares-next','Подтвердить распределение')}${button('worktime-back-employees','Назад к исполнителям')}`;
     } else {
-      body = `<h3>Подтверждение пакета</h3><h4>Работы</h4><ul>${d.workRefs.map(ref => `<li>${esc(d.works.find(x => x.ref === ref)?.name)}</li>`).join('')}</ul><h4>Исполнители</h4><ul>${d.participants.map(p => `<li>${esc(d.employees.find(x => x.ref === p.employeeRef)?.name)} — ${p.percent}%</li>`).join('')}</ul>${button('worktime-submit','Подтвердить и создать пакет')}${!d.sent ? '<button data-action="worktime-back-employees">Изменить исполнителей</button>' : '<p>При повторе отправляется тот же состав с тем же идентификатором.</p>'}`;
+      body = `<h3>Подтверждение пакета</h3><h4>Работы</h4><ul>${d.workRefs.map(ref => `<li>${esc(d.works.find(x => x.ref === ref)?.name)}</li>`).join('')}</ul><h4>Исполнители</h4><ul>${d.participants.map(p => `<li>${esc(d.employees.find(x => x.ref === p.employeeRef)?.name)} — ${p.percent}%</li>`).join('')}</ul>${button('worktime-submit','Подтвердить и создать пакет')}${!d.sent ? button('worktime-back-employees','Изменить исполнителей') : '<p>При повторе отправляется тот же состав с тем же идентификатором.</p>'}`;
     }
     showSheet('Создание пакета УРВ', ({works:'Шаг 1 · работы ЗН',employees:'Шаг 2 · исполнители',shares:'Шаг 3 · проценты',confirm:'Проверьте состав перед отправкой в 1С'})[d.step], body + '<p id="worktimeError" role="alert"></p>');
   }

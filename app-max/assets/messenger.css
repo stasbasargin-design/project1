@@ -36,6 +36,7 @@ body.messenger-view .phone{max-width:1180px}
 .msg-date{align-self:center;background:#dce2e8;border-radius:12px;padding:4px 12px;font-size:12px;color:#344254}
 .msg-file{display:flex;flex-direction:column;gap:5px;margin-top:8px}.msg-file small{color:#536273}.msg-file button{background:white;border:1px solid #bdc7d2;border-radius:9px;font-size:14px}.msg-uploading{display:flex;align-items:center;gap:8px;padding:9px 14px;background:#fff7e6;border-top:1px solid #f3dfae;color:#7b5a16;font-size:13px;font-weight:700}.msg-uploading .spinner{width:14px;height:14px;border-width:2px}.msg-poll-button{font-size:22px!important;background:#f5e9df!important;color:#9d3026!important}
 .msg-media:empty{display:none}.msg-media img,.msg-media video{display:block;max-width:100%;width:280px;max-height:300px;object-fit:contain;border-radius:9px}
+.msg-image-load{display:none!important}
 .msg-compose{display:flex;align-items:flex-end;gap:8px;padding:10px 14px max(10px,env(safe-area-inset-bottom));border-top:1px solid #d6dce4;background:#fff}
 .msg-compose>button{flex:0 0 44px;border-radius:50%;font-size:26px}
 .msg-compose .msg-send{background:#b92824;color:white;font-size:22px}
