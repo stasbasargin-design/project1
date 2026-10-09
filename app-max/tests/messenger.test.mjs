@@ -16,7 +16,7 @@ vm.createContext(scope);
 vm.runInContext(readFileSync(new URL('../assets/api-normalizers.js',import.meta.url),'utf8'),scope);
 vm.runInContext(readFileSync(new URL('../assets/messenger.js',import.meta.url),'utf8'),scope);
 const mock={
-  '/internal-chat/groups/list':{data:{groups:[{groupRef:'shift',title:'Передача смены',unreadCount:2}]}},
+  '/internal-chat/groups/list':{data:{groups:[{groupRef:'shift',title:'Передача смены',unreadCount:2},{groupRef:'all',title:'Общий цех',isCommon:true,lastMessageAt:'2026-10-01T10:00:00Z'}]}},
   '/internal-chat/contacts/list':{data:{contacts:[{employeeRef:'one',name:'Анна',authorized:true},{employeeRef:'two',name:'Нет входа',authorized:false}]}},
   '/internal-chat/direct/open':{data:{groupRef:'direct-one'}},
   '/internal-chat/messages/list':{data:{messages:[
@@ -30,6 +30,7 @@ const messenger=scope.ITUS_MESSENGER.create({api:scope.ITUS_API,call:async(metho
 },onRead:receipt=>receipts.push(receipt),user:()=>({name:'Тест'}),allowed:()=>['staff'],toast(){},pickFile(){},photo(){},filePayload(){},closeSheet(){},sheet(){},settings(){}});
 await messenger.enter();
 assert.match(app.innerHTML,/Передача смены/);
+assert.ok(app.innerHTML.indexOf('Общий цех')<app.innerHTML.indexOf('Передача смены'));assert.match(app.innerHTML,/Общий чат/);
 await messenger.handle('msg-open',{dataset:{ref:'shift'}});
 assert.equal(calls.find(x=>x.method==='/internal-chat/messages/read').payload.messageRefs[0],'message-1');
 assert.equal(receipts[0].previousUnread,2);assert.equal(receipts[0].remainingUnread,0);

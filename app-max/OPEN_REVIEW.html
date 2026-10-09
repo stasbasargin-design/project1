@@ -29,12 +29,12 @@ body::after{content:"";position:fixed;right:-76px;bottom:7vh;width:290px;height:
 button,input,textarea,select{font:inherit}button{cursor:pointer}.button,.grid button,.primary,.secondary,.danger,.success,.icon-button{border:0;border-radius:16px;padding:12px 11px;background:var(--soft);color:var(--blue);font-weight:850}.button:disabled,.grid button:disabled,.primary:disabled{cursor:not-allowed;opacity:.46}.primary{width:100%;background:linear-gradient(135deg,var(--blue),#174f8c 62%,var(--red));color:#fff;box-shadow:0 11px 24px rgba(12,79,150,.2)}.secondary{width:100%;border:1px solid var(--line);background:#fff;color:var(--text)}.danger{background:#ffeaec!important;color:var(--bad)!important}.success{background:#e7f8ef!important;color:var(--ok)!important}.warning{background:#fff4db!important;color:var(--warn)!important}.icon-button{width:42px;height:42px;padding:0;border:1px solid var(--line);background:#fff;color:var(--text);font-size:25px;font-weight:500}.link-button{padding:0;border:0;background:none;color:var(--blue);font-weight:850;text-decoration:underline}
 .sheet-body>.primary+.primary{margin-top:8px}
 input,textarea,select{width:100%;margin:4px 0 8px;padding:12px 13px;border:1px solid var(--line);border-radius:15px;background:#fdfefe;color:var(--text)}textarea{min-height:88px;resize:vertical}label{display:block;margin-top:5px;font-size:12px;font-weight:850}.field-error{border-color:var(--red)!important;background:#fff8f8!important}.error-text{margin:-3px 0 8px;color:var(--bad);font-size:11px;font-weight:750}
-.grid{display:grid;gap:8px}.grid.two{grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}.quick-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:11px}.quick-actions button{min-height:72px;border:1px dashed #9abff7;border-radius:16px;background:linear-gradient(135deg,#dcecff,#fff);color:var(--text);font-size:23px}.quick-actions button span{display:block;margin-top:4px;color:var(--blue);font-size:11px;font-weight:850}
-.order{width:100%;margin-bottom:8px;padding:13px;border:1px solid var(--line);border-radius:19px;background:#fff;color:var(--text);box-shadow:0 9px 21px rgba(20,67,140,.07);text-align:left}.order.active{border-color:var(--blue);background:#f4f9ff}.order .tiny{margin-top:4px}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:#edf3f9;color:var(--blue);font-size:11px;font-weight:850;white-space:nowrap}.badge.ok{background:#e7f8ef;color:var(--ok)}.badge.warn{background:#fff4db;color:var(--warn)}.badge.bad{background:#ffeaec;color:var(--bad)}.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{padding:11px;border:1px solid var(--line);border-radius:17px;background:#f8fafc}.stat b{font-size:15px}.stat-button{display:block;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.stat-button:hover,.stat-button:focus-visible{background:#fff4f3;border-color:#d36a65;outline:none;transform:translateY(-1px)}.reason{padding:11px;border-left:4px solid var(--blue);border-radius:13px;background:#f8fafc}
+.grid{display:grid;gap:8px}.grid button{line-height:1.25;white-space:normal;overflow-wrap:anywhere}.grid.two{grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}.quick-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:11px}.quick-actions button{min-height:72px;border:1px dashed #9abff7;border-radius:16px;background:linear-gradient(135deg,#dcecff,#fff);color:var(--text);font-size:23px}.quick-actions button span{display:block;margin-top:4px;color:var(--blue);font-size:11px;font-weight:850}
+.order{width:100%;margin-bottom:8px;padding:13px;border:1px solid var(--line);border-radius:19px;background:#fff;color:var(--text);box-shadow:0 9px 21px rgba(20,67,140,.07);text-align:left}.order.active{border-color:var(--blue);background:#f4f9ff}.order .tiny{margin-top:4px}.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:#edf3f9;color:var(--blue);font-size:11px;font-weight:850;white-space:nowrap}.badge.ok{background:#e7f8ef;color:var(--ok)}.badge.warn{background:#fff4db;color:var(--warn)}.badge.bad{background:#ffeaec;color:var(--bad)}.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{padding:11px;border:1px solid var(--line);border-radius:17px;background:#f8fafc;line-height:1.3}.stat>.tiny,.stat>b{display:block}.stat>b{margin:3px 0;font-size:15px;overflow-wrap:anywhere}.stat-button{display:block;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.stat-button:hover,.stat-button:focus-visible{background:#fff4f3;border-color:#d36a65;outline:none;transform:translateY(-1px)}.reason{padding:11px;border-left:4px solid var(--blue);border-radius:13px;background:#f8fafc}
 .notice{margin-bottom:11px;padding:12px 14px;border:1px solid #ffd68c;border-radius:18px;background:#fff8e7;box-shadow:0 8px 20px rgba(148,98,0,.08)}.notice strong{display:block;margin-bottom:3px}.notice-actions{display:flex;gap:7px;margin-top:8px}.notice-actions button{padding:8px 10px;border:0;border-radius:12px;background:#fff;color:var(--blue);font-weight:850}
 .process{border-top:1px solid var(--line);margin-top:13px;padding-top:13px}.process-state{display:flex;align-items:center;gap:7px;margin-bottom:10px;color:var(--muted);font-size:12px}.question{margin-bottom:9px;padding:12px;border:1px solid var(--line);border-radius:18px;background:#fdfefe}.question.done{border-color:#bde9d2;background:#f0fbf5}.question-title{margin-bottom:8px;font-weight:900}.required{color:var(--red)}.answers{display:grid;gap:7px}.answer{padding:10px 11px;border:1px solid var(--line);border-radius:13px;background:#fff;color:var(--text);font-weight:780;text-align:left}.answer.selected{border-color:var(--blue);background:var(--blue);color:#fff}.progress{height:9px;margin:8px 0 12px;overflow:hidden;border-radius:99px;background:#eaf1fb}.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--red))}
-.entry{margin-bottom:8px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;background:#f8fafc}.entry-head{display:flex;justify-content:space-between;gap:7px;margin-bottom:4px;font-size:11px;color:var(--muted)}.entry-file{display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:800;text-align:left;width:100%;color:inherit;background:transparent;border:0;padding:0}.entry-file .file-icon{font-size:22px}
-.topic-list{display:grid;gap:8px}.topic{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:17px;background:#fff;color:var(--text);text-align:left}.topic.active{border-color:var(--blue);background:#f3f8ff}.topic-title{display:flex;justify-content:space-between;gap:7px;font-weight:900}.topic-preview{margin-top:4px;color:var(--muted);font-size:11px}.chat{display:grid;gap:8px;max-height:360px;overflow:auto;margin:10px 0;padding-bottom:3px}.message{padding:10px 12px;border-radius:16px;background:var(--soft);line-height:1.4}.message.mine{margin-left:42px;background:var(--blue);color:#fff}.message.theirs{margin-right:42px;border:1px solid var(--line);background:#fff}.message.system{border:1px solid #ffe0a3;background:#fff4db;color:#745000}.message-meta{display:block;margin-bottom:3px;font-size:10px;font-weight:800;opacity:.7}.attachments{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.attachment{padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.68);font-size:11px;font-weight:850}.attachment-preview{display:block;width:min(260px,100%);max-height:220px;margin-bottom:6px;border-radius:8px;object-fit:cover}
+.entry{margin-bottom:8px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;background:#f8fafc}.entry-head{display:flex;justify-content:space-between;gap:7px;margin-bottom:4px;font-size:11px;color:var(--muted)}.entry-file{display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:800;text-align:left;width:100%;color:inherit;background:transparent;border:0;padding:0}.entry-file .file-icon{font-size:22px}.defect-photo-preview{display:block;width:100%;margin-top:8px;padding:0;overflow:hidden;border:1px solid var(--line);border-radius:13px;background:#fff;color:var(--text);text-align:left}.defect-photo-preview img{display:block;width:100%;max-height:320px;object-fit:contain;background:#eef2f6}.defect-photo-preview span{display:block;padding:7px 9px;font-size:11px;font-weight:800;overflow-wrap:anywhere}
+.topic-list{display:grid;gap:8px}.topic{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:17px;background:#fff;color:var(--text);text-align:left}.topic.active{border-color:var(--blue);background:#f3f8ff}.topic.common{border-left:4px solid var(--blue)}.topic-title{display:flex;justify-content:space-between;gap:7px;font-weight:900}.topic-common-badge{display:inline-block;margin-left:7px;padding:2px 6px;border-radius:8px;background:#e6effb;color:var(--blue);font-size:9px;vertical-align:middle}.topic-preview{margin-top:4px;color:var(--muted);font-size:11px}.chat{display:grid;gap:8px;max-height:360px;overflow:auto;margin:10px 0;padding-bottom:3px}.message{padding:10px 12px;border-radius:16px;background:var(--soft);line-height:1.4}.message.mine{margin-left:42px;background:var(--blue);color:#fff}.message.theirs{margin-right:42px;border:1px solid var(--line);background:#fff}.message.system{border:1px solid #ffe0a3;background:#fff4db;color:#745000}.message-meta{display:block;margin-bottom:3px;font-size:10px;font-weight:800;opacity:.7}.attachments{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.attachment{padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.68);font-size:11px;font-weight:850}.attachment-preview{display:block;width:min(260px,100%);max-height:220px;margin-bottom:6px;border-radius:8px;object-fit:cover}
 .overlay{position:fixed;z-index:40;inset:0;display:flex;align-items:flex-end;padding:13px;background:rgba(8,22,50,.44)}.sheet{width:100%;max-width:520px;max-height:90dvh;margin:0 auto;padding:16px;overflow:auto;border-radius:25px;background:#fff;box-shadow:0 -18px 50px rgba(8,22,50,.22)}.sheet-head{position:sticky;z-index:2;top:-16px;margin:-16px -16px 10px;padding:16px;background:rgba(255,255,255,.97);backdrop-filter:blur(8px)}.sheet-head h2{margin:0 0 4px;font-size:20px}.sheet-head p{margin:0;color:var(--muted);font-size:12px}.sheet-body{line-height:1.45}.toast{position:fixed;z-index:60;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));left:14px;max-width:492px;margin:auto;padding:14px 16px;border-radius:18px;background:var(--blue);color:#fff;font-weight:850;box-shadow:0 18px 48px rgba(16,47,114,.35)}.toast.error{background:var(--red)}.hidden{display:none!important}footer{padding:13px 8px;color:var(--muted);font-size:11px;text-align:center}
 @media(max-width:390px){.phone{padding-right:11px;padding-left:11px}.logo{flex-basis:49px;width:49px;height:49px}.product h1{font-size:18px}.product p{font-size:9px}.user-panel{min-width:112px;max-width:136px;padding:7px}.avatar{display:none}.tabs{top:65px}.tab{flex-basis:57px;width:57px;height:51px}.grid.two,.grid.three{grid-template-columns:1fr}.quick-actions{grid-template-columns:repeat(3,1fr)}.summary{grid-template-columns:1fr}.message.mine{margin-left:22px}.message.theirs{margin-right:22px}}
 </style>
@@ -126,6 +126,7 @@ input,textarea,select{background:#fff;border-color:#aeb8c5}
 .msg-thread-list{overflow:auto;flex:1;min-height:0}
 .messenger .msg-thread{width:100%;display:flex;gap:12px;align-items:center;padding:14px;text-align:left;border-bottom:1px solid #f0f1f4;border-radius:0}
 .msg-thread:hover{background:#f8f5f4}.msg-thread.selected{background:#fbecea}
+.msg-thread.common{border-left:4px solid #0c4f96}.msg-common-badge{display:inline-block;margin-left:6px;padding:2px 6px;border-radius:8px;background:#e6effb;color:#0c4f96;font-size:9px;vertical-align:middle}
 .msg-avatar{display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;border-radius:50%;background:#f4dcd8;color:#97211c;font-weight:700;font-size:16px}
 .msg-thread-body{min-width:0;flex:1}.msg-thread-top,.msg-thread-bottom{display:flex;gap:6px;align-items:center;justify-content:space-between}
 .msg-thread-top strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
@@ -184,7 +185,7 @@ body.messenger-view footer{display:none}
   let poll = 0;
   let reviewUnread = 3;
   let clientUnread = 1;
-  const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2}];
+  const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2,isCommon:true}];
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();
@@ -552,6 +553,7 @@ window.ITUS_CONFIG = {
       subtitle: text(x.subtitle || x.contactName || x.description),
       lastMessage: text(x.lastMessage?.text || x.lastMessage || x.preview),
       unread: Number(x.unreadCount || x.unread || 0),
+      common: x.isCommon === true || x.common === true || x.general === true || x.isGeneral === true || /^(common|general)$/i.test(text(x.chatType || x.groupType || x.type)),
       orderRef: text(x.orderRef || x.orderId),
       orderNumber: text(x.orderNumber),
       vehiclePlate: text(x.vehiclePlate || x.plate)
@@ -636,10 +638,10 @@ window.ITUS_CONFIG = {
     function listHtml(){
       const q=query.toLocaleLowerCase('ru-RU');
       let items=(section==='contacts'&&source==='staff'?contacts:records[source]).filter(x=>[x.title,x.subtitle,x.lastMessage].join(' ').toLocaleLowerCase('ru-RU').includes(q));
-      items=[...items].sort(section==='contacts'?(a,b)=>a.title.localeCompare(b.title,'ru'):(a,b)=>Number(Boolean(b.shiftGroup))-Number(Boolean(a.shiftGroup)) || (Date.parse(b.updatedAt)||0)-(Date.parse(a.updatedAt)||0));
+      items=[...items].sort(section==='contacts'?(a,b)=>a.title.localeCompare(b.title,'ru'):(a,b)=>Number(Boolean(b.common))-Number(Boolean(a.common)) || Number(Boolean(b.shiftGroup))-Number(Boolean(a.shiftGroup)) || (Date.parse(b.updatedAt)||0)-(Date.parse(a.updatedAt)||0));
       if(listError[source])return `<div class="msg-empty">${escape(listError[source])}<button data-action="msg-refresh">Повторить</button></div>`;
       if(!items.length)return `<div class="msg-empty">${listBusy[source]||listBusy.contacts?'Загрузка…':q?'Ничего не найдено':section==='contacts'&&source==='staff'?'Нет доступных авторизованных сотрудников':'Нет доступных переписок'}</div>`;
-      return items.map(item=>`<button class="msg-thread ${item.ref===selected?'selected':''}" data-action="msg-open" data-ref="${escape(item.ref)}"><span class="msg-avatar">${escape(initials(item.title))}</span><span class="msg-thread-body"><span class="msg-thread-top"><strong>${escape(item.title)}</strong><time>${escape(time(item.updatedAt))}</time></span><span class="msg-thread-bottom"><span>${escape(section==='contacts'?(item.subtitle||'Открыть переписку'):(item.lastMessage||item.subtitle||'Нет сообщений'))}</span>${item.unread>0?`<b class="msg-count">${item.unread}</b>`:''}</span></span></button>`).join('');
+      return items.map(item=>`<button class="msg-thread ${item.ref===selected?'selected':''} ${item.common?'common':''}" data-action="msg-open" data-ref="${escape(item.ref)}"><span class="msg-avatar">${escape(initials(item.title))}</span><span class="msg-thread-body"><span class="msg-thread-top"><strong>${escape(item.title)}${item.common?'<span class="msg-common-badge">Общий чат</span>':''}</strong><time>${escape(time(item.updatedAt))}</time></span><span class="msg-thread-bottom"><span>${escape(section==='contacts'?(item.subtitle||'Открыть переписку'):(item.lastMessage||item.subtitle||'Нет сообщений'))}</span>${item.unread>0?`<b class="msg-count">${item.unread}</b>`:''}</span></span></button>`).join('');
     }
     function fileHtml(file,mi,fi){
       const mime=file.mimeType||'',video=/^video\//.test(mime),image=/^image\//.test(mime);
@@ -1476,7 +1478,7 @@ window.ITUS_CONFIG = {
   function renderAcceptancePhoto(process) {
     const done = acceptanceHasPhoto();
     const required = process.photo?.required !== false;
-    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Отправьте фотографию через окно «Приём».'}</p><button data-action="open-acceptance-photo">Приём</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
+    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Добавьте фотографию или видео.'}</p><button data-action="open-acceptance-photo">Добавить фото/видео</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
   }
 
   function updateProcessProgress(processKey) {
@@ -1496,7 +1498,7 @@ window.ITUS_CONFIG = {
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Приём</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
   }
 
   function renderExecutorView() {
@@ -1514,7 +1516,7 @@ window.ITUS_CONFIG = {
   }
 
   function topicButton(topic, selected, type) {
-    return `<button class="topic ${selected === topic.ref ? 'active' : ''}" data-action="select-${type}-topic" data-ref="${escAttr(topic.ref)}"><div class="topic-title"><span>${esc(topic.title)}</span>${topic.unread ? `<span class="badge bad">${topic.unread}</span>` : ''}</div><div class="topic-preview">${esc(topic.subtitle || topic.lastMessage || 'Нет сообщений')}</div>${topic.orderNumber || topic.vehiclePlate ? `<div class="topic-preview">ЗН ${esc(topic.orderNumber)} · ${esc(topic.vehiclePlate)}</div>` : ''}</button>`;
+    return `<button class="topic ${selected === topic.ref ? 'active' : ''} ${topic.common ? 'common' : ''}" data-action="select-${type}-topic" data-ref="${escAttr(topic.ref)}"><div class="topic-title"><span>${esc(topic.title)}${topic.common ? '<span class="topic-common-badge">Общий чат</span>' : ''}</span>${topic.unread ? `<span class="badge bad">${topic.unread}</span>` : ''}</div><div class="topic-preview">${esc(topic.subtitle || topic.lastMessage || 'Нет сообщений')}</div>${topic.orderNumber || topic.vehiclePlate ? `<div class="topic-preview">ЗН ${esc(topic.orderNumber)} · ${esc(topic.vehiclePlate)}</div>` : ''}</button>`;
   }
 
   function attachmentImageSource(file) {
@@ -1848,6 +1850,26 @@ window.ITUS_CONFIG = {
   }
 
   const pendingDefectSheets = new Map();
+  const pendingDefectEntries = new Map();
+
+  function defectEntryKey(order, documentRef, kind, value) {
+    const identity = typeof value === 'string'
+      ? value.trim()
+      : [value?.name || '', value?.size || 0, value?.lastModified || 0, value?.type || ''].join(':');
+    return [order?.orderRef || order?.id || '', documentRef || '', kind, identity].join('|');
+  }
+
+  function defectEntryId(key) {
+    const existing = pendingDefectEntries.get(key);
+    if (existing) return existing;
+    const id = requestId();
+    pendingDefectEntries.set(key, id);
+    return id;
+  }
+
+  function finishDefectEntry(key, id) {
+    if (pendingDefectEntries.get(key) === id) pendingDefectEntries.delete(key);
+  }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
@@ -1880,13 +1902,23 @@ window.ITUS_CONFIG = {
     try { return await pending; } finally { pendingDefectSheets.delete(ref); }
   }
 
+  function defectImageSource(file) {
+    const direct = String(file?.previewUrl || file?.downloadUrl || '').trim();
+    if (/^https?:\/\//i.test(direct) || direct.startsWith('/')) return direct;
+    const base64 = String(file?.contentBase64 || '').replace(/^data:[^,]*,/, '');
+    return base64 ? `data:${file?.mimeType || 'image/jpeg'};base64,${base64}` : '';
+  }
+
   function renderDefectSheet() {
     const order = currentOrder(), sheet = order?._defectSheet;
     if (!sheet) return;
     const entries = sheet.entries || [];
     const entryHtml = entries.length ? entries.map((entry, index) => {
       const file = entry.file;
-      const fileButton = file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b><br><span class="tiny">Открыть вложение</span></span></button>` : '';
+      const imageSource = entry.type === 'photo' || /^image\//i.test(file?.mimeType || '') ? defectImageSource(file) : '';
+      const fileButton = imageSource
+        ? `<button class="defect-photo-preview" data-action="defect-media" data-index="${index}" aria-label="${escAttr(file.fileName || 'Фото дефекта')}"><img src="${escAttr(imageSource)}" alt="${escAttr(file.fileName || 'Фото дефекта')}" loading="lazy"><span>${esc(file.fileName || 'Фото дефекта')}</span></button>`
+        : file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b></span></button>` : '';
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
@@ -1932,7 +1964,8 @@ window.ITUS_CONFIG = {
     if (!process?.documentRef) throw new Error('Сначала создайте акт приёма');
     toast('Подготавливаем файл для акта приёма…');
     const payload = await fileToPayload(file, kind);
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(order, process.documentRef, kind, file);
+    const clientEntryId = defectEntryId(attemptKey);
     const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
     let response;
     try { response = await call1C('/defects/entries/add', requestBody, {silent:true}); }
@@ -1940,6 +1973,7 @@ window.ITUS_CONFIG = {
       if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
+    finishDefectEntry(attemptKey, clientEntryId);
 
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     process.entries = Array.isArray(process.entries) ? process.entries : [];
@@ -1951,8 +1985,10 @@ window.ITUS_CONFIG = {
     const text = String($('defectText')?.value || '').trim();
     if (!text) return toast('Введите описание дефекта', true);
     const sheet = await ensureDefectSheet();
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
+    const clientEntryId = defectEntryId(attemptKey);
     const response = await call1C('/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: 'text', text } }));
+    finishDefectEntry(attemptKey, clientEntryId);
     const entry = response.entry || response.data?.entry || { id: clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
@@ -2009,8 +2045,10 @@ window.ITUS_CONFIG = {
     const sheet = await ensureDefectSheet(order);
     toast('Подготавливаем файл…');
     const payload = await fileToPayload(file, kind);
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
+    const clientEntryId = defectEntryId(attemptKey);
     const response = await call1C('/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } });
+    finishDefectEntry(attemptKey, clientEntryId);
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
@@ -2051,7 +2089,8 @@ window.ITUS_CONFIG = {
 
   async function loadChatGroups() {
     const response = await call1C('/internal-chat/groups/list', {});
-    state.chatGroups = API.extractItems(response, ['groups']).map(API.normalizeTopic);
+    state.chatGroups = API.extractItems(response, ['groups']).map(API.normalizeTopic)
+      .sort((a, b) => Number(Boolean(b.common)) - Number(Boolean(a.common)));
     if (!state.chatGroups.some(item => item.ref === state.selectedChatGroup)) state.selectedChatGroup = state.chatGroups[0]?.ref || '';
     if (state.selectedChatGroup) await loadChatMessages(state.selectedChatGroup, true);
     render();

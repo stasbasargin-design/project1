@@ -259,6 +259,7 @@
       subtitle: text(x.subtitle || x.contactName || x.description),
       lastMessage: text(x.lastMessage?.text || x.lastMessage || x.preview),
       unread: Number(x.unreadCount || x.unread || 0),
+      common: x.isCommon === true || x.common === true || x.general === true || x.isGeneral === true || /^(common|general)$/i.test(text(x.chatType || x.groupType || x.type)),
       orderRef: text(x.orderRef || x.orderId),
       orderNumber: text(x.orderNumber),
       vehiclePlate: text(x.vehiclePlate || x.plate)

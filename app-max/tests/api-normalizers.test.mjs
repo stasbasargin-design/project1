@@ -50,6 +50,7 @@ assert.equal(process.survey.questions[0].options[1].value, 'bad');
 assert.deepEqual(api.normalizeUser([{ maxUserId: 1 }, { name: 'Пользователь' }, { role: 'master' }]), { maxUserId: 1, name: 'Пользователь', role: 'master' });
 assert.equal(api.normalizeUser({employee:{fullName:'Иванов Иван'},maxUserId:'123'}).name,'Иванов Иван');
 assert.equal(api.normalizeTopic({groupRef:'shift',title:'Передача смены'},0).ref,'shift');
+assert.equal(api.normalizeTopic({groupRef:'all',title:'Общий',isCommon:true},0).common,true);
 const defectMedia = api.normalizeProcess({entries:[{entryRef:'d1',text:'Осмотр',attachments:[
   {fileRef:'p1',fileName:'photo.jpg',mimeType:'image/jpeg'},
   {fileRef:'v1',fileName:'video.mp4',mimeType:'video/mp4'}

@@ -11,7 +11,7 @@
   let poll = 0;
   let reviewUnread = 3;
   let clientUnread = 1;
-  const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2}];
+  const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2,isCommon:true}];
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();

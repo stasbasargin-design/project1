@@ -16,6 +16,7 @@ body.messenger-view .phone{max-width:1180px}
 .msg-thread-list{overflow:auto;flex:1;min-height:0}
 .messenger .msg-thread{width:100%;display:flex;gap:12px;align-items:center;padding:14px;text-align:left;border-bottom:1px solid #f0f1f4;border-radius:0}
 .msg-thread:hover{background:#f8f5f4}.msg-thread.selected{background:#fbecea}
+.msg-thread.common{border-left:4px solid #0c4f96}.msg-common-badge{display:inline-block;margin-left:6px;padding:2px 6px;border-radius:8px;background:#e6effb;color:#0c4f96;font-size:9px;vertical-align:middle}
 .msg-avatar{display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;border-radius:50%;background:#f4dcd8;color:#97211c;font-weight:700;font-size:16px}
 .msg-thread-body{min-width:0;flex:1}.msg-thread-top,.msg-thread-bottom{display:flex;gap:6px;align-items:center;justify-content:space-between}
 .msg-thread-top strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}

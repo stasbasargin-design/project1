@@ -874,6 +874,7 @@
             "groupRef": "GROUP_GUID",
             "title": "Передача смены",
             "subtitle": "Общий чат",
+            "isCommon": true,
             "lastMessage": "Принято",
             "unreadCount": 2
           }

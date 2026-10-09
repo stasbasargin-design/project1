@@ -406,7 +406,7 @@
   function renderAcceptancePhoto(process) {
     const done = acceptanceHasPhoto();
     const required = process.photo?.required !== false;
-    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Отправьте фотографию через окно «Приём».'}</p><button data-action="open-acceptance-photo">Приём</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
+    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Добавьте фотографию или видео.'}</p><button data-action="open-acceptance-photo">Добавить фото/видео</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
   }
 
   function updateProcessProgress(processKey) {
@@ -426,7 +426,7 @@
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Приём</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
   }
 
   function renderExecutorView() {
@@ -444,7 +444,7 @@
   }
 
   function topicButton(topic, selected, type) {
-    return `<button class="topic ${selected === topic.ref ? 'active' : ''}" data-action="select-${type}-topic" data-ref="${escAttr(topic.ref)}"><div class="topic-title"><span>${esc(topic.title)}</span>${topic.unread ? `<span class="badge bad">${topic.unread}</span>` : ''}</div><div class="topic-preview">${esc(topic.subtitle || topic.lastMessage || 'Нет сообщений')}</div>${topic.orderNumber || topic.vehiclePlate ? `<div class="topic-preview">ЗН ${esc(topic.orderNumber)} · ${esc(topic.vehiclePlate)}</div>` : ''}</button>`;
+    return `<button class="topic ${selected === topic.ref ? 'active' : ''} ${topic.common ? 'common' : ''}" data-action="select-${type}-topic" data-ref="${escAttr(topic.ref)}"><div class="topic-title"><span>${esc(topic.title)}${topic.common ? '<span class="topic-common-badge">Общий чат</span>' : ''}</span>${topic.unread ? `<span class="badge bad">${topic.unread}</span>` : ''}</div><div class="topic-preview">${esc(topic.subtitle || topic.lastMessage || 'Нет сообщений')}</div>${topic.orderNumber || topic.vehiclePlate ? `<div class="topic-preview">ЗН ${esc(topic.orderNumber)} · ${esc(topic.vehiclePlate)}</div>` : ''}</button>`;
   }
 
   function attachmentImageSource(file) {
@@ -778,6 +778,26 @@
   }
 
   const pendingDefectSheets = new Map();
+  const pendingDefectEntries = new Map();
+
+  function defectEntryKey(order, documentRef, kind, value) {
+    const identity = typeof value === 'string'
+      ? value.trim()
+      : [value?.name || '', value?.size || 0, value?.lastModified || 0, value?.type || ''].join(':');
+    return [order?.orderRef || order?.id || '', documentRef || '', kind, identity].join('|');
+  }
+
+  function defectEntryId(key) {
+    const existing = pendingDefectEntries.get(key);
+    if (existing) return existing;
+    const id = requestId();
+    pendingDefectEntries.set(key, id);
+    return id;
+  }
+
+  function finishDefectEntry(key, id) {
+    if (pendingDefectEntries.get(key) === id) pendingDefectEntries.delete(key);
+  }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
@@ -810,13 +830,23 @@
     try { return await pending; } finally { pendingDefectSheets.delete(ref); }
   }
 
+  function defectImageSource(file) {
+    const direct = String(file?.previewUrl || file?.downloadUrl || '').trim();
+    if (/^https?:\/\//i.test(direct) || direct.startsWith('/')) return direct;
+    const base64 = String(file?.contentBase64 || '').replace(/^data:[^,]*,/, '');
+    return base64 ? `data:${file?.mimeType || 'image/jpeg'};base64,${base64}` : '';
+  }
+
   function renderDefectSheet() {
     const order = currentOrder(), sheet = order?._defectSheet;
     if (!sheet) return;
     const entries = sheet.entries || [];
     const entryHtml = entries.length ? entries.map((entry, index) => {
       const file = entry.file;
-      const fileButton = file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b><br><span class="tiny">Открыть вложение</span></span></button>` : '';
+      const imageSource = entry.type === 'photo' || /^image\//i.test(file?.mimeType || '') ? defectImageSource(file) : '';
+      const fileButton = imageSource
+        ? `<button class="defect-photo-preview" data-action="defect-media" data-index="${index}" aria-label="${escAttr(file.fileName || 'Фото дефекта')}"><img src="${escAttr(imageSource)}" alt="${escAttr(file.fileName || 'Фото дефекта')}" loading="lazy"><span>${esc(file.fileName || 'Фото дефекта')}</span></button>`
+        : file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b></span></button>` : '';
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
@@ -862,7 +892,8 @@
     if (!process?.documentRef) throw new Error('Сначала создайте акт приёма');
     toast('Подготавливаем файл для акта приёма…');
     const payload = await fileToPayload(file, kind);
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(order, process.documentRef, kind, file);
+    const clientEntryId = defectEntryId(attemptKey);
     const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
     let response;
     try { response = await call1C('/defects/entries/add', requestBody, {silent:true}); }
@@ -870,6 +901,7 @@
       if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
+    finishDefectEntry(attemptKey, clientEntryId);
 
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     process.entries = Array.isArray(process.entries) ? process.entries : [];
@@ -881,8 +913,10 @@
     const text = String($('defectText')?.value || '').trim();
     if (!text) return toast('Введите описание дефекта', true);
     const sheet = await ensureDefectSheet();
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
+    const clientEntryId = defectEntryId(attemptKey);
     const response = await call1C('/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: 'text', text } }));
+    finishDefectEntry(attemptKey, clientEntryId);
     const entry = response.entry || response.data?.entry || { id: clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
@@ -939,8 +973,10 @@
     const sheet = await ensureDefectSheet(order);
     toast('Подготавливаем файл…');
     const payload = await fileToPayload(file, kind);
-    const clientEntryId = requestId();
+    const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
+    const clientEntryId = defectEntryId(attemptKey);
     const response = await call1C('/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } });
+    finishDefectEntry(attemptKey, clientEntryId);
     const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
@@ -981,7 +1017,8 @@
 
   async function loadChatGroups() {
     const response = await call1C('/internal-chat/groups/list', {});
-    state.chatGroups = API.extractItems(response, ['groups']).map(API.normalizeTopic);
+    state.chatGroups = API.extractItems(response, ['groups']).map(API.normalizeTopic)
+      .sort((a, b) => Number(Boolean(b.common)) - Number(Boolean(a.common)));
     if (!state.chatGroups.some(item => item.ref === state.selectedChatGroup)) state.selectedChatGroup = state.chatGroups[0]?.ref || '';
     if (state.selectedChatGroup) await loadChatMessages(state.selectedChatGroup, true);
     render();
