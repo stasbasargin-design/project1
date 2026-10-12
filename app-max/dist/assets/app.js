@@ -360,8 +360,8 @@
         + Number(photoRequired && acceptanceHasPhoto());
       return { done, total, pct: total ? Math.round(done / total * 100) : 0 };
     }
-    const fields = process.form?.fields || [];
-    const questions = process.survey?.questions || [];
+    const fields = (process.form?.fields || []).filter(field => field.required);
+    const questions = (process.survey?.questions || []).filter(question => question.required);
     const total = fields.length + questions.length;
     const fieldDone = fields.filter(field => answered(process.values?.[field.id])).length;
     const questionDone = questions.filter(question => answered(process.answers?.[question.id])).length;

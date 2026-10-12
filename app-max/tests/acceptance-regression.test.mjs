@@ -56,6 +56,8 @@ assert.doesNotMatch(app.renderTechView(),/data-action="open-defect-chat">При�
 assert.doesNotMatch(app.renderTechView(),/Текущее обращение/);
 assert.match(app.renderTechView(),/data-action="service-history">История обслуживания/);
 assert.match(app.renderExecutorView(),/Добавить дефект/);
+const qualityProgress=app.processProgress({form:{fields:[{id:'comment',required:false},{id:'mileage',required:true}]},survey:{questions:[{id:'optional',required:false},{id:'required',required:true}]},values:{mileage:123},answers:{required:'yes'}},'_quality');
+assert.equal(qualityProgress.done,2);assert.equal(qualityProgress.total,2);assert.equal(qualityProgress.pct,100);
 await app.startAcceptance();
 let process=app.currentOrder()._acceptance;
 assert.equal(process.values.mileage,100);
