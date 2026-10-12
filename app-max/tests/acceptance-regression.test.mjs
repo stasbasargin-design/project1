@@ -58,6 +58,8 @@ assert.match(app.renderTechView(),/data-action="service-history">История 
 assert.match(app.renderExecutorView(),/Добавить дефект/);
 const qualityProgress=app.processProgress({form:{fields:[{id:'comment',required:false},{id:'mileage',required:true}]},survey:{questions:[{id:'optional',required:false},{id:'required',required:true}]},values:{mileage:123},answers:{required:'yes'}},'_quality');
 assert.equal(qualityProgress.done,2);assert.equal(qualityProgress.total,2);assert.equal(qualityProgress.pct,100);
+const qualityValidation={form:{fields:[{id:'comment',required:false},{id:'mileage',required:true}]},survey:{questions:[{id:'optional',required:false},{id:'required',required:true}]},values:{mileage:123},answers:{required:'yes'}};
+assert.equal(app.validateProcess(qualityValidation,false),true);
 await app.startAcceptance();
 let process=app.currentOrder()._acceptance;
 assert.equal(process.values.mileage,100);

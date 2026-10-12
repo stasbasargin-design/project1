@@ -766,7 +766,7 @@
   async function completeQuality(result = '') {
     const order = currentOrder(), process = order?._quality; if (!process) return;
     if (result) process.answers = { ...process.answers, result };
-    if (!validateProcess(process, true)) { render(); toast('Заполните все вопросы выходного контроля', true); return; }
+    if (!validateProcess(process, false)) { render(); toast('Заполните обязательные поля выходного контроля', true); return; }
     state.busy = true; render();
     try {
       await call1C('/quality/complete', orderPayload({ documentRef: process.documentRef, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, result: result || process.answers?.result || '', answers: process.answers, formValues: process.values }));
