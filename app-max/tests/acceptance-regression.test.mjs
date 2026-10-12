@@ -52,7 +52,9 @@ assert.equal(photoPayload.fileName,'camera.jpg');assert.equal(photoPayload.mimeT
 assert.match(app.renderMessages([{side:'mine',author:'Я',createdAt:'сейчас',text:'',attachments:[{fileName:'camera.jpg',mimeType:'image/jpeg',contentBase64:'AA=='}]}]),/<img class="attachment-preview"/);
 assert.ok(!app.renderSelectedCard().includes('quick-actions'));
 assert.match(app.renderMpView(),/data-action="open-acceptance-photo">Добавить фото\/видео/);
-assert.match(app.renderTechView(),/data-action="open-defect-chat">Приём</);
+assert.doesNotMatch(app.renderTechView(),/data-action="open-defect-chat">Приём</);
+assert.doesNotMatch(app.renderTechView(),/Текущее обращение/);
+assert.match(app.renderTechView(),/data-action="service-history">История обслуживания/);
 assert.match(app.renderExecutorView(),/Добавить дефект/);
 await app.startAcceptance();
 let process=app.currentOrder()._acceptance;

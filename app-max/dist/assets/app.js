@@ -273,6 +273,29 @@
     $('notifications').innerHTML = '';
   }
 
+  function normalizedNotificationType(value) {
+    const compact = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases = {
+      'executor_assigned': 'executor_assigned',
+      'executorassigned': 'executor_assigned',
+      'назначен_исполнитель': 'executor_assigned',
+      'назначение_исполнителя': 'executor_assigned',
+      'new_message': 'new_messages',
+      'new_messages': 'new_messages',
+      'quality_control_requested': 'quality_control_requested'
+    };
+    return aliases[compact] || compact;
+  }
+
+  function viewForCurrentUser() {
+    const role = String(state.user?.roleName || state.user?.role || '').trim().toLowerCase();
+    const candidates = role.includes('исполн') || role === 'executor' ? ['executor', 'orders']
+      : role.includes('техн') || role === 'tech' ? ['tech', 'orders']
+      : role.includes('мастер') || role.includes('прием') || role === 'master' || role === 'mp' ? ['mp', 'orders']
+      : ['orders'];
+    return candidates.find(view => state.views[view]) || 'orders';
+  }
+
   function messagesRead({previousUnread, remainingUnread, totalUnread}) {
     state.unreadRevision++;
     if (typeof totalUnread === 'number' && Number.isFinite(totalUnread) && totalUnread >= 0) state.unreadMessages = totalUnread;
@@ -302,7 +325,7 @@
   function renderOrderList() {
     const query = state.search.toLowerCase().trim();
     const orders = state.orders.filter(o => !query || [o.num,o.plate,o.car,o.client,o.status].join(' ').toLowerCase().includes(query));
-    return `<div class="card"><label for="orderSearch">Поиск заказ-наряда</label><input id="orderSearch" value="${escAttr(state.search)}" placeholder="ЗН, госномер, клиент"><div class="grid two"><button data-action="scan-order-qr">Сканировать QR</button><button data-action="refresh-orders">Обновить из 1С</button></div></div>${orders.length ? orders.map(orderCard).join('') : '<div class="card empty">1С не вернула доступные заказ-наряды или ничего не найдено.</div>'}`;
+    return `<div class="card"><label for="orderSearch">Поиск заказ-наряда</label><input id="orderSearch" value="${escAttr(state.search)}" placeholder="Номер ЗН, госномер или контрагент"><div class="grid two"><button data-action="search-orders">Найти в 1С</button><button data-action="scan-order-qr">Сканировать QR</button><button data-action="refresh-orders">Обновить из 1С</button></div></div>${orders.length ? orders.map(orderCard).join('') : '<div class="card empty">1С не вернула доступные заказ-наряды или ничего не найдено.</div>'}`;
   }
 
   function renderSelectedCard() {
@@ -313,7 +336,8 @@
       ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
       : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
+    const mileage = order.mileage ? `${esc(order.mileage)} км` : 'Не указан';
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пробег</span><br><b>${mileage}</b><span class="tiny">Данные реестра 1С</span></div><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
   }
 
   function renderOrdersView() {
@@ -400,7 +424,10 @@
     if (!process?.active) return '';
     const progress = processProgress(process, processKey);
     const hasContent = (process.form?.fields?.length || 0) + (process.survey?.questions?.length || 0) > 0;
-    return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''}>${esc(completeLabel)}</button></div>`;
+    const completion = processKey === '_quality'
+      ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''}>${esc(completeLabel)}</button>`;
+    return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
   function renderAcceptancePhoto(process) {
@@ -440,7 +467,7 @@
   function renderTechView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия технолога</h2><div class="grid two"><button data-action="open-defect-chat">Приём</button><button data-action="start-quality">Выходной контроль</button><button data-action="current-appeal">Текущее обращение</button><button data-action="service-history">История обслуживания</button></div></div>` + renderProcess('_quality', order._quality, 'complete-quality', 'Завершить выходной контроль');
+    return renderSelectedCard() + `<div class="card"><h2>Действия технолога</h2><div class="grid"><button data-action="start-quality">Выходной контроль</button><button data-action="service-history">История обслуживания</button></div></div>` + renderProcess('_quality', order._quality, 'complete-quality', 'Завершить выходной контроль');
   }
 
   function topicButton(topic, selected, type) {
@@ -584,7 +611,7 @@
       const self = d.employees.find(x => x.ref === state.user?.employeeRef);
       body = `${self ? button('worktime-self','Делаю сам') : '<p>1С не вернула вас в списке доступных исполнителей.</p>'}<h3>Другие исполнители цеха</h3><p>Выберите исполнителей. Чтобы участвовать вместе с коллегами, отметьте «Я участвую».</p>${self ? `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(self.ref)}" ${d.employeeRefs.includes(self.ref) ? 'checked' : ''}>Я участвую</label>` : ''}${d.employees.filter(x => x.ref !== self?.ref).map(x => `<label class="setting-row"><input type="checkbox" data-worktime-employee="${escAttr(x.ref)}" ${d.employeeRefs.includes(x.ref) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}${button('worktime-employees-next','Подтвердить исполнителей')}${button('worktime-back-works','Назад к работам')}`;
     } else if (d.step === 'shares') {
-      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}<button class="secondary" data-action="worktime-shares-equal">Распределить % поровну</button>${button('worktime-shares-next','Подтвердить распределение')}${button('worktime-back-employees','Назад к исполнителям')}`;
+      body = `<h3>Распределение участия</h3><p>Сумма долей должна быть ровно 100%.</p>${d.employeeRefs.map(ref => `<label>${esc(d.employees.find(x => x.ref === ref)?.name)} — участие, %<input type="number" min="0.01" max="100" step="0.01" data-worktime-percent="${escAttr(ref)}" value="${escAttr(d.participants.find(p => p.employeeRef === ref)?.percent ?? '')}"></label>`).join('')}<button class="secondary worktime-equal-button" data-action="worktime-shares-equal">Распределить % поровну</button>${button('worktime-shares-next','Подтвердить распределение')}${button('worktime-back-employees','Назад к исполнителям')}`;
     } else {
       body = `<h3>Подтверждение пакета</h3><h4>Работы</h4><ul>${d.workRefs.map(ref => `<li>${esc(d.works.find(x => x.ref === ref)?.name)}</li>`).join('')}</ul><h4>Исполнители</h4><ul>${d.participants.map(p => `<li>${esc(d.employees.find(x => x.ref === p.employeeRef)?.name)} — ${p.percent}%</li>`).join('')}</ul>${button('worktime-submit','Подтвердить и создать пакет')}${!d.sent ? button('worktime-back-employees','Изменить исполнителей') : '<p>При повторе отправляется тот же состав с тем же идентификатором.</p>'}`;
     }
@@ -736,12 +763,13 @@
     } finally { state.busy = false; }
   }
 
-  async function completeQuality() {
+  async function completeQuality(result = '') {
     const order = currentOrder(), process = order?._quality; if (!process) return;
+    if (result) process.answers = { ...process.answers, result };
     if (!validateProcess(process, true)) { render(); toast('Заполните все вопросы выходного контроля', true); return; }
     state.busy = true; render();
     try {
-      await call1C('/quality/complete', orderPayload({ documentRef: process.documentRef, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers, formValues: process.values }));
+      await call1C('/quality/complete', orderPayload({ documentRef: process.documentRef, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, result: result || process.answers?.result || '', answers: process.answers, formValues: process.values }));
       order._quality = null; render(); toast('Выходной контроль завершён и скрыт');
     } finally { state.busy = false; render(); }
   }
@@ -755,15 +783,31 @@
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
-  async function downloadServiceHistory() {
-    showSheet('История обслуживания', '1С формирует PDF-файл', '<div class="loading"><span class="spinner"></span>Формирование PDF…</div>');
+  async function openServiceHistory() {
+    showSheet('История обслуживания', 'Загружаем предыдущие заезды автомобиля из 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
     try {
-      const response = await call1C('/quality/service-history/pdf', orderPayload());
-      const file = API.normalizeFile(response.file || response.data?.file || response.document || response.data?.document);
-      if (!file) throw new Error('1С не вернула PDF-файл');
-      $('sheetBody').innerHTML = `<div class="entry-file"><span class="file-icon">📄</span><div><b>${esc(file.fileName)}</b><br><span class="tiny">${esc(file.mimeType || 'application/pdf')}</span></div></div><button class="primary" data-action="download-history">Скачать PDF</button>`;
-      state.historyFile = file;
+      const response = await call1C('/quality/service-history', orderPayload());
+      const data = response.data || response;
+      const visits = API.extractItems(response, ['visits','history','items']);
+      if (!visits.length) { $('sheetBody').innerHTML = '<div class="empty">1С не вернула историю обслуживания по этому автомобилю.</div>'; return; }
+      $('sheetBody').innerHTML = `<div class="service-history">${visits.map((visit, index) => {
+        const number = visit.orderNumber || visit.number || visit.orderNum || `Заезд ${index + 1}`;
+        const reason = visit.reason || visit.appeal || visit.description || 'Не указана';
+        const goods = Array.isArray(visit.goods) ? visit.goods : (Array.isArray(visit.products) ? visit.products : []);
+        const works = Array.isArray(visit.works) ? visit.works : [];
+        const recommendations = visit.recommendations || visit.recommendation || 'Нет';
+        return `<article class="entry"><div class="entry-head"><b>ЗН ${esc(number)}</b><span>${esc(FEATURES.dateTime(visit.closedAt || visit.date || visit.createdAt))}</span></div><p><b>Причина обращения:</b> ${esc(reason)}</p>${goods.length ? `<p><b>Товары:</b> ${goods.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}${works.length ? `<p><b>Работы:</b> ${works.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}<p><b>Рекомендации:</b> ${esc(recommendations)}</p></article>`;
+      }).join('')}</div><button class="secondary" data-action="close-sheet">Закрыть</button>`;
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
+  }
+
+  async function searchOrders() {
+    const search = String(state.search || '').trim();
+    if (!search) return toast('Введите номер ЗН, госномер или контрагента', true);
+    const response = await call1C('/orders/search', { search, searchBy: ['orderNumber','vehiclePlate','counterparty'] });
+    const items = API.extractOrders(response).map(API.mapOrder);
+    if (!items.length) return toast('Заказ-наряд не найден', true);
+    items.forEach(mergeOrder); state.selectedOrderId = items[0].id; state.view = viewForCurrentUser(); render();
   }
 
   function downloadFile(file) {
@@ -1110,7 +1154,7 @@
       state.notificationCursor = String(data.nextCursor || data.cursor || state.notificationCursor || '');
       const prefs = FEATURES.preferences(userId);
       for (const raw of API.extractItems(response, ['events','notifications'])) {
-        const type = String(raw.type || raw.eventType || '');
+        const type = normalizedNotificationType(raw.type || raw.eventType);
         if (!types.includes(type)) continue;
         const event = {eventId:String(raw.eventId || raw.id || JSON.stringify(raw)), type,
           title:String(raw.title || 'Уведомление из 1С'),message:String(raw.message || raw.text || ''),
@@ -1312,7 +1356,8 @@
       if (action === 'logout') { messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
-      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); return render(); }
+      if (action === 'search-orders') return searchOrders();
+      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return render(); }
       if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return toast('Карточка обновлена из 1С'); }
       if (action === 'scan-order-qr') return showSheet('QR-код заказ-наряда', 'Введите значение, если камера недоступна', '<label for="orderQr">Номер или ссылка из QR</label><input id="orderQr"><button class="primary" data-action="submit-order-qr">Найти в 1С</button>');
       if (action === 'submit-order-qr') { const value = String($('orderQr')?.value || '').trim(); closeSheet(); if (!value) return toast('Введите значение QR', true); const response = await call1C('/orders/search', { search: value }); const items = API.extractOrders(response).map(API.mapOrder); if (!items.length) return toast('Заказ-наряд не найден', true); items.forEach(mergeOrder); state.selectedOrderId = items[0].id; return render(); }
@@ -1336,10 +1381,9 @@
       if (action === 'package-close') return packageAction('close');
       if (action === 'production') return showProduction();
       if (action === 'start-quality') return startQuality('manual');
-      if (action === 'complete-quality') return completeQuality();
+      if (action === 'complete-quality') return completeQuality(button.dataset.result);
       if (action === 'current-appeal') return showCurrentAppeal();
-      if (action === 'service-history') return downloadServiceHistory();
-      if (action === 'download-history') return downloadFile(state.historyFile);
+      if (action === 'service-history') return openServiceHistory();
       if (action === 'open-defect-chat') return openDefectSheet();
       if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
       if (action === 'acceptance-photo') return choosePhoto({ type:'acceptance',kind:'photo' });
