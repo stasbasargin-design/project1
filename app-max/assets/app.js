@@ -786,7 +786,9 @@
   async function openServiceHistory() {
     showSheet('История обслуживания', 'Загружаем предыдущие заезды автомобиля из 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
     try {
-      const response = await call1C('/quality/service-history', orderPayload());
+      const order = currentOrder();
+      const mileage = String(order?.mileage ?? '').trim();
+      const response = await call1C('/quality/service-history', orderPayload(/^\d+$/.test(mileage) ? { mileage: Number(mileage) } : {}));
       const data = response.data || response;
       const visits = API.extractItems(response, ['visits','history','items']);
       if (!visits.length) { $('sheetBody').innerHTML = '<div class="empty">1С не вернула историю обслуживания по этому автомобилю.</div>'; return; }
@@ -796,7 +798,8 @@
         const goods = Array.isArray(visit.goods) ? visit.goods : (Array.isArray(visit.products) ? visit.products : []);
         const works = Array.isArray(visit.works) ? visit.works : [];
         const recommendations = visit.recommendations || visit.recommendation || 'Нет';
-        return `<article class="entry"><div class="entry-head"><b>ЗН ${esc(number)}</b><span>${esc(FEATURES.dateTime(visit.closedAt || visit.date || visit.createdAt))}</span></div><p><b>Причина обращения:</b> ${esc(reason)}</p>${goods.length ? `<p><b>Товары:</b> ${goods.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}${works.length ? `<p><b>Работы:</b> ${works.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}<p><b>Рекомендации:</b> ${esc(recommendations)}</p></article>`;
+        const mileageLabel = visit.mileage ?? visit.odometer;
+        return `<article class="entry"><div class="entry-head"><b>ЗН ${esc(number)}</b><span>${esc(FEATURES.dateTime(visit.closedAt || visit.date || visit.createdAt))}</span></div>${mileageLabel !== undefined && mileageLabel !== null && mileageLabel !== '' ? `<p><b>Пробег:</b> ${esc(mileageLabel)} км</p>` : ''}<p><b>Причина обращения:</b> ${esc(reason)}</p>${goods.length ? `<p><b>Товары:</b> ${goods.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}${works.length ? `<p><b>Работы:</b> ${works.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}<p><b>Рекомендации:</b> ${esc(recommendations)}</p></article>`;
       }).join('')}</div><button class="secondary" data-action="close-sheet">Закрыть</button>`;
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
   }
