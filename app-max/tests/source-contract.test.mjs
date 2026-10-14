@@ -10,4 +10,7 @@ assert.equal(process.form.fields.find(f=>f.id==='mileage').required,true);
 assert.equal(contract.basePath,'/aa6_ea_test9/ru/hs/max-service');
 assert.ok(contract.methods['/defects/entries/add'].request.documentRef);
 for (const route of ['/acceptance/entries/add','/clients/messages/read','/internal-chat/messages/read','/internal-chat/contacts/list','/internal-chat/direct/open','/auth/qr/start','/auth/qr/confirm','/auth/qr/status']) assert.ok(contract.methods[route]);
+assert.ok(contract.methods['/quality/request']);
+const config=readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8');
+assert.match(config,/POLL_INTERVAL_MS:\s*60000/);
 console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');

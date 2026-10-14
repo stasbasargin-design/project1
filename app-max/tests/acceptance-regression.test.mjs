@@ -16,7 +16,7 @@ const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,val
  {id:'engineHours',label:'Моточасы',type:'number',required:false,value:''},
  {id:'reason',label:'Дополнения к причине обращения',type:'textarea',required:false,value:''}];
 let failPhoto=true, photoRequired=true, acceptanceUpload404=false;
-const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck'}};
+const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck',plate:'A123BC'},mileage:123456};
 const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams,AbortController,crypto:webcrypto,
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
  location:{search:'',href:'http://test.local/'},navigator:{},
@@ -42,8 +42,8 @@ context.window=context;
 vm.runInContext(fs.readFileSync(new URL('../assets/review-features.js',import.meta.url),'utf8'),context);
 vm.runInContext(fs.readFileSync(new URL('../assets/api-normalizers.js',import.meta.url),'utf8'),context);
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -51,6 +51,9 @@ const photoPayload=await app.fileToPayload({name:'camera.heic',type:'image/jpeg'
 assert.equal(photoPayload.fileName,'camera.jpg');assert.equal(photoPayload.mimeType,'image/jpeg');
 assert.match(app.renderMessages([{side:'mine',author:'Я',createdAt:'сейчас',text:'',attachments:[{fileName:'camera.jpg',mimeType:'image/jpeg',contentBase64:'AA=='}]}]),/<img class="attachment-preview"/);
 assert.ok(!app.renderSelectedCard().includes('quick-actions'));
+assert.match(app.renderMpView(),/data-action="request-quality"/);
+assert.match(app.renderSelectedCard(),/123456/);
+assert.doesNotMatch(app.renderSelectedCard(),/<span class="tiny">Пробег<\/span>/);
 assert.match(app.renderMpView(),/data-action="open-acceptance-photo">Добавить фото\/видео/);
 assert.doesNotMatch(app.renderTechView(),/data-action="open-defect-chat">Приём</);
 assert.doesNotMatch(app.renderTechView(),/Текущее обращение/);
@@ -60,6 +63,9 @@ const qualityProgress=app.processProgress({form:{fields:[{id:'comment',required:
 assert.equal(qualityProgress.done,2);assert.equal(qualityProgress.total,2);assert.equal(qualityProgress.pct,100);
 const qualityValidation={form:{fields:[{id:'comment',required:false},{id:'mileage',required:true}]},survey:{questions:[{id:'optional',required:false},{id:'required',required:true}]},values:{mileage:123},answers:{required:'yes'}};
 assert.equal(app.validateProcess(qualityValidation,false),true);
+await app.requestQualityControl();
+assert.equal(calls.at(-1).url.endsWith('/quality/request'),true);
+assert.equal(calls.at(-1).body.orderRef,'test-order');
 await app.startAcceptance();
 let process=app.currentOrder()._acceptance;
 assert.equal(process.values.mileage,100);

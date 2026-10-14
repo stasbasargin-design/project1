@@ -280,7 +280,8 @@ window.ITUS_CONFIG = {
 
   // Проверка уведомлений о назначении исполнителя и запросе выходного контроля.
   // Лёгкий опрос счётчиков и событий. История чатов и вложения здесь не запрашиваются.
-  POLL_INTERVAL_MS: 3000,
+  // Notifications are polled once per minute; the first poll runs immediately after sign-in.
+  POLL_INTERVAL_MS: 60000,
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
   MAX_UPLOAD_BYTES: 15728640,
@@ -1090,7 +1091,7 @@ window.ITUS_CONFIG = {
     clientBotId: window.ITUS_CONFIG?.MAX_CLIENT_BOT_ID || '',
     miniAppId: window.ITUS_CONFIG?.MAX_MINI_APP_ID || '',
     timeoutMs: Number(window.ITUS_CONFIG?.REQUEST_TIMEOUT_MS || 35000),
-    pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 15000),
+    pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
@@ -1343,8 +1344,8 @@ window.ITUS_CONFIG = {
   }
 
   function renderNotifications() {
-    // No in-app notification cards. The Chats tab badge is the indicator.
-    $('notifications').innerHTML = '';
+    const events = state.notifications.filter(event => event.type !== 'new_messages');
+    $('notifications').innerHTML = events.map(event => `<div class="notice" role="status"><strong>${esc(event.title)}</strong>${event.message ? `<div>${esc(event.message)}</div>` : ''}<div class="notice-actions"><button data-action="open-notification" data-event="${escAttr(event.eventId)}">Открыть</button><button class="secondary" data-action="dismiss-notification" data-event="${escAttr(event.eventId)}">Закрыть</button></div></div>`).join('');
   }
 
   function normalizedNotificationType(value) {
@@ -1410,8 +1411,8 @@ window.ITUS_CONFIG = {
       ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
       : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
-    const mileage = order.mileage ? `${esc(order.mileage)} км` : 'Не указан';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пробег</span><br><b>${mileage}</b><span class="tiny">Данные реестра 1С</span></div><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
+    const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
   }
 
   function renderOrdersView() {
@@ -1527,7 +1528,7 @@ window.ITUS_CONFIG = {
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button><button data-action="request-quality">Запросить контроль качества</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
   }
 
   function renderExecutorView() {
@@ -1878,6 +1879,15 @@ window.ITUS_CONFIG = {
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
   }
 
+  async function requestQualityControl() {
+    const order = currentOrder(); if (!order || state.busy) return;
+    state.busy = true;
+    try {
+      await call1C('/quality/request', orderPayload());
+      toast('Запрос на контроль качества отправлен технологу');
+    } finally { state.busy = false; }
+  }
+
   async function searchOrders() {
     const search = String(state.search || '').trim();
     if (!search) return toast('Введите номер ЗН, госномер или контрагента', true);
@@ -2168,7 +2178,7 @@ window.ITUS_CONFIG = {
     clearInterval(state.pollTimer);
     if (CONFIG.pollMs < 2000) return;
     pollNotifications();
-    state.pollTimer = setInterval(pollNotifications, Math.max(3000, CONFIG.pollMs));
+    state.pollTimer = setInterval(pollNotifications, Math.max(60000, CONFIG.pollMs));
   }
 
   async function notificationRegistration() {
@@ -2458,6 +2468,7 @@ window.ITUS_CONFIG = {
       if (action === 'package-close') return packageAction('close');
       if (action === 'production') return showProduction();
       if (action === 'start-quality') return startQuality('manual');
+      if (action === 'request-quality') return requestQualityControl();
       if (action === 'complete-quality') return completeQuality(button.dataset.result);
       if (action === 'current-appeal') return showCurrentAppeal();
       if (action === 'service-history') return openServiceHistory();

@@ -651,6 +651,16 @@
         }
       }
     },
+    "/quality/request": {
+      "purpose": "Master requests outgoing quality control and creates a notification for the responsible technologist",
+      "request": {
+        "orderRef": "ORDER_GUID"
+      },
+      "responseData": {
+        "requested": true,
+        "notificationEventId": "EVENT_GUID"
+      }
+    },
     "/quality/complete": {
       "purpose": "Save and post quality control; app hides it after success",
       "request": {

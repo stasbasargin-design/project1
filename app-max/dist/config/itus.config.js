@@ -41,7 +41,8 @@ window.ITUS_CONFIG = {
 
   // Проверка уведомлений о назначении исполнителя и запросе выходного контроля.
   // Лёгкий опрос счётчиков и событий. История чатов и вложения здесь не запрашиваются.
-  POLL_INTERVAL_MS: 3000,
+  // Notifications are polled once per minute; the first poll runs immediately after sign-in.
+  POLL_INTERVAL_MS: 60000,
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
   MAX_UPLOAD_BYTES: 15728640,
