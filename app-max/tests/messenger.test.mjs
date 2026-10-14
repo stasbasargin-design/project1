@@ -35,13 +35,19 @@ await messenger.handle('msg-open',{dataset:{ref:'shift'}});
 assert.equal(calls.find(x=>x.method==='/internal-chat/messages/read').payload.messageRefs[0],'message-1');
 assert.equal(receipts[0].previousUnread,2);assert.equal(receipts[0].remainingUnread,0);
 assert.ok(app.innerHTML.indexOf('Ранее')<app.innerHTML.lastIndexOf('Позднее'));
-assert.match(app.innerHTML,/<img src="https:\/\/ea-itus.ru\/photo.jpg"/);
-assert.doesNotMatch(app.innerHTML,/Открыть фото/);
+assert.match(app.innerHTML,/photo.jpg/);
+assert.match(app.innerHTML,/data-action="msg-media"/);
+assert.doesNotMatch(app.innerHTML,/<img src="https:\/\/ea-itus.ru\/photo.jpg"/);
+assert.doesNotMatch(app.innerHTML,/data-auto-image/);
 inputHandler({target:{id:'msgDraft',value:'Повтор'}});await messenger.handle('msg-send',{dataset:{}});
 failSend=false;await messenger.handle('msg-send',{dataset:{}});
 const sends=calls.filter(x=>x.method==='/internal-chat/messages/send');assert.equal(sends.length,2);assert.equal(sends[0].payload.clientMessageId,sends[1].payload.clientMessageId);
 await messenger.handle('msg-back',{dataset:{}});
 assert.match(app.innerHTML,/Новый чат с сотрудником/);
+const historyCallsBeforeReopen=calls.filter(x=>x.method==='/internal-chat/messages/list').length;
+await messenger.handle('msg-open',{dataset:{ref:'shift'}});
+assert.equal(calls.filter(x=>x.method==='/internal-chat/messages/list').length,historyCallsBeforeReopen);
+await messenger.handle('msg-back',{dataset:{}});
 await messenger.handle('msg-new-chat',{dataset:{}});
 assert.match(app.innerHTML,/Анна/);
 assert.doesNotMatch(app.innerHTML,/Нет входа/);
@@ -50,4 +56,4 @@ assert.equal(calls.find(x=>x.method==='/internal-chat/direct/open').payload.empl
 console.log('Messenger: shift group, authorized contacts, direct conversation and read receipt OK');
 
 const before=receipts.length;failRead=true;await messenger.handle('msg-refresh-messages',{dataset:{}});assert.equal(receipts.length,before);
-console.log('Read failure: no badge callback before a successful receipt.');
+console.log('Messenger cache: no eager media, cached reopen and read receipt behavior OK.');

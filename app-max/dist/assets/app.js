@@ -49,7 +49,7 @@
   };
 
   const messenger = window.ITUS_MESSENGER?.create({
-    api:API,call:call1C,user:()=>state.user,
+    api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
     toast,pickFile:configureFilePicker,photo:choosePhoto,filePayload:fileToPayload,
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead
