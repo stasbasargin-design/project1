@@ -44,6 +44,10 @@ window.ITUS_CONFIG = {
   // Notifications are polled once per minute; the first poll runs immediately after sign-in.
   POLL_INTERVAL_MS: 60000,
 
+  // Public VAPID key for Web Push. Leave empty until it is generated and set
+  // by the deployment configuration; a private key must never be placed here.
+  WEB_PUSH_VAPID_PUBLIC_KEY: "",
+
   // Лимит одного вложения, передаваемого в JSON как Base64.
   MAX_UPLOAD_BYTES: 15728640,
 

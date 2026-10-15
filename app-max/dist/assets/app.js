@@ -17,6 +17,7 @@
     miniAppId: window.ITUS_CONFIG?.MAX_MINI_APP_ID || '',
     timeoutMs: Number(window.ITUS_CONFIG?.REQUEST_TIMEOUT_MS || 35000),
     pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
+    webPushPublicKey: String(window.ITUS_CONFIG?.WEB_PUSH_VAPID_PUBLIC_KEY || '').trim(),
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
@@ -282,6 +283,9 @@
       'назначение_исполнителя': 'executor_assigned',
       'new_message': 'new_messages',
       'new_messages': 'new_messages',
+      'new_message': 'new_messages',
+      'executor_changed': 'executor_changed',
+      'task_assigned': 'task_assigned',
       'quality_control_requested': 'quality_control_requested'
     };
     return aliases[compact] || compact;
@@ -1112,6 +1116,41 @@
     return navigator.serviceWorker.ready;
   }
 
+  function webPushSupported() {
+    return Boolean(CONFIG.webPushPublicKey && window.isSecureContext && 'PushManager' in window && 'serviceWorker' in navigator);
+  }
+  function base64UrlBytes(value) {
+    const text = String(value || '').replace(/-/g,'+').replace(/_/g,'/');
+    const raw = atob(text + '='.repeat((4 - text.length % 4) % 4));
+    return Uint8Array.from(raw, char => char.charCodeAt(0));
+  }
+  function pushPayload(subscription) {
+    const json = subscription.toJSON();
+    return { subscription:{endpoint:json.endpoint,keys:{p256dh:json.keys?.p256dh || '',auth:json.keys?.auth || ''}},
+      clientInstanceId:localStorage.getItem('itus.push.instance') || (()=>{const id=requestId();localStorage.setItem('itus.push.instance',id);return id;})(),
+      platform:'web', userId:state.userId };
+  }
+  async function registerWebPush() {
+    if (!webPushSupported()) throw new Error(CONFIG.webPushPublicKey ? 'Push не поддерживается этим браузером или требует HTTPS' : 'На сервере не задан публичный VAPID-ключ');
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('Разрешение на Push-уведомления не получено');
+    const registration = await notificationRegistration();
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) subscription = await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64UrlBytes(CONFIG.webPushPublicKey)});
+    await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
+    enableSystemPreference();
+    return subscription;
+  }
+  async function unregisterWebPush() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      const registration = await navigator.serviceWorker.getRegistration(new URL('./',document.baseURI).pathname);
+      const subscription = await registration?.pushManager?.getSubscription();
+      if (subscription && state.userId) await call1C('/notifications/push/unsubscribe', pushPayload(subscription), {silent:true});
+      await subscription?.unsubscribe();
+    } catch (error) { console.warn('Push unsubscribe:',error.message); }
+  }
+
   const nativeNotifications = window.ITUSNativeNotifications;
   function notificationPermission() {
     if (nativeNotifications) return nativeNotifications.permission();
@@ -1131,15 +1170,15 @@
 
   function showNotificationSettings() {
     const prefs = FEATURES.preferences(state.userId);
-    const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',quality_control_requested:'Запрос выходного контроля'};
+    const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
     const types = FEATURES.typesFor(state.user);
     showSheet('Уведомления', 'Настройки этого пользователя на этом устройстве',
       types.map(type => '<label class="setting-row"><input type="checkbox" data-notification-pref="'+type+'" '+(prefs[type]?'checked':'')+'>'+labels[type]+'</label>').join('') +
       (!types.length ? '<p>1С не передала известную роль. Уведомления не запрашиваются.</p>' : '') +
       '<label class="setting-row"><input type="checkbox" data-notification-pref="system" '+(prefs.system?'checked':'')+'>Показывать системные уведомления</label>' +
       '<p>Разрешение устройства: '+esc(notificationPermission())+'</p>' +
-      '<div class="grid"><button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="save-notifications">Сохранить</button></div>' +
-      '<p class="tiny">Доставка работает, пока приложение открыто. При закрытом приложении необходим сервер Push или доставка через MAX.</p>');
+      '<div class="grid"><button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button><button data-action="save-notifications">Сохранить</button></div>' +
+      '<p class="tiny">Push требует HTTPS, VAPID-ключ на сервере и настроенный в 1С метод регистрации подписки. Ключи и токены в браузерный код не записываются.</p>');
   }
 
   async function pollNotifications() {
@@ -1362,10 +1401,11 @@
         else {showNotificationSettings();toast('Разрешение не получено',true);}
         return;
       }
+      if (action === 'enable-web-push') { await registerWebPush(); return toast('Push-подписка зарегистрирована'); }
       if (action === 'bot-messages') return setView('clients');
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
-      if (action === 'logout') { messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
+      if (action === 'logout') { await unregisterWebPush(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
       if (action === 'search-orders') return searchOrders();
