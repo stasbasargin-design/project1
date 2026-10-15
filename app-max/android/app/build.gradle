@@ -5,10 +5,10 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "ru.eazia.imax"
+        versionCode 2701
+        versionName "2.7.1"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +16,25 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            def keyStorePath = providers.environmentVariable('IMAX_KEYSTORE_FILE').orNull
+            def keyStorePassword = providers.environmentVariable('IMAX_KEYSTORE_PASSWORD').orNull
+            def keyAliasValue = providers.environmentVariable('IMAX_KEY_ALIAS').orNull
+            def keyPasswordValue = providers.environmentVariable('IMAX_KEY_PASSWORD').orNull
+            if (keyStorePath && keyStorePassword && keyAliasValue && keyPasswordValue) {
+                storeFile file(keyStorePath)
+                storePassword keyStorePassword
+                keyAlias keyAliasValue
+                keyPassword keyPasswordValue
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
     }
 }

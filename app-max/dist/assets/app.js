@@ -134,6 +134,27 @@
     el.dataset.status = status;
   }
 
+  function apiErrorMessage(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const message = apiErrorMessage(item);
+        if (message) return message;
+      }
+      return '';
+    }
+    if (typeof value === 'object') {
+      const direct = String(value.message || value.description || value.detail || '').trim();
+      if (direct) return direct;
+      for (const item of Object.values(value)) {
+        const message = apiErrorMessage(item);
+        if (message) return message;
+      }
+    }
+    return '';
+  }
+
   async function call1C(method, payload = {}, options = {}) {
     window.ITUS_WORKTIME?.validateRequest(method, payload);
     const base = String(CONFIG.apiBase || '').replace(/\/+$/, '');
@@ -155,7 +176,10 @@
       catch { throw Object.assign(new Error(response.status === 404 ? `Метод ${method} не найден на сервере 1С (404). Файл не отправлен.` : '1С вернула не JSON'), { code: 'BAD_JSON', status: response.status }); }
       if (!response.ok || data.success === false) {
         const err = data.error || {};
-        throw Object.assign(new Error(err.message || data.message || (response.status === 404 ? `Метод ${method} не найден в 1С (404)` : `HTTP ${response.status}`)), { code: err.code || 'ONE_C_ERROR', status: response.status, details: err.details });
+        const message = apiErrorMessage(err) || apiErrorMessage(data.message)
+          || (response.status === 404 ? `Метод ${method} не найден в 1С (404)` : `HTTP ${response.status}`);
+        const code = typeof err === 'object' && !Array.isArray(err) ? err.code : '';
+        throw Object.assign(new Error(message), { code: code || 'ONE_C_ERROR', status: response.status, details: err?.details });
       }
       connectionStatus('ok', window.ITUS_REVIEW_MODE ? 'Проверочный режим · без соединения с 1С' : `1С доступна · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
       return data;
