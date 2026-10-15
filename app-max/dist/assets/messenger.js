@@ -307,7 +307,14 @@
       if(e.target.id==='msgDraft')drafts[selectedKey()]=e.target.value;
       if(e.target.id==='msgSearch'){query=e.target.value;const list=document.querySelector('.msg-thread-list');if(list)list.innerHTML=listHtml();}
     });
-    return {enter,paint,back,handle,upload:(file,target)=>send(file,target.kind,target),
+    async function openThread(threadSource, ref){
+      if(!permitted(threadSource) || !ref)return false;
+      visible=true;source=threadSource;section='chats';query='';
+      await loadList(source);
+      if(!records[source].some(item=>item.ref===ref))return false;
+      await open(ref);return true;
+    }
+    return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),
       leave(){visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
       reset(){void clearPersistentCache();epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}

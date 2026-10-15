@@ -67,6 +67,55 @@ Android-проект Capacitor расположен в `android/`, его applic
 4. Сервис доставки на сервере/в 1С использует Admin SDK, чтобы посылать сообщение на зарегистрированный FCM-токен. При ответах `UNREGISTERED` и `INVALID_ARGUMENT` соответствующий токен удаляется.
 5. Полезная нагрузка должна содержать только короткий заголовок, текст и `data.orderRef`, `data.type` либо `data.topicRef`; по ним APK открывает нужный заказ-наряд или чат.
 
+## Node.js: FCM-доставка для Timeweb
+
+Node-сервер содержит два **внутренних** маршрута: `POST /api/push/test` и
+`POST /api/push/dispatch`. Они не предназначены для браузера, не проксируются
+в 1С и требуют заголовок `Authorization: Bearer <PUSH_INTERNAL_TOKEN>`.
+Без переменной `PUSH_INTERNAL_TOKEN` оба маршрута возвращают `401`.
+
+В окружении процесса I-MAX на Timeweb задайте только абсолютный путь к
+закрытому ключу Firebase и отдельный случайный секрет для 1С:
+
+```dotenv
+GOOGLE_APPLICATION_CREDENTIALS=/etc/itus-max/firebase-service-account.json
+PUSH_INTERNAL_TOKEN=длинная_случайная_строка_не_из_репозитория
+```
+
+1. В Firebase Console: **Project settings → Service accounts → Generate new private key**.
+2. Передайте JSON на сервер по защищённому каналу в `/etc/itus-max/firebase-service-account.json`.
+3. Ограничьте права: владелец пользователя сервиса, режим `600`; файл не должен быть в каталоге приложения, Git, backup-архиве или APK.
+4. Добавьте две переменные в окружение systemd/панели Timeweb и перезапустите только Node-процесс.
+5. Выполните тест от имени серверного процесса 1С. Токен устройства берётся из записи, созданной `/notifications/push/subscribe`, и не попадает в пользовательский интерфейс или логи:
+
+```http
+POST https://ea-itus.ru/p/max-service/api/push/test
+Authorization: Bearer <PUSH_INTERNAL_TOKEN>
+Content-Type: application/json
+
+{"tokens":["FCM_TOKEN_из_защищённого_регистра_1С"],"body":"Проверка I-MAX"}
+```
+
+Ответ содержит только `sent`, `failed` и индексы недействительных токенов.
+При `invalidTokenIndexes` 1С удаляет соответствующие токены из своего регистра.
+Для рабочего события 1С вызывает `/api/push/dispatch` тем же внутренним
+заголовком, максимум 500 токенов за запрос:
+
+```json
+{
+  "tokens": ["..."],
+  "title": "I-MAX",
+  "body": "Вам назначен заказ-наряд",
+  "data": {"type":"executor_assigned","orderRef":"GUID","eventId":"GUID"}
+}
+```
+
+Для нового сообщения используйте `data: {"type":"new_messages","topicRef":"GUID","eventId":"GUID"}`.
+APK по `orderRef` открывает карточку/раздел исполнителя, а по `topicRef` —
+конкретную переписку. 1С остаётся владельцем регистра подписок и определяет
+получателей по своим правам: Node.js не принимает `userId` от браузера и не
+хранит токены на диске.
+
 ## Сборка APK
 
 Локально требуется JDK 17+ и Android SDK. После этого:

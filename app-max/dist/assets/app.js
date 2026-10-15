@@ -1128,8 +1128,13 @@
   function pushPayload(subscription) {
     const json = subscription.toJSON();
     return { subscription:{endpoint:json.endpoint,keys:{p256dh:json.keys?.p256dh || '',auth:json.keys?.auth || ''}},
-      clientInstanceId:localStorage.getItem('itus.push.instance') || (()=>{const id=requestId();localStorage.setItem('itus.push.instance',id);return id;})(),
+      clientInstanceId:pushClientInstanceId(),
       platform:'web', userId:state.userId };
+  }
+  function pushClientInstanceId() {
+    const stored = localStorage.getItem('itus.push.instance');
+    if (stored) return stored;
+    const id = requestId(); localStorage.setItem('itus.push.instance', id); return id;
   }
   async function registerWebPush() {
     if (!webPushSupported()) throw new Error(CONFIG.webPushPublicKey ? 'Push не поддерживается этим браузером или требует HTTPS' : 'На сервере не задан публичный VAPID-ключ');
@@ -1159,7 +1164,7 @@
         onToken: async token => {
           if (!token || !state.userId) return;
           await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
-            clientInstanceId:localStorage.getItem('itus.push.instance') || requestId()}, {silent:true});
+            clientInstanceId:pushClientInstanceId()}, {silent:true});
         },
         onNotification: event => { if (document.hidden) return; toast(event?.title || 'Новое уведомление'); },
         onAction: data => void openPushTarget(data),
@@ -1170,7 +1175,11 @@
   async function openPushTarget(data) {
     const orderRef=String(data?.orderRef || data?.orderId || '');
     if (orderRef) { await loadSingleOrder(orderRef); state.view=data?.type === 'executor_assigned' ? 'executor' : 'orders'; return render(); }
-    if (data?.type === 'new_messages') return setView('clients');
+    const topicRef=String(data?.topicRef || data?.topicId || '');
+    if (data?.type === 'new_messages') {
+      await setView('clients');
+      if (topicRef) await messenger?.openThread?.('clients', topicRef);
+    }
   }
 
   const nativeNotifications = window.ITUSNativeNotifications;

@@ -3,6 +3,7 @@ import { resolvePublicPath } from './static-path.mjs';
 import http from 'node:http';
 import dns from 'node:dns';
 import { createReadStream, existsSync, statSync } from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +38,7 @@ const maxRequestBytes = Number(process.env.MAX_REQUEST_BYTES || 30 * 1024 * 1024
 const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowerCase() !== 'false';
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
+const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
 
 // Some VPS resolvers publish an unreachable IPv6 address before the working IPv4
 // address. Prefer IPv4 without disabling IPv6 for installations where it works.
@@ -72,6 +74,86 @@ async function readBody(req) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+function requestBearer(req) {
+  const value = String(req.headers.authorization || '');
+  return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
+}
+
+function internalPushAuthorized(req) {
+  const supplied = requestBearer(req);
+  if (!pushInternalToken || !supplied) return false;
+  const expected = Buffer.from(pushInternalToken);
+  const actual = Buffer.from(supplied);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function asText(value, maxLength = 512) {
+  return String(value ?? '').trim().slice(0, maxLength);
+}
+
+function normalizePushData(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, item]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) && item != null)
+    .slice(0, 20)
+    .map(([key, item]) => [key, asText(item, 1024)]));
+}
+
+async function firebaseMessaging() {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    throw Object.assign(new Error('Firebase service account is not configured'), { code: 'FIREBASE_NOT_CONFIGURED' });
+  }
+  const [{ applicationDefault, getApps, initializeApp }, { getMessaging }] = await Promise.all([
+    import('firebase-admin/app'), import('firebase-admin/messaging')
+  ]);
+  const app = getApps()[0] || initializeApp({ credential: applicationDefault() });
+  return getMessaging(app);
+}
+
+async function sendInternalPush(req, res, testOnly = false) {
+  if (req.method !== 'POST') {
+    json(res, 405, { success: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Use POST' } });
+    return;
+  }
+  if (!internalPushAuthorized(req)) {
+    json(res, 401, { success: false, error: { code: 'UNAUTHORIZED', message: 'Internal push authorization is required' } });
+    return;
+  }
+  let payload;
+  try { payload = JSON.parse((await readBody(req)).toString('utf8')); }
+  catch { json(res, 400, { success: false, error: { code: 'BAD_JSON', message: 'Invalid JSON' } }); return; }
+  const tokens = [...new Set((Array.isArray(payload.tokens) ? payload.tokens : [payload.token])
+    .map(value => asText(value, 4096)).filter(Boolean))].slice(0, 500);
+  const title = asText(payload.title || 'I-MAX', 120);
+  const body = asText(payload.body || (testOnly ? 'Тестовое уведомление I-MAX' : ''), 512);
+  const data = normalizePushData({ ...(payload.data || {}), ...(testOnly ? { type: 'push_test' } : {}) });
+  if (!tokens.length || !body) {
+    json(res, 400, { success: false, error: { code: 'VALIDATION_ERROR', message: 'tokens and body are required' } });
+    return;
+  }
+  try {
+    const result = await (await firebaseMessaging()).sendEach({
+      tokens,
+      notification: { title, body },
+      data,
+      android: { priority: 'high', notification: { channelId: 'i-max-events', sound: 'default' } }
+    });
+    const invalidTokenIndexes = [];
+    result.responses.forEach((item, index) => {
+      const code = item.error?.code || '';
+      if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token') invalidTokenIndexes.push(index);
+    });
+    // Do not log device tokens or request payloads. 1C owns the registry and
+    // removes invalid tokens using only these response indexes/counts.
+    console.log(`[push] ${testOnly ? 'test' : 'event'} sent=${result.successCount} failed=${result.failureCount}`);
+    json(res, 200, { success: true, data: { sent: result.successCount, failed: result.failureCount, invalidTokenIndexes } });
+  } catch (error) {
+    const status = error?.code === 'FIREBASE_NOT_CONFIGURED' ? 503 : 502;
+    console.error(`[push] delivery failed code=${asText(error?.code || 'FIREBASE_ERROR', 80)}`);
+    json(res, status, { success: false, error: { code: error?.code || 'FIREBASE_ERROR', message: 'Push delivery failed' } });
+  }
 }
 
 async function proxy1C(req, res, pathname) {
@@ -188,6 +270,17 @@ const server = http.createServer(async (req, res) => {
     ? url.pathname.slice(basePath.length) : url.pathname;
   if (pathname === '/health') {
     json(res, 200, { success: true, service: 'ITUS', oneCTargetConfigured: Boolean(oneCTarget) });
+    return;
+  }
+  // These routes are for trusted server-to-server calls from 1C only. They
+  // never accept an end-user browser session and are disabled until both the
+  // Firebase credentials and PUSH_INTERNAL_TOKEN are configured.
+  if (pathname === '/api/push/test') {
+    await sendInternalPush(req, res, true);
+    return;
+  }
+  if (pathname === '/api/push/dispatch') {
+    await sendInternalPush(req, res, false);
     return;
   }
   if (pathname.startsWith('/api/1c/')) {
