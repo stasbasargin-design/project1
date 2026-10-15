@@ -39,6 +39,7 @@ const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowe
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
 const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
+const capacitorOrigins = new Set(['https://localhost', 'capacitor://localhost']);
 
 // Some VPS resolvers publish an unreachable IPv6 address before the working IPv4
 // address. Prefer IPv4 without disabling IPv6 for installations where it works.
@@ -63,6 +64,18 @@ function json(res, status, body) {
     'Content-Length': Buffer.byteLength(payload)
   });
   res.end(payload);
+}
+
+function allowCapacitorApiOrigin(req, res) {
+  const origin = String(req.headers.origin || '').replace(/\/+$/, '');
+  if (!capacitorOrigins.has(origin)) return;
+  // Capacitor Android serves the bundle from localhost. Its requests to the
+  // public HTTPS API are cross-origin and therefore require an explicit,
+  // narrow CORS response; do not reflect arbitrary browser origins.
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, X-ITUS-Request-Id, X-ITUS-Token');
+  res.setHeader('Vary', 'Origin');
 }
 
 async function readBody(req) {
@@ -157,6 +170,7 @@ async function sendInternalPush(req, res, testOnly = false) {
 }
 
 async function proxy1C(req, res, pathname) {
+  allowCapacitorApiOrigin(req, res);
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { Allow: 'POST, OPTIONS' });
     res.end();
