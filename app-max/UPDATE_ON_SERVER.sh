@@ -18,7 +18,9 @@ rollback() {
 }
 trap rollback ERR
 cp -a "$SOURCE_DIR/dist/." "$TARGET/dist/"
-cp "$SOURCE_DIR/server.mjs" "$SOURCE_DIR/static-path.mjs" "$SOURCE_DIR/package.json" "$TARGET/"
+cp "$SOURCE_DIR/server.mjs" "$SOURCE_DIR/static-path.mjs" "$SOURCE_DIR/package.json" "$SOURCE_DIR/package-lock.json" "$TARGET/"
+cd "$TARGET"
+npm ci --omit=dev --ignore-scripts
 chown -R --reference="$BACKUP/app" "$TARGET/dist"
 chmod -R a+rX "$TARGET/dist"
 systemctl restart itus-max

@@ -22,12 +22,16 @@ fi
 
 install -d -o itus -g itus -m 0755 "$INSTALL_DIR"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/server.mjs" "$SOURCE_DIR/static-path.mjs" "$INSTALL_DIR/"
-install -o itus -g itus -m 0644 "$SOURCE_DIR/package.json" "$INSTALL_DIR/package.json"
+install -o itus -g itus -m 0644 "$SOURCE_DIR/package.json" "$SOURCE_DIR/package-lock.json" "$INSTALL_DIR/"
 install -d -o itus -g itus -m 0755 "$INSTALL_DIR/dist" "$INSTALL_DIR/dist/assets" "$INSTALL_DIR/dist/config"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/dist/index.html" "$INSTALL_DIR/dist/index.html"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/dist/notification-sw.js" "$INSTALL_DIR/dist/notification-sw.js"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/dist/assets/"* "$INSTALL_DIR/dist/assets/"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/dist/config/itus.config.js" "$INSTALL_DIR/dist/config/itus.config.js"
+(
+  cd "$INSTALL_DIR"
+  npm ci --omit=dev --ignore-scripts
+)
 
 if [[ ! -f "$ENV_FILE" ]]; then
   install -o root -g root -m 0600 "$SOURCE_DIR/deploy/itus-max.env.example" "$ENV_FILE"
