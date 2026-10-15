@@ -1,0 +1,19 @@
+{
+  "project_info": {
+    "project_number": "701074714631",
+    "project_id": "i-max-ab4f1",
+    "storage_bucket": "i-max-ab4f1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:701074714631:android:a719fa2a290c9b54d5faa2",
+        "android_client_info": { "package_name": "ru.eazia.imax" }
+      },
+      "oauth_client": [],
+      "api_key": [{ "current_key": "AIzaSyCYrlEy_2phxAIATCwhQXIKviO72akrQCU" }],
+      "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+    }
+  ],
+  "configuration_version": "1"
+}

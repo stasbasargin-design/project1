@@ -209,6 +209,7 @@
       await loadOrders(false);
       state.initialized = true;
       startPolling();
+      void startNativePush();
     } catch (error) {
       state.error = `Не удалось подключиться к 1С: ${error.message}`;
     } finally {
@@ -1150,6 +1151,27 @@
       await subscription?.unsubscribe();
     } catch (error) { console.warn('Push unsubscribe:',error.message); }
   }
+  async function startNativePush() {
+    const nativePush = window.ITUS_NATIVE_PUSH;
+    if (!nativePush?.supported?.() || !state.userId) return;
+    try {
+      await nativePush.start({
+        onToken: async token => {
+          if (!token || !state.userId) return;
+          await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
+            clientInstanceId:localStorage.getItem('itus.push.instance') || requestId()}, {silent:true});
+        },
+        onNotification: event => { if (document.hidden) return; toast(event?.title || 'Новое уведомление'); },
+        onAction: data => void openPushTarget(data),
+        onError: error => console.warn('Native push:', error)
+      });
+    } catch (error) { console.warn('Native push start:',error.message); }
+  }
+  async function openPushTarget(data) {
+    const orderRef=String(data?.orderRef || data?.orderId || '');
+    if (orderRef) { await loadSingleOrder(orderRef); state.view=data?.type === 'executor_assigned' ? 'executor' : 'orders'; return render(); }
+    if (data?.type === 'new_messages') return setView('clients');
+  }
 
   const nativeNotifications = window.ITUSNativeNotifications;
   function notificationPermission() {
@@ -1405,7 +1427,7 @@
       if (action === 'bot-messages') return setView('clients');
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
-      if (action === 'logout') { await unregisterWebPush(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
+      if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
       if (action === 'search-orders') return searchOrders();

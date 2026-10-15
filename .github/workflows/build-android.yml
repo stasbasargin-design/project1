@@ -1,0 +1,35 @@
+name: Build I-MAX Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app-max/**'
+      - '.github/workflows/build-android.yml'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app-max
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+      - run: chmod +x android/gradlew && android/gradlew -p android assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: i-max-debug-apk
+          path: app-max/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

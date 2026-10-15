@@ -55,6 +55,31 @@
 
 ## Android APK
 
-Исходного Android-проекта в данном репозитории нет, поэтому FCM нельзя безопасно встроить в имеющийся APK. Для реализации нужны исходники Gradle/Capacitor и `google-services.json`, полученный в Firebase для фактического applicationId. После их получения: подключить Firebase Messaging, запросить `POST_NOTIFICATIONS` на Android 13+, отправлять и обновлять FCM-токен через те же методы 1С, удалять регистрацию при logout и обрабатывать нажатие на уведомление при холодном запуске.
+Android-проект Capacitor расположен в `android/`, его applicationId — `ru.eazia.imax`. `google-services.json` размещён в `android/app/`; официальный плагин Capacitor запрашивает `POST_NOTIFICATIONS` на Android 13+, получает/обновляет FCM-токен, создаёт канал `i-max-events`, передаёт токен в `/notifications/push/subscribe`, удаляет его при logout и обрабатывает нажатие на уведомление.
 
 Не используйте Web Push внутри Android WebView как замену FCM.
+
+## Firebase Admin SDK для отправки FCM
+
+1. Firebase Console → **Project settings** → **Service accounts**.
+2. Нажать **Generate new private key** и сохранить JSON только в защищённом хранилище секретов Timeweb/CI.
+3. Не помещать этот JSON в Git, APK, `google-services.json` или браузерный код.
+4. Сервис доставки на сервере/в 1С использует Admin SDK, чтобы посылать сообщение на зарегистрированный FCM-токен. При ответах `UNREGISTERED` и `INVALID_ARGUMENT` соответствующий токен удаляется.
+5. Полезная нагрузка должна содержать только короткий заголовок, текст и `data.orderRef`, `data.type` либо `data.topicRef`; по ним APK открывает нужный заказ-наряд или чат.
+
+## Сборка APK
+
+Локально требуется JDK 17+ и Android SDK. После этого:
+
+```powershell
+cd app-max
+npm ci
+npm run build
+npx cap sync android
+cd android
+.\gradlew.bat assembleDebug
+```
+
+Результат: `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+В GitHub Actions добавлен workflow **Build I-MAX Android APK**. После запуска через Actions → Run workflow его артефакт `i-max-debug-apk` можно скачать со страницы запуска. Для production APK нужен отдельный upload keystore и secrets CI; их нельзя коммитить.
