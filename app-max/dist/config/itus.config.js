@@ -12,7 +12,10 @@ const runtimeApiBase = (() => {
   if (typeof window === 'undefined') return '/api/1c';
   const explicit = window.__ITUS_API_BASE__ || window.ITUS_API_BASE_URL || '';
   if (explicit) return explicit.replace(/\/$/, '');
-  if (window.location.protocol === 'file:' || window.Capacitor?.isNativePlatform?.()) {
+  const nativeAndroid = window.Capacitor?.isNativePlatform?.()
+    || window.Capacitor?.getPlatform?.() === 'android'
+    || (Boolean(window.Capacitor) && window.location.hostname === 'localhost');
+  if (window.location.protocol === 'file:' || nativeAndroid) {
     // Capacitor Android uses capacitor://localhost (or https://localhost),
     // not the public site origin. A relative /api/1c URL would therefore
     // target the local WebView server and never reach 1C.

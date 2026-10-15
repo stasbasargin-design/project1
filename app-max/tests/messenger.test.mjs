@@ -21,7 +21,7 @@ const mock={
   '/internal-chat/direct/open':{data:{groupRef:'direct-one'}},
   '/internal-chat/messages/list':{data:{messages:[
     {messageRef:'message-2',direction:'incoming',text:'Позднее',createdAt:'2026-10-07T10:02:00Z',attachments:[{fileName:'photo.jpg',mimeType:'image/jpeg',downloadUrl:'https://ea-itus.ru/photo.jpg'}]},
-    {messageRef:'message-1',direction:'incoming',text:'Ранее',createdAt:'2026-10-07T10:01:00Z'}]}},
+    {messageRef:'message-1',direction:'outgoing',authorName:'Реальный автор',text:'Ранее',createdAt:'2026-10-07T10:01:00Z'}]}},
   '/internal-chat/messages/read':{data:{read:true}},
   '/internal-chat/messages/send':{data:{message:{messageRef:'sent-1',direction:'outgoing',text:'Повтор'}}}
 };
@@ -32,9 +32,11 @@ await messenger.enter();
 assert.match(app.innerHTML,/Передача смены/);
 assert.ok(app.innerHTML.indexOf('Общий цех')<app.innerHTML.indexOf('Передача смены'));assert.match(app.innerHTML,/Общий чат/);
 await messenger.handle('msg-open',{dataset:{ref:'shift'}});
-assert.equal(calls.find(x=>x.method==='/internal-chat/messages/read').payload.messageRefs[0],'message-1');
+assert.equal(calls.find(x=>x.method==='/internal-chat/messages/read').payload.messageRefs[0],'message-2');
 assert.equal(receipts[0].previousUnread,2);assert.equal(receipts[0].remainingUnread,0);
 assert.ok(app.innerHTML.indexOf('Ранее')<app.innerHTML.lastIndexOf('Позднее'));
+assert.match(app.innerHTML,/Реальный автор/);
+assert.doesNotMatch(app.innerHTML,/<div class="msg-author">Тест<\/div>/);
 assert.match(app.innerHTML,/photo.jpg/);
 assert.match(app.innerHTML,/data-action="msg-media"/);
 assert.doesNotMatch(app.innerHTML,/<img src="https:\/\/ea-itus.ru\/photo.jpg"/);

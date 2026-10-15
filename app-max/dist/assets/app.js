@@ -1160,7 +1160,7 @@
     const nativePush = window.ITUS_NATIVE_PUSH;
     if (!nativePush?.supported?.() || !state.userId) return;
     try {
-      await nativePush.start({
+      return await nativePush.start({
         onToken: async token => {
           if (!token || !state.userId) return;
           await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
@@ -1170,7 +1170,7 @@
         onAction: data => void openPushTarget(data),
         onError: error => console.warn('Native push:', error)
       });
-    } catch (error) { console.warn('Native push start:',error.message); }
+    } catch (error) { console.warn('Native push start:',error.message); return false; }
   }
   async function openPushTarget(data) {
     const orderRef=String(data?.orderRef || data?.orderId || '');
@@ -1183,7 +1183,9 @@
   }
 
   const nativeNotifications = window.ITUSNativeNotifications;
+  const nativePush = () => window.ITUS_NATIVE_PUSH?.supported?.() ? window.ITUS_NATIVE_PUSH : null;
   function notificationPermission() {
+    if (nativePush()) return nativePush().permission();
     if (nativeNotifications) return nativeNotifications.permission();
     return 'Notification' in window ? Notification.permission : 'не поддерживается';
   }
@@ -1203,13 +1205,17 @@
     const prefs = FEATURES.preferences(state.userId);
     const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
     const types = FEATURES.typesFor(state.user);
+    const native = nativePush();
+    const deviceButton = native
+      ? '<button data-action="enable-system-notifications">Подключить Push на устройстве</button>'
+      : '<button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button>';
     showSheet('Уведомления', 'Настройки этого пользователя на этом устройстве',
       types.map(type => '<label class="setting-row"><input type="checkbox" data-notification-pref="'+type+'" '+(prefs[type]?'checked':'')+'>'+labels[type]+'</label>').join('') +
       (!types.length ? '<p>1С не передала известную роль. Уведомления не запрашиваются.</p>' : '') +
       '<label class="setting-row"><input type="checkbox" data-notification-pref="system" '+(prefs.system?'checked':'')+'>Показывать системные уведомления</label>' +
       '<p>Разрешение устройства: '+esc(notificationPermission())+'</p>' +
-      '<div class="grid"><button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button><button data-action="save-notifications">Сохранить</button></div>' +
-      '<p class="tiny">Push требует HTTPS, VAPID-ключ на сервере и настроенный в 1С метод регистрации подписки. Ключи и токены в браузерный код не записываются.</p>');
+      '<div class="grid">'+deviceButton+'<button data-action="save-notifications">Сохранить</button></div>' +
+      '<p class="tiny">На Android используется Firebase Push; в браузере — Web Push. Ключи и токены в браузерный код не записываются.</p>');
   }
 
   async function pollNotifications() {
@@ -1425,6 +1431,11 @@
         renderNotifications(); toast('Настройки уведомлений сохранены'); return;
       }
       if (action === 'enable-system-notifications') {
+        if (nativePush()) {
+          const permission = await nativePush().requestPermission();
+          if (permission !== 'granted') { showNotificationSettings(); return toast('Разрешение на уведомления не получено',true); }
+          await startNativePush(); enableSystemPreference(); return;
+        }
         if (nativeNotifications) { nativeNotifications.requestPermission(); return; }
         if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext) return toast('Нужен браузер с поддержкой уведомлений и HTTPS (или localhost)', true);
         const permission = await Notification.requestPermission();

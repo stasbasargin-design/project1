@@ -82,7 +82,10 @@
       let html=start?'<button class="msg-older" data-action="msg-older">Показать предыдущие сообщения</button>':'';
       html+=messages.slice(start).map((m,idx)=>{
         const date=day(m.createdAt),separator=date&&date!==previous?`<div class="msg-date">${escape(date)}</div>`:'';previous=date;
-        const author=m.side==='mine'?(user()?.name||m.author):m.author;
+        // The history belongs to a conversation, not to the viewer. 1C sends
+        // the actual sender in authorName/senderName; never replace it with
+        // the currently logged-in reader.
+        const author=m.author || (m.side==='mine' ? user()?.name : 'Система');
         const knownStatus={sent:'Отправлено',delivered:'Получено',read:'Прочитано',received:'Получено',отправлено:'Отправлено',получено:'Получено',прочитано:'Прочитано'}[m.status]||'';
         return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div></article>`;
       }).join('');

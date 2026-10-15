@@ -251,7 +251,10 @@ const runtimeApiBase = (() => {
   if (typeof window === 'undefined') return '/api/1c';
   const explicit = window.__ITUS_API_BASE__ || window.ITUS_API_BASE_URL || '';
   if (explicit) return explicit.replace(/\/$/, '');
-  if (window.location.protocol === 'file:' || window.Capacitor?.isNativePlatform?.()) {
+  const nativeAndroid = window.Capacitor?.isNativePlatform?.()
+    || window.Capacitor?.getPlatform?.() === 'android'
+    || (Boolean(window.Capacitor) && window.location.hostname === 'localhost');
+  if (window.location.protocol === 'file:' || nativeAndroid) {
     // Capacitor Android uses capacitor://localhost (or https://localhost),
     // not the public site origin. A relative /api/1c URL would therefore
     // target the local WebView server and never reach 1C.
@@ -692,7 +695,10 @@ window.ITUS_CONFIG = {
       let html=start?'<button class="msg-older" data-action="msg-older">Показать предыдущие сообщения</button>':'';
       html+=messages.slice(start).map((m,idx)=>{
         const date=day(m.createdAt),separator=date&&date!==previous?`<div class="msg-date">${escape(date)}</div>`:'';previous=date;
-        const author=m.side==='mine'?(user()?.name||m.author):m.author;
+        // The history belongs to a conversation, not to the viewer. 1C sends
+        // the actual sender in authorName/senderName; never replace it with
+        // the currently logged-in reader.
+        const author=m.author || (m.side==='mine' ? user()?.name : 'Система');
         const knownStatus={sent:'Отправлено',delivered:'Получено',read:'Прочитано',received:'Получено',отправлено:'Отправлено',получено:'Получено',прочитано:'Прочитано'}[m.status]||'';
         return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div></article>`;
       }).join('');
@@ -1147,8 +1153,24 @@ window.ITUS_CONFIG = {
   <script>(function (root) {
   'use strict';
   const plugin = () => root.Capacitor?.Plugins?.PushNotifications;
+  const isNative = () => Boolean(root.Capacitor?.isNativePlatform?.() || root.Capacitor?.getPlatform?.() === 'android');
   let configured = false;
-  function supported() { return Boolean(root.Capacitor?.isNativePlatform?.() && plugin()); }
+  let permission = 'unknown';
+  function supported() { return Boolean(isNative() && plugin()); }
+  async function checkPermissions() {
+    if (!supported()) return 'unsupported';
+    permission = String((await plugin().checkPermissions()).receive || 'prompt');
+    return permission;
+  }
+  async function requestPermission() {
+    if (!supported()) return 'unsupported';
+    let current = await checkPermissions();
+    if (current === 'prompt') {
+      current = String((await plugin().requestPermissions()).receive || 'denied');
+      permission = current;
+    }
+    return current;
+  }
   async function start({onToken,onNotification,onAction,onError} = {}) {
     if (!supported() || configured) return supported();
     configured = true;
@@ -1157,15 +1179,14 @@ window.ITUS_CONFIG = {
     push.addListener('registrationError', error => onError?.(error));
     push.addListener('pushNotificationReceived', notification => onNotification?.(notification));
     push.addListener('pushNotificationActionPerformed', action => onAction?.(action.notification?.data || action));
-    let permission = await push.checkPermissions();
-    if (permission.receive === 'prompt') permission = await push.requestPermissions();
-    if (permission.receive !== 'granted') throw new Error('Разрешение на уведомления Android не получено');
+    const granted = await requestPermission();
+    if (granted !== 'granted') { configured = false; throw new Error('Разрешение на уведомления Android не получено'); }
     await push.createChannel?.({id:'i-max-events',name:'I-MAX',description:'Сообщения и назначения',importance:4,visibility:1,sound:'default'});
     await push.register();
     return true;
   }
   async function unregister() { if (supported()) await plugin().unregister(); configured=false; }
-  root.ITUS_NATIVE_PUSH = {supported,start,unregister};
+  root.ITUS_NATIVE_PUSH = {supported,start,unregister,permission:()=>permission,checkPermissions,requestPermission};
 })(window);
 </script>
   <script>(function () {
@@ -2330,7 +2351,7 @@ window.ITUS_CONFIG = {
     const nativePush = window.ITUS_NATIVE_PUSH;
     if (!nativePush?.supported?.() || !state.userId) return;
     try {
-      await nativePush.start({
+      return await nativePush.start({
         onToken: async token => {
           if (!token || !state.userId) return;
           await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
@@ -2340,7 +2361,7 @@ window.ITUS_CONFIG = {
         onAction: data => void openPushTarget(data),
         onError: error => console.warn('Native push:', error)
       });
-    } catch (error) { console.warn('Native push start:',error.message); }
+    } catch (error) { console.warn('Native push start:',error.message); return false; }
   }
   async function openPushTarget(data) {
     const orderRef=String(data?.orderRef || data?.orderId || '');
@@ -2353,7 +2374,9 @@ window.ITUS_CONFIG = {
   }
 
   const nativeNotifications = window.ITUSNativeNotifications;
+  const nativePush = () => window.ITUS_NATIVE_PUSH?.supported?.() ? window.ITUS_NATIVE_PUSH : null;
   function notificationPermission() {
+    if (nativePush()) return nativePush().permission();
     if (nativeNotifications) return nativeNotifications.permission();
     return 'Notification' in window ? Notification.permission : 'не поддерживается';
   }
@@ -2373,13 +2396,17 @@ window.ITUS_CONFIG = {
     const prefs = FEATURES.preferences(state.userId);
     const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
     const types = FEATURES.typesFor(state.user);
+    const native = nativePush();
+    const deviceButton = native
+      ? '<button data-action="enable-system-notifications">Подключить Push на устройстве</button>'
+      : '<button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button>';
     showSheet('Уведомления', 'Настройки этого пользователя на этом устройстве',
       types.map(type => '<label class="setting-row"><input type="checkbox" data-notification-pref="'+type+'" '+(prefs[type]?'checked':'')+'>'+labels[type]+'</label>').join('') +
       (!types.length ? '<p>1С не передала известную роль. Уведомления не запрашиваются.</p>' : '') +
       '<label class="setting-row"><input type="checkbox" data-notification-pref="system" '+(prefs.system?'checked':'')+'>Показывать системные уведомления</label>' +
       '<p>Разрешение устройства: '+esc(notificationPermission())+'</p>' +
-      '<div class="grid"><button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button><button data-action="save-notifications">Сохранить</button></div>' +
-      '<p class="tiny">Push требует HTTPS, VAPID-ключ на сервере и настроенный в 1С метод регистрации подписки. Ключи и токены в браузерный код не записываются.</p>');
+      '<div class="grid">'+deviceButton+'<button data-action="save-notifications">Сохранить</button></div>' +
+      '<p class="tiny">На Android используется Firebase Push; в браузере — Web Push. Ключи и токены в браузерный код не записываются.</p>');
   }
 
   async function pollNotifications() {
@@ -2595,6 +2622,11 @@ window.ITUS_CONFIG = {
         renderNotifications(); toast('Настройки уведомлений сохранены'); return;
       }
       if (action === 'enable-system-notifications') {
+        if (nativePush()) {
+          const permission = await nativePush().requestPermission();
+          if (permission !== 'granted') { showNotificationSettings(); return toast('Разрешение на уведомления не получено',true); }
+          await startNativePush(); enableSystemPreference(); return;
+        }
         if (nativeNotifications) { nativeNotifications.requestPermission(); return; }
         if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext) return toast('Нужен браузер с поддержкой уведомлений и HTTPS (или localhost)', true);
         const permission = await Notification.requestPermission();
