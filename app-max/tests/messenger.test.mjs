@@ -48,7 +48,9 @@ await messenger.handle('msg-back',{dataset:{}});
 assert.match(app.innerHTML,/Новый чат с сотрудником/);
 const historyCallsBeforeReopen=calls.filter(x=>x.method==='/internal-chat/messages/list').length;
 await messenger.handle('msg-open',{dataset:{ref:'shift'}});
-assert.equal(calls.filter(x=>x.method==='/internal-chat/messages/list').length,historyCallsBeforeReopen);
+const historyCallsAfterReopen=calls.filter(x=>x.method==='/internal-chat/messages/list');
+assert.equal(historyCallsAfterReopen.length,historyCallsBeforeReopen+1);
+assert.equal(historyCallsAfterReopen.at(-1).payload.includeAttachmentContent,false);
 await messenger.handle('msg-back',{dataset:{}});
 await messenger.handle('msg-new-chat',{dataset:{}});
 assert.match(app.innerHTML,/Анна/);
@@ -58,4 +60,4 @@ assert.equal(calls.find(x=>x.method==='/internal-chat/direct/open').payload.empl
 console.log('Messenger: shift group, authorized contacts, direct conversation and read receipt OK');
 
 const before=receipts.length;failRead=true;await messenger.handle('msg-refresh-messages',{dataset:{}});assert.equal(receipts.length,before);
-console.log('Messenger cache: no eager media, cached reopen and read receipt behavior OK.');
+console.log('Messenger cache: no eager media, lightweight history refresh on reopen and read receipt behavior OK.');

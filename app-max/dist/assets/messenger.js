@@ -189,7 +189,11 @@
         }catch(e){errors[key(source,id)]=e.message;toast(e.message,true);return;}
         finally{openingContact=false;}
       }
-      selected=id;if(!current()){selected='';return paint();}paint({bottom:true});await loadMessages(source,id);
+      selected=id;if(!current()){selected='';return paint();}paint({bottom:true});
+      // A cached thread is rendered immediately, but switching to a conversation
+      // must also fetch its current light-weight history.  Attachments stay lazy
+      // and cached: this request explicitly does not include file content.
+      await loadMessages(source,id,{refresh:true});
     }
     async function send(file,kind,target){
       const s=target?.source||source,id=target?.ref||selected,k=key(s,id);
