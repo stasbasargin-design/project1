@@ -241,7 +241,7 @@
     const status = text(x.status || x.deliveryStatus || x.messageStatus || (x.readAt ? 'read' : x.deliveredAt ? 'delivered' : (direction === 'outgoing' || direction === 'mine' || x.isMine ? 'sent' : ''))).toLowerCase();
     return {
       id: text(x.messageRef || x.messageId || x.id, String(index)),
-      author: text(x.authorName || x.senderName || x.from, 'Система'),
+      author: text(x.authorName || x.senderName || x.from, 'Отправитель не указан'),
       text: text(x.text || x.message),
       createdAt: text(x.createdAt || x.date || x.time),
       side: direction === 'outgoing' || direction === 'mine' || x.isMine ? 'mine' : (direction === 'system' ? 'system' : 'theirs'),

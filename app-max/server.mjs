@@ -6,6 +6,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fitPushPayload } from './push-format.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -102,17 +103,7 @@ function internalPushAuthorized(req) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-function asText(value, maxLength = 512) {
-  return String(value ?? '').trim().slice(0, maxLength);
-}
-
-function normalizePushData(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key, item]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) && item != null)
-    .slice(0, 20)
-    .map(([key, item]) => [key, asText(item, 1024)]));
-}
+function asText(value, maxLength = 512) { return String(value ?? '').trim().slice(0, maxLength); }
 
 async function firebaseMessaging() {
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
@@ -139,19 +130,21 @@ async function sendInternalPush(req, res, testOnly = false) {
   catch { json(res, 400, { success: false, error: { code: 'BAD_JSON', message: 'Invalid JSON' } }); return; }
   const tokens = [...new Set((Array.isArray(payload.tokens) ? payload.tokens : [payload.token])
     .map(value => asText(value, 4096)).filter(Boolean))].slice(0, 500);
-  const title = asText(payload.title || 'I-MAX', 120);
-  const body = asText(payload.body || (testOnly ? 'Тестовое уведомление I-MAX' : ''), 512);
-  const data = normalizePushData({ ...(payload.data || {}), ...(testOnly ? { type: 'push_test' } : {}) });
+  const { title, body, data } = fitPushPayload({
+    title: payload.title || 'I-MAX',
+    body: payload.body || (testOnly ? 'Тестовое уведомление I-MAX' : ''),
+    data: { ...(payload.data || {}), ...(testOnly ? { type: 'push_test' } : {}) }
+  });
   if (!tokens.length || !body) {
     json(res, 400, { success: false, error: { code: 'VALIDATION_ERROR', message: 'tokens and body are required' } });
     return;
   }
   try {
-    const result = await (await firebaseMessaging()).sendEach({
+    const result = await (await firebaseMessaging()).sendEachForMulticast({
       tokens,
       notification: { title, body },
       data,
-      android: { priority: 'high', notification: { channelId: 'i-max-events', sound: 'default' } }
+      android: { priority: 'high', notification: { channelId: 'i-max-events', icon: 'ic_stat_imax', color: '#1565C0', sound: 'default' } }
     });
     const invalidTokenIndexes = [];
     result.responses.forEach((item, index) => {

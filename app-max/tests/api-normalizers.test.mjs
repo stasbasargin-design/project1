@@ -62,5 +62,7 @@ assert.equal(defectMedia.entries[1].type, 'video');
 const messages = api.extractItems({ data: { messages: [{ messageId: 'm1', direction: 'outgoing', text: 'Тест' }] } }, ['messages']).map(api.normalizeMessage);
 assert.equal(messages[0].side, 'mine');
 assert.equal(messages[0].text, 'Тест');
+assert.equal(api.normalizeMessage({messageRef:'client-1',authorName:'Фактический автор'}).author, 'Фактический автор');
+assert.equal(api.normalizeMessage({messageRef:'unknown'}).author, 'Отправитель не указан');
 
 console.log('API normalizers: OK');

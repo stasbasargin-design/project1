@@ -211,9 +211,11 @@
       if(!file&&drafts[k]===original)drafts[k]='';
         const data=response.data||response;
         if(data.message&&typeof data.message==='object'){
-          // Ответ /send иногда возвращает только messageRef и имя контакта.
-          // Для исходящего сообщения автором всегда является текущий пользователь.
-          const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,authorName:user()?.name||data.message.authorName,status:data.message.status||'sent'},Date.now());
+          // Ответ /send иногда возвращает только messageRef. Имя текущего
+          // пользователя допустимо лишь до получения автора от 1С.
+          // The local user name is only a temporary fallback. Once 1C returns
+          // authorName/senderName, its actual author must be retained.
+          const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,authorName:data.message.authorName||data.message.senderName||user()?.name||'Отправитель не указан',status:data.message.status||'sent'},Date.now());
           cache[k]=mergeMessages((cache[k]||[]).filter(x=>x.id!==message.id),[message]);void persistThread(k);
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
         }else await loadMessages(s,id,{refresh:true});
