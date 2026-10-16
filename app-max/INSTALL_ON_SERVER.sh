@@ -21,7 +21,7 @@ if ! id -u itus >/dev/null 2>&1; then
 fi
 
 install -d -o itus -g itus -m 0755 "$INSTALL_DIR"
-install -o itus -g itus -m 0644 "$SOURCE_DIR/server.mjs" "$SOURCE_DIR/static-path.mjs" "$INSTALL_DIR/"
+install -o itus -g itus -m 0644 "$SOURCE_DIR/server.mjs" "$SOURCE_DIR/static-path.mjs" "$SOURCE_DIR/push-format.mjs" "$INSTALL_DIR/"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/package.json" "$SOURCE_DIR/package-lock.json" "$INSTALL_DIR/"
 install -d -o itus -g itus -m 0755 "$INSTALL_DIR/dist" "$INSTALL_DIR/dist/assets" "$INSTALL_DIR/dist/config"
 install -o itus -g itus -m 0644 "$SOURCE_DIR/dist/index.html" "$INSTALL_DIR/dist/index.html"
