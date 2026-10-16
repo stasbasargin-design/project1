@@ -5,6 +5,7 @@ const server = readFileSync(new URL('../server.mjs', import.meta.url), 'utf8');
 const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
 const icon = readFileSync(new URL('../android/app/src/main/res/drawable/ic_stat_imax.xml', import.meta.url), 'utf8');
 assert.match(server, /sendEachForMulticast\s*\(/);
+assert.doesNotMatch(server, /from '\.\/push-format\.mjs'/);
 assert.match(server, /channelId:\s*'i-max-events'/);
 assert.match(server, /icon:\s*'ic_stat_imax'/);
 assert.match(manifest, /default_notification_icon/);
