@@ -1,6 +1,15 @@
 (function (root) {
   'use strict';
-  const plugin = () => root.Capacitor?.Plugins?.PushNotifications;
+  let pushPlugin = null;
+  // In the static Capacitor build the native Android class is packaged, but
+  // it is not added to Capacitor.Plugins until its JS proxy is registered.
+  // Register it lazily so the app never falls back to Web Push in the APK.
+  function plugin() {
+    if (pushPlugin) return pushPlugin;
+    const capacitor = root.Capacitor;
+    pushPlugin = capacitor?.Plugins?.PushNotifications || capacitor?.registerPlugin?.('PushNotifications') || null;
+    return pushPlugin;
+  }
   const isNative = () => Boolean(root.Capacitor?.isNativePlatform?.() || root.Capacitor?.getPlatform?.() === 'android');
   let listening = false;
   let registered = false;
@@ -35,7 +44,7 @@
   async function start(nextHandlers = {}) {
     if (!listen(nextHandlers) || registered) return supported();
     const granted = await requestPermission();
-    if (granted !== 'granted') throw new Error('Разрешение на уведомления Android не получено'); }
+    if (granted !== 'granted') throw new Error('Разрешение на уведомления Android не получено');
     const push = plugin();
     await push.createChannel?.({id:'i-max-events',name:'I-MAX',description:'Сообщения и назначения',importance:4,visibility:1,sound:'default'});
     await push.register(); registered = true;
