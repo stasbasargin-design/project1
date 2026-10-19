@@ -233,6 +233,11 @@
   function normalizeMessage(value, index) {
     const x = isObject(value) ? value : {};
     const direction = text(x.direction || x.side);
+    // The message author is integration data, never UI/session state.  The
+    // current 1C contracts use authorName; senderName/from are retained for
+    // already supported server responses.  Keep an explicit flag so a later
+    // incomplete response cannot overwrite a known author in the local cache.
+    const actualAuthor = text(x.authorName || x.senderName || x.from).trim();
     const poll = isObject(x.poll) ? {
       question: text(x.poll.question || x.poll.title),
       options: asArray(x.poll.options || x.poll.variants).map(item => isObject(item) ? {value:text(item.value || item.code || item.id),label:text(item.label || item.title || item.name)} : {value:text(item),label:text(item)}).filter(item => item.label),
@@ -241,7 +246,8 @@
     const status = text(x.status || x.deliveryStatus || x.messageStatus || (x.readAt ? 'read' : x.deliveredAt ? 'delivered' : (direction === 'outgoing' || direction === 'mine' || x.isMine ? 'sent' : ''))).toLowerCase();
     return {
       id: text(x.messageRef || x.messageId || x.id, String(index)),
-      author: text(x.authorName || x.senderName || x.from, 'Отправитель не указан'),
+      author: actualAuthor || 'Отправитель не указан',
+      authorKnown: Boolean(actualAuthor),
       text: text(x.text || x.message),
       createdAt: text(x.createdAt || x.date || x.time),
       side: direction === 'outgoing' || direction === 'mine' || x.isMine ? 'mine' : (direction === 'system' ? 'system' : 'theirs'),

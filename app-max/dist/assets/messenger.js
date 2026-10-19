@@ -46,7 +46,7 @@
     async function persistThread(k){if(!owner()||!cache[k])return;await writeStore('threads',{key:persistentKey('thread',k),owner:owner(),thread:k,updatedAt:Date.now(),messages:cache[k].slice(-200).map(cleanMessage)});void trimPersistentCache();}
     async function restoreThread(k){if(restored.has(k)||!owner())return;restored.add(k);const item=await readStore('threads',persistentKey('thread',k));if(item?.owner===owner()&&Date.now()-item.updatedAt<CACHE_TTL&&Array.isArray(item.messages)){cache[k]=sortedMessages(item.messages);}}
     function messageIdentity(message,index){return String(message.id || message.messageRef || `${message.createdAt||''}:${message.author||''}:${message.text||''}:${index}`);}
-    function mergeMessages(previous,incoming){const merged=new Map();[...(previous||[]),...(incoming||[])].forEach((message,index)=>{const id=messageIdentity(message,index),old=merged.get(id);merged.set(id,old?{...old,...message,attachments:(message.attachments?.length?message.attachments:old.attachments)||[]}:message);});return sortedMessages([...merged.values()]);}
+    function mergeMessages(previous,incoming){const merged=new Map();[...(previous||[]),...(incoming||[])].forEach((message,index)=>{const id=messageIdentity(message,index),old=merged.get(id);const next=old?{...old,...message,attachments:(message.attachments?.length?message.attachments:old.attachments)||[]}:message;if(old?.authorKnown&&!message.authorKnown){next.author=old.author;next.authorKnown=true;}merged.set(id,next);});return sortedMessages([...merged.values()]);}
     function attachmentKey(s,id,file){return file?.fileRef?persistentKey('media',`${s}:${id}:${file.fileRef}`):'';}
     function current(){return records[source].find(x=>x.ref===selected);}
     function initials(name){return String(name || '?').split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase();}
@@ -82,10 +82,9 @@
       let html=start?'<button class="msg-older" data-action="msg-older">Показать предыдущие сообщения</button>':'';
       html+=messages.slice(start).map((m,idx)=>{
         const date=day(m.createdAt),separator=date&&date!==previous?`<div class="msg-date">${escape(date)}</div>`:'';previous=date;
-        // The history belongs to a conversation, not to the viewer. 1C sends
-        // the actual sender in authorName/senderName; never replace it with
-        // the currently logged-in reader.
-        const author=m.author || (m.side==='mine' ? user()?.name : 'Система');
+        // The history belongs to a conversation, not to the viewer.  Never
+        // derive an author from the logged-in reader or from local state.
+        const author=m.author || 'Отправитель не указан';
         const knownStatus={sent:'Отправлено',delivered:'Получено',read:'Прочитано',received:'Получено',отправлено:'Отправлено',получено:'Получено',прочитано:'Прочитано'}[m.status]||'';
         return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div></article>`;
       }).join('');
@@ -211,13 +210,13 @@
       if(!file&&drafts[k]===original)drafts[k]='';
         const data=response.data||response;
         if(data.message&&typeof data.message==='object'){
-          // Ответ /send иногда возвращает только messageRef. Имя текущего
-          // пользователя допустимо лишь до получения автора от 1С.
-          // The local user name is only a temporary fallback. Once 1C returns
-          // authorName/senderName, its actual author must be retained.
-          const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,authorName:data.message.authorName||data.message.senderName||user()?.name||'Отправитель не указан',status:data.message.status||'sent'},Date.now());
+          // A confirmed server response may not borrow the viewer's name.
+          // If 1C did not return authorName/senderName/from, keep it neutral
+          // and refresh the light history where 1C supplies the real author.
+          const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,status:data.message.status||'sent'},Date.now());
           cache[k]=mergeMessages((cache[k]||[]).filter(x=>x.id!==message.id),[message]);void persistThread(k);
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
+          if(!message.authorKnown)await loadMessages(s,id,{refresh:true});
         }else await loadMessages(s,id,{refresh:true});
         finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
       }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}}

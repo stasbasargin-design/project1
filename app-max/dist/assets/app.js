@@ -48,6 +48,8 @@
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
     search: '', pollTimer: null, initialized: false
   };
+  let pendingPushTarget = null;
+  const handledPushTargets = new Set();
 
   const messenger = window.ITUS_MESSENGER?.create({
     api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
@@ -234,6 +236,7 @@
       state.initialized = true;
       startPolling();
       void startNativePush();
+      await applyPendingPushTarget();
     } catch (error) {
       state.error = `Не удалось подключиться к 1С: ${error.message}`;
     } finally {
@@ -1196,14 +1199,64 @@
       });
     } catch (error) { console.warn('Native push start:',error.message); return false; }
   }
-  async function openPushTarget(data) {
-    const orderRef=String(data?.orderRef || data?.orderId || '');
-    if (orderRef) { await loadSingleOrder(orderRef); state.view=data?.type === 'executor_assigned' ? 'executor' : 'orders'; return render(); }
-    const topicRef=String(data?.topicRef || data?.topicId || '');
-    if (data?.type === 'new_messages') {
-      await setView('clients');
-      if (topicRef) await messenger?.openThread?.('clients', topicRef);
+  function normalizePushTarget(data) {
+    const type = String(data?.type || '').trim();
+    const orderRef = String(data?.orderRef || data?.orderId || '').trim();
+    const topicRef = String(data?.topicRef || data?.topicId || '').trim();
+    if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(data?.eventId || data?.notificationId || data?.messageId || '')} : null;
+    if (type === 'quality_control_requested') return orderRef ? {type,orderRef,payload:data?.payload,message:data?.message,eventId:String(data?.eventId || data?.notificationId || '')} : null;
+    if (type === 'new_messages') return topicRef ? {type,topicRef,eventId:String(data?.eventId || data?.notificationId || data?.messageId || '')} : null;
+    if (orderRef) return {type,orderRef,eventId:String(data?.eventId || data?.notificationId || '')};
+    return null;
+  }
+  function pushTargetKey(target) { return target.eventId || `${target.type}:${target.topicRef || target.orderRef || ''}`; }
+  async function openQualityPushTarget(target) {
+    if (!state.views.tech) throw new Error('Выходной контроль недоступен для вашей роли');
+    await loadSingleOrder(target.orderRef);
+    state.view = 'tech';
+    const order = currentOrder();
+    if (target.payload?.survey) order._quality = API.normalizeProcess({ qualityControl: target.payload }, 'qualityControl');
+    else await startQuality('notification');
+    render();
+    toast(target.message || 'Открыт запрос выходного контроля');
+  }
+  async function applyPushTarget(target) {
+    if (target.type === 'internal_chat_message') {
+      if (!state.views.chat) throw new Error('Внутренние чаты недоступны для вашей роли');
+      await setView('chat');
+      if (!await messenger?.openThread?.('staff', target.topicRef)) throw new Error('Чат не найден или недоступен');
+      return;
     }
+    if (target.type === 'quality_control_requested') return openQualityPushTarget(target);
+    if (target.type === 'new_messages') {
+      if (!state.views.clients) throw new Error('Чаты с клиентами недоступны для вашей роли');
+      await setView('clients');
+      if (!await messenger?.openThread?.('clients', target.topicRef)) throw new Error('Чат не найден или недоступен');
+      return;
+    }
+    await loadSingleOrder(target.orderRef);
+    state.view = target.type === 'executor_assigned' ? 'executor' : 'orders';
+    render();
+  }
+  async function applyPendingPushTarget() {
+    if (!pendingPushTarget || !state.initialized || !state.userId) return false;
+    const target = pendingPushTarget; pendingPushTarget = null;
+    return openPushTarget(target, {alreadyQueued:true});
+  }
+  async function openPushTarget(data, {alreadyQueued=false} = {}) {
+    const target = normalizePushTarget(data);
+    if (!target) { toast('В Push-уведомлении нет корректной цели', true); return false; }
+    if (!state.userId || !state.initialized) {
+      pendingPushTarget = target;
+      if (!state.userId) toast('Войдите в приложение, чтобы открыть Push-уведомление');
+      return false;
+    }
+    const key = pushTargetKey(target);
+    if (!alreadyQueued && handledPushTargets.has(key)) return true;
+    handledPushTargets.add(key);
+    if (handledPushTargets.size > 100) handledPushTargets.delete(handledPushTargets.values().next().value);
+    try { await applyPushTarget(target); return true; }
+    catch (error) { handledPushTargets.delete(key); toast(error.message || 'Не удалось открыть Push-уведомление', true); return false; }
   }
 
   const nativeNotifications = window.ITUSNativeNotifications;
@@ -1302,20 +1355,11 @@
     finally { state.polling = false; }
   }
 
-  async function openQualityNotification(event) {
-    try {
-      await loadSingleOrder(event.orderRef);
-      state.view = 'tech';
-      const order = currentOrder();
-      if (event.payload?.survey) order._quality = API.normalizeProcess({ qualityControl: event.payload }, 'qualityControl');
-      else await startQuality('notification');
-      render(); toast(event.message || 'Назначен выходной контроль');
-    } catch (error) { toast(`Не удалось открыть контроль: ${error.message}`, true); }
-  }
+  async function openQualityNotification(event) { return openPushTarget({...event,type:'quality_control_requested'}); }
 
   async function openNotification(eventId) {
     const event = state.notifications.find(item => item.eventId === eventId); if (!event) return;
-    if (event.type === 'new_messages') return setView('clients');
+    if (event.type === 'new_messages') return openPushTarget(event);
     if (event.type === 'quality_control_requested') return openQualityNotification(event);
     if (event.orderRef) { await loadSingleOrder(event.orderRef); state.view = event.type === 'executor_assigned' ? 'executor' : 'orders'; render(); }
   }
@@ -1471,7 +1515,7 @@
       if (action === 'bot-messages') return setView('clients');
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
-      if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
+      if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
       if (action === 'search-orders') return searchOrders();
@@ -1540,6 +1584,11 @@
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
     return messenger?.back() || false;
   };
+  window.ITUS_NATIVE_PUSH?.listen?.({
+    onNotification: event => { if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
+    onAction: data => void openPushTarget(data),
+    onError: error => console.warn('Native push:', error)
+  });
   setAuth(readAuthFromContext(), 'max');
   render();
   if (state.userId) initialize();

@@ -63,6 +63,11 @@ const messages = api.extractItems({ data: { messages: [{ messageId: 'm1', direct
 assert.equal(messages[0].side, 'mine');
 assert.equal(messages[0].text, 'Тест');
 assert.equal(api.normalizeMessage({messageRef:'client-1',authorName:'Фактический автор'}).author, 'Фактический автор');
-assert.equal(api.normalizeMessage({messageRef:'unknown'}).author, 'Отправитель не указан');
+assert.equal(api.normalizeMessage({messageRef:'client-2',senderName:'Автор из senderName'}).author, 'Автор из senderName');
+assert.equal(api.normalizeMessage({messageRef:'client-3',from:'Автор из from'}).author, 'Автор из from');
+const unknownAuthor = api.normalizeMessage({messageRef:'unknown',direction:'outgoing'});
+assert.equal(unknownAuthor.author, 'Отправитель не указан');
+assert.equal(unknownAuthor.authorKnown, false);
+assert.equal(api.normalizeMessage({messageRef:'known',authorName:'Сотрудник'}).authorKnown, true);
 
 console.log('API normalizers: OK');
