@@ -7,6 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFragment } from 'parse5';
+import { webPushConfig, deliverWebPush } from './web-push.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -53,6 +54,7 @@ const mime = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml; charset=utf-8',
   '.webp': 'image/webp'
 };
@@ -218,6 +220,26 @@ async function sendInternalPush(req, res, testOnly = false) {
   }
 }
 
+async function sendInternalWebPush(req, res) {
+  if (req.method !== 'POST') { json(res, 405, { success: false, error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
+  if (!internalPushAuthorized(req)) { json(res, 401, { success: false, error: { code: 'UNAUTHORIZED', message: 'Internal push authorization is required' } }); return; }
+  let payload;
+  try { payload = JSON.parse((await readBody(req)).toString('utf8')); }
+  catch { json(res, 400, { success: false, error: { code: 'BAD_JSON' } }); return; }
+  if (!payload || typeof payload !== 'object' || !asText(payload.body)) { json(res, 400, { success: false, error: { code: 'VALIDATION_ERROR' } }); return; }
+  const { title, body, data } = fitPushPayload(payload);
+  const target = Object.fromEntries(['type', 'eventId', 'topicRef', 'topicId', 'orderRef', 'orderId'].filter(key => data[key]).map(key => [key, data[key]]));
+  try {
+    const result = await deliverWebPush(payload.subscriptions, { title, body, data: target });
+    console.log(`[web-push] sent=${result.sent} failed=${result.failed}`);
+    json(res, 200, { success: true, data: result });
+  } catch (error) {
+    const status = error.status || 502;
+    console.error(`[web-push] delivery failed code=${asText(status === 502 ? 'WEB_PUSH_ERROR' : error.message, 80)}`);
+    json(res, status, { success: false, error: { code: status === 502 ? 'WEB_PUSH_ERROR' : error.message, message: 'Web Push delivery failed' } });
+  }
+}
+
 async function proxy1C(req, res, pathname) {
   allowCapacitorApiOrigin(req, res);
   if (req.method === 'OPTIONS') {
@@ -333,6 +355,15 @@ const server = http.createServer(async (req, res) => {
     ? url.pathname.slice(basePath.length) : url.pathname;
   if (pathname === '/health') {
     json(res, 200, { success: true, service: 'ITUS', oneCTargetConfigured: Boolean(oneCTarget) });
+    return;
+  }
+  if (pathname === '/api/push/web/config' && req.method === 'GET') {
+    const config = webPushConfig();
+    json(res, 200, { success: true, data: { enabled: config.enabled, publicKey: config.enabled ? config.publicKey : '' } });
+    return;
+  }
+  if (pathname === '/api/push/web/dispatch') {
+    await sendInternalWebPush(req, res);
     return;
   }
   // These routes are for trusted server-to-server calls from 1C only. They
