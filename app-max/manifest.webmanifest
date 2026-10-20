@@ -1,0 +1,12 @@
+{
+  "id": "./",
+  "name": "I-MAX — управление сервисом",
+  "short_name": "I-MAX",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#b92824",
+  "icons": [{"src":"./assets/itus-logo.png","type":"image/png","sizes":"1254x1254","purpose":"any"}]
+}

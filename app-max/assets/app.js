@@ -238,6 +238,7 @@
       state.initialized = true;
       startPolling();
       void startNativePush();
+      void syncExistingWebPush();
       await applyPendingPushTarget();
     } catch (error) {
       state.error = `Не удалось подключиться к 1С: ${error.message}`;
@@ -1170,7 +1171,7 @@
   }
 
   function webPushSupported() {
-    return Boolean(CONFIG.webPushPublicKey && window.isSecureContext && 'PushManager' in window && 'serviceWorker' in navigator);
+    return Boolean(window.ITUS_WEB_PUSH?.ready());
   }
   function base64UrlBytes(value) {
     const text = String(value || '').replace(/-/g,'+').replace(/_/g,'/');
@@ -1188,25 +1189,42 @@
     if (stored) return stored;
     const id = requestId(); localStorage.setItem('itus.push.instance', id); return id;
   }
+  let webPushRegistered = false;
+  async function syncExistingWebPush() {
+    if (window.ITUS_NATIVE_PUSH?.supported?.() || !window.ITUS_WEB_PUSH) return;
+    const owner = state.userId;
+    try {
+      const subscription = await window.ITUS_WEB_PUSH.existing();
+      if (!subscription || !owner || state.userId !== owner) return;
+      const response = await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
+      if (state.userId === owner) webPushRegistered = response?.data?.registered === true;
+    } catch { console.warn('Не удалось подтвердить Web Push в 1С; повторите подключение в настройках уведомлений.'); }
+  }
   async function registerWebPush() {
-    if (!webPushSupported()) throw new Error(CONFIG.webPushPublicKey ? 'Push не поддерживается этим браузером или требует HTTPS' : 'На сервере не задан публичный VAPID-ключ');
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') throw new Error('Разрешение на Push-уведомления не получено');
-    const registration = await notificationRegistration();
-    let subscription = await registration.pushManager.getSubscription();
-    if (!subscription) subscription = await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64UrlBytes(CONFIG.webPushPublicKey)});
-    await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
+    const owner = state.userId;
+    if (!webPushSupported()) {
+      await window.ITUS_WEB_PUSH?.prepare();
+      showNotificationSettings();
+      throw new Error(window.ITUS_WEB_PUSH?.reason() || 'Настройки загружены. Нажмите «Подключить Push» ещё раз.');
+    }
+    const subscription = await window.ITUS_WEB_PUSH.subscribe();
+    if (!owner || state.userId !== owner) throw new Error('Пользователь изменился. Повторите подключение Push.');
+    const response = await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
+    if (response?.data?.registered !== true) throw new Error('1С не подтвердила регистрацию Web Push');
+    webPushRegistered = true;
     enableSystemPreference();
     return subscription;
   }
   async function unregisterWebPush() {
+    webPushRegistered = false;
     if (!('serviceWorker' in navigator)) return;
+    let subscription;
     try {
       const registration = await navigator.serviceWorker.getRegistration(new URL('./',document.baseURI).pathname);
-      const subscription = await registration?.pushManager?.getSubscription();
+      subscription = await registration?.pushManager?.getSubscription();
       if (subscription && state.userId) await call1C('/notifications/push/unsubscribe', pushPayload(subscription), {silent:true});
-      await subscription?.unsubscribe();
     } catch (error) { console.warn('Push unsubscribe:',error.message); }
+    finally { try { await subscription?.unsubscribe(); } catch {} }
   }
   async function startNativePush() {
     const nativePush = window.ITUS_NATIVE_PUSH;
@@ -1310,14 +1328,15 @@
     const native = nativePush();
     const deviceButton = native
       ? '<button data-action="enable-system-notifications">Подключить Push на устройстве</button>'
-      : '<button data-action="enable-system-notifications">Разрешить уведомления на устройстве</button><button data-action="enable-web-push" '+(webPushSupported() ? '' : 'disabled')+'>Подключить Push</button>';
+      : '<button data-action="enable-web-push">Подключить Push</button>';
     showSheet('Уведомления', 'Настройки этого пользователя на этом устройстве',
       types.map(type => '<label class="setting-row"><input type="checkbox" data-notification-pref="'+type+'" '+(prefs[type]?'checked':'')+'>'+labels[type]+'</label>').join('') +
       (!types.length ? '<p>1С не передала известную роль. Уведомления не запрашиваются.</p>' : '') +
       '<label class="setting-row"><input type="checkbox" data-notification-pref="system" '+(prefs.system?'checked':'')+'>Показывать системные уведомления</label>' +
       '<p>Разрешение устройства: '+esc(notificationPermission())+'</p>' +
+      (!native ? '<p>'+esc(window.ITUS_WEB_PUSH?.reason() || 'Web Push доступен. Разрешение браузера само по себе ещё не подтверждает регистрацию в 1С.')+'</p>' : '') +
       '<div class="grid">'+deviceButton+'<button data-action="save-notifications">Сохранить</button></div>' +
-      '<p class="tiny">На Android используется Firebase Push; в браузере — Web Push. Ключи и токены в браузерный код не записываются.</p>');
+      '<p class="tiny">На Android используется Firebase Push; в браузере — Web Push. Закрытые ключи хранятся только на сервере. В Windows разрешите уведомления Яндекс Браузера и отключите режим «Не беспокоить» для проверки.</p>');
   }
 
   async function pollNotifications() {
@@ -1362,7 +1381,7 @@
         state.notifications = state.notifications.slice(0,100);
         if (document.hidden && prefs.system && nativeNotifications && nativeNotifications.permission() === 'granted') {
           nativeNotifications.show(event.title,event.message,event.eventId);
-        } else if (document.hidden && prefs.system && 'Notification' in window && Notification.permission === 'granted') {
+        } else if (document.hidden && prefs.system && !webPushRegistered && 'Notification' in window && Notification.permission === 'granted') {
           try {
             const registration = await notificationRegistration();
             if (registration) await registration.showNotification(event.title,{body:event.message,tag:event.eventId,
@@ -1606,6 +1625,16 @@
     onAction: data => void openPushTarget(data),
     onError: error => console.warn('Native push:', error)
   });
+  if (!window.ITUS_NATIVE_PUSH?.supported?.()) {
+    void window.ITUS_WEB_PUSH?.prepare().catch(() => {});
+    const launch = new URL(window.location.href);
+    if (launch.searchParams.get('push') === '1') {
+      const target = Object.fromEntries(['type','eventId','topicRef','topicId','orderRef','orderId'].map(key => [key,launch.searchParams.get(key) || '']));
+      void openPushTarget(target);
+      for (const key of ['push','type','eventId','topicRef','topicId','orderRef','orderId']) launch.searchParams.delete(key);
+      window.history.replaceState(null,'',launch.href);
+    }
+  }
   setAuth(readAuthFromContext(), 'max');
   render();
   if (state.userId) initialize();
