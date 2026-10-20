@@ -13,6 +13,7 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
 const staticRoot = existsSync(join(distRoot, 'config', 'itus.config.js')) ? distRoot : root;
 const port = Number(process.env.PORT || 8080);
+const listenHost = String(process.env.LISTEN_HOST || '0.0.0.0').trim() || '0.0.0.0';
 const configuredBasePath = process.env.APP_BASE_PATH && String(process.env.APP_BASE_PATH).trim();
 const normalizedConfiguredBasePath = configuredBasePath ? '/' + configuredBasePath.replace(/^\/+|\/+$/g, '') : null;
 
@@ -389,7 +390,7 @@ const server = http.createServer(async (req, res) => {
   catch { json(res, 400, {success: false, error: {code: 'BAD_PATH', message: 'Некорректный путь'}}); }
 });
 
-server.listen(port, '0.0.0.0', () => {
+server.listen(port, listenHost, () => {
   console.log(`ИТУС запущен: http://localhost:${port}`);
   console.log(`Прокси 1С: /api/1c/* -> ${oneCTarget}/*`);
   console.log(`Публичный путь: ${normalizedConfiguredBasePath || 'автоопределение'}`);
