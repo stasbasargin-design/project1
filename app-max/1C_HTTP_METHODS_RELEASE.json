@@ -766,7 +766,10 @@
       "purpose": "Client topic history",
       "request": {
         "topicRef": "TOPIC_GUID",
-        "topicId": "TOPIC_GUID"
+        "topicId": "TOPIC_GUID",
+        "includeAttachmentContent": "false | true",
+        "messageRef": "MESSAGE_GUID_REQUIRED_WITH_attachmentRef",
+        "attachmentRef": "FILE_GUID_REQUIRED_WITH_messageRef"
       },
       "responseData": {
         "messages": [
@@ -918,7 +921,10 @@
       "purpose": "Department group history",
       "request": {
         "groupRef": "GROUP_GUID",
-        "groupId": "GROUP_GUID"
+        "groupId": "GROUP_GUID",
+        "includeAttachmentContent": "false | true",
+        "messageRef": "MESSAGE_GUID_REQUIRED_WITH_attachmentRef",
+        "attachmentRef": "FILE_GUID_REQUIRED_WITH_messageRef"
       },
       "responseData": {
         "messages": [

@@ -234,10 +234,13 @@
     const x = isObject(value) ? value : {};
     const direction = text(x.direction || x.side);
     // The message author is integration data, never UI/session state.  The
-    // current 1C contracts use authorName; senderName/from are retained for
+    // current 1C contracts use authorName; senderName, author and from are retained for
     // already supported server responses.  Keep an explicit flag so a later
     // incomplete response cannot overwrite a known author in the local cache.
-    const actualAuthor = text(x.authorName || x.senderName || x.from).trim();
+    const actualAuthor = text(x.authorName || x.senderName || x.author || x.from).trim();
+    // Keep the 1C identifier separately. A UI fallback id is allowed for
+    // rendering malformed history, but must never be sent back to 1C.
+    const messageRef = text(x.messageRef || x.messageId || x.id).trim();
     const poll = isObject(x.poll) ? {
       question: text(x.poll.question || x.poll.title),
       options: asArray(x.poll.options || x.poll.variants).map(item => isObject(item) ? {value:text(item.value || item.code || item.id),label:text(item.label || item.title || item.name)} : {value:text(item),label:text(item)}).filter(item => item.label),
@@ -245,7 +248,9 @@
     } : null;
     const status = text(x.status || x.deliveryStatus || x.messageStatus || (x.readAt ? 'read' : x.deliveredAt ? 'delivered' : (direction === 'outgoing' || direction === 'mine' || x.isMine ? 'sent' : ''))).toLowerCase();
     return {
-      id: text(x.messageRef || x.messageId || x.id, String(index)),
+      id: messageRef || String(index),
+      messageRef,
+      hasServerMessageRef: Boolean(messageRef),
       author: actualAuthor || 'Отправитель не указан',
       authorKnown: Boolean(actualAuthor),
       text: text(x.text || x.message),

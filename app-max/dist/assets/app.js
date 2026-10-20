@@ -21,7 +21,7 @@
     maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.4'
+    version: 'i-max-2.7.5'
   };
 
   const ALL_VIEWS = {
@@ -50,11 +50,12 @@
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
+  let mediaPicker = null;
 
   const messenger = window.ITUS_MESSENGER?.create({
     api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
-    toast,pickFile:configureFilePicker,photo:choosePhoto,filePayload:fileToPayload,
+    toast,pickFile:configureFilePicker,photo:choosePhoto,media:openMediaPicker,filePayload:fileToPayload,
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead
   });
 
@@ -82,6 +83,7 @@
   }
 
   function closeSheet() {
+    mediaPicker?.dismiss?.();
     state.cameraStream?.getTracks().forEach(track => track.stop());
     state.cameraStream = null;
     $('overlay').classList.add('hidden');
@@ -523,19 +525,19 @@
 
   function renderMessages(messages) {
     if (!messages?.length) return '<div class="empty">Сообщений пока нет.</div>';
-    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.side === 'mine' ? (state.user?.name || message.author) : message.author)} · ${esc(FEATURES.dateTime(message.createdAt))}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(renderAttachment).join('')}</div>` : ''}</div>`).join('')}</div>`;
+    return `<div class="chat">${messages.map(message => `<div class="message ${message.side}"><span class="message-meta">${esc(message.author || 'Отправитель не указан')} · ${esc(FEATURES.dateTime(message.createdAt))}</span>${esc(message.text)}${message.attachments?.length ? `<div class="attachments">${message.attachments.map(renderAttachment).join('')}</div>` : ''}</div>`).join('')}</div>`;
   }
 
   function renderClientsView() {
     const topic = state.clientTopics.find(item => item.ref === state.selectedClientTopic);
     const messages = topic ? (state.clientMessages[topic.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="client-photo">Фото</button><button data-action="client-video">Видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>B2B: клиенты</h2><button class="button" data-action="load-client-topics">Обновить</button></div><p class="muted">Все исходящие и входящие сообщения проходят через 1С.</p><div class="topic-list">${state.clientTopics.length ? state.clientTopics.map(item => topicButton(item, state.selectedClientTopic, 'client')).join('') : '<div class="empty">Темы не загружены или отсутствуют.</div>'}</div></div>${topic ? `<div class="card"><div class="section-title"><div><h2>${esc(topic.title)}</h2><div class="tiny">${esc(topic.subtitle)}</div></div><button class="button" data-action="refresh-client-messages">Обновить</button></div>${renderMessages(messages)}<label for="clientMessage">Сообщение клиенту</label><textarea id="clientMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-client-message">Отправить через 1С</button><div class="grid two" style="margin-top:8px"><button data-action="client-photo">Фото и видео</button><button data-action="client-file">Файл</button></div></div>` : ''}`;
   }
 
   function renderChatView() {
     const group = state.chatGroups.find(item => item.ref === state.selectedChatGroup);
     const messages = group ? (state.chatMessages[group.ref] || []) : [];
-    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid three" style="margin-top:8px"><button data-action="chat-photo">Фото</button><button data-action="chat-video">Видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
+    return `<div class="card"><div class="section-title"><h2>Чат между отделами</h2><button class="button" data-action="load-chat-groups">Обновить</button></div><p class="muted">Состав групп, права и история переписки загружаются из 1С.</p><div class="topic-list">${state.chatGroups.length ? state.chatGroups.map(item => topicButton(item, state.selectedChatGroup, 'chat')).join('') : '<div class="empty">Группы не загружены или отсутствуют.</div>'}</div></div>${group ? `<div class="card"><div class="section-title"><div><h2>${esc(group.title)}</h2><div class="tiny">${esc(group.subtitle)}</div></div><button class="button" data-action="refresh-chat-messages">Обновить</button></div>${renderMessages(messages)}<label for="chatMessage">Сообщение в группу</label><textarea id="chatMessage" placeholder="Введите сообщение"></textarea><button class="primary" data-action="send-chat-message">Отправить через 1С</button><div class="grid two" style="margin-top:8px"><button data-action="chat-photo">Фото и видео</button><button data-action="chat-file">Файл</button></div></div>` : ''}`;
   }
 
   function validateProcess(process, allRequired = true) {
@@ -937,7 +939,7 @@
         : file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b></span></button>` : '';
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid three" style="margin-top:8px"><button data-action="defect-photo">Фото</button><button data-action="defect-video">Видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo">Фото и видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
   }
 
   async function openDefectSheet() {
@@ -971,7 +973,11 @@
       toast('Сначала создайте акт приёма', true);
       return;
     }
-    showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, `<div class="empty">Используйте фото/видео из секции акта приёма. Файлы в этом окне отправляются только в документ приёма.</div><div class="grid two" style="margin-top:8px"><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" data-action="acceptance-video">Видео</button></div><button class="secondary" style="margin-top:8px" data-action="close-sheet">Закрыть</button>`);
+    if (!window.ITUS_MEDIA_PICKER?.create) {
+      showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, '<div class="grid two"><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" data-action="acceptance-video">Видео</button></div>');
+      return;
+    }
+    openMediaPicker({ type:'acceptance' });
   }
 
   async function uploadAcceptanceFile(file, kind) {
@@ -1011,15 +1017,34 @@
   }
 
   function choosePhoto(target) {
-    state.photoTarget = target;
-    showSheet('Добавить фотографию', 'Выберите источник изображения', '<div class="grid two"><button data-action="photo-camera">Камера</button><button data-action="photo-gallery">Галерея</button></div><p class="tiny">Камера требует HTTPS и разрешения браузера. В старом APK камера может требовать обновления Android-оболочки.</p>');
+    openMediaPicker(target);
+  }
+
+  function openMediaPicker(target) {
+    if (!mediaPicker && window.ITUS_MEDIA_PICKER?.create) {
+      mediaPicker = window.ITUS_MEDIA_PICKER.create({ showSheet, closeSheet, toast, maxBytes: CONFIG.maxUploadBytes });
+    }
+    if (!mediaPicker) return configureFilePicker(target, 'image/*,video/*', null, true);
+    const labels = { acceptance: 'акт приёма', defect: 'дефектовку', client: 'чат с клиентом', chat: 'внутренний чат', messenger: 'чат' };
+    mediaPicker.open({
+      hint: `Файлы будут отправлены в ${labels[target.type] || 'текущий раздел'} по одному действию.`,
+      onSend: async (file, kind, uploadId) => {
+        toast(`Загрузка файла «${file.name || 'вложения'}»…`);
+        if (target.type === 'messenger') return messenger.upload(file, { ...target, kind });
+        if (target.type === 'acceptance') return uploadAcceptanceFile(file, kind);
+        if (target.type === 'defect') return uploadDefectFile(file, kind);
+        if (target.type === 'client') return sendClientFile(file, kind, uploadId);
+        if (target.type === 'chat') return sendChatFile(file, kind, uploadId);
+        throw new Error('Не определено место прикрепления файла');
+      }
+    });
   }
 
   function configureFilePicker(target, accept, capture, multiple = false) {
     const input = $('filePicker');
     state.fileTarget = target; input.value = ''; input.accept = accept || '*/*'; input.multiple = multiple;
-    if (capture) input.setAttribute('capture', capture); else input.removeAttribute('capture');
-    input.click();
+    if (capture) input.setAttribute?.('capture', capture); else input.removeAttribute?.('capture');
+    input.click?.();
   }
 
   async function fileToPayload(file, kind) {
@@ -1096,10 +1121,10 @@
     await loadClientMessages(ref); render(); toast('Сообщение отправлено клиенту через 1С');
   }
 
-  async function sendClientFile(file, kind) {
+  async function sendClientFile(file, kind, clientMessageId = requestId()) {
     const payload = await fileToPayload(file, kind);
     const ref = state.selectedClientTopic;
-    await call1C('/clients/files/send', { topicRef: ref, topicId: ref, clientMessageId: requestId(), file: payload, kind });
+    await call1C('/clients/files/send', { topicRef: ref, topicId: ref, clientMessageId, file: payload, kind });
     await loadClientMessages(ref); render(); toast('Вложение отправлено клиенту через 1С');
   }
 
@@ -1124,10 +1149,10 @@
     await loadChatMessages(ref); render(); toast('Сообщение отправлено в группу через 1С');
   }
 
-  async function sendChatFile(file, kind) {
+  async function sendChatFile(file, kind, clientMessageId = requestId()) {
     const payload = await fileToPayload(file, kind);
     const ref = state.selectedChatGroup;
-    await call1C('/internal-chat/files/send', { groupRef: ref, groupId: ref, clientMessageId: requestId(), file: payload, kind });
+    await call1C('/internal-chat/files/send', { groupRef: ref, groupId: ref, clientMessageId, file: payload, kind });
     await loadChatMessages(ref); render(); toast('Вложение отправлено в группу через 1С');
   }
 
@@ -1478,6 +1503,7 @@
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
     try {
+      if (mediaPicker?.handle(action, button)) return;
       if (action.startsWith('msg-')) return messenger?.handle(action,button);
       if (action === 'view') return setView(button.dataset.view);
       if (action === 'login') { const id = String($('authUserId')?.value || '').trim(); if (!/^\d+$/.test(id)) return toast('ID пользователя MAX должен содержать только цифры', true); setAuth(id, 'manual'); return initialize(); }
@@ -1485,11 +1511,6 @@
       if (action === 'manual-auth-qr') return manualQr();
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return initialize(); }
       if (action === 'settings') return showSettings();
-      if (action === 'photo-camera' || action === 'photo-gallery') {
-        const target = state.photoTarget;
-        if (target) configureFilePicker(target, 'image/*', action === 'photo-camera' ? 'environment' : null);
-        return;
-      }
       if (action === 'notification-settings') return showNotificationSettings();
       if (action === 'save-notifications') {
         const prefs = FEATURES.preferences(state.userId);
@@ -1549,10 +1570,8 @@
       if (action === 'service-history') return openServiceHistory();
       if (action === 'open-defect-chat') return openDefectSheet();
       if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
-      if (action === 'acceptance-photo') return choosePhoto({ type:'acceptance',kind:'photo' });
-      if (action === 'acceptance-video') return configureFilePicker({ type:'acceptance',kind:'video' }, 'video/*', 'environment');
-      if (action === 'defect-photo') return choosePhoto({ type:'defect',kind:'photo' });
-      if (action === 'defect-video') return configureFilePicker({ type:'defect',kind:'video' }, 'video/*', 'environment');
+      if (action === 'acceptance-photo' || action === 'acceptance-video') return openMediaPicker({ type:'acceptance' });
+      if (action === 'defect-photo' || action === 'defect-video') return openMediaPicker({ type:'defect' });
       if (action === 'send-defect-text') return sendDefectText();
       if (action === 'defect-media') return openDefectMedia(Number(button.dataset.index));
       if (action === 'complete-defect-sheet') return completeDefectSheet();
@@ -1560,15 +1579,13 @@
       if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return render(); }
       if (action === 'refresh-client-messages') { await loadClientMessages(state.selectedClientTopic); return render(); }
       if (action === 'send-client-message') return sendClientMessage();
-      if (action === 'client-photo') return choosePhoto({type:'client',kind:'photo'});
-      if (action === 'client-video') return configureFilePicker({type:'client',kind:'video'}, 'video/*', 'environment');
+      if (action === 'client-photo' || action === 'client-video') return openMediaPicker({type:'client'});
       if (action === 'client-file') return configureFilePicker({type:'client',kind:'file'}, '*/*');
       if (action === 'load-chat-groups') return loadChatGroups();
       if (action === 'select-chat-topic') { state.selectedChatGroup = button.dataset.ref; await loadChatMessages(button.dataset.ref); return render(); }
       if (action === 'refresh-chat-messages') { await loadChatMessages(state.selectedChatGroup); return render(); }
       if (action === 'send-chat-message') return sendChatMessage();
-      if (action === 'chat-photo') return choosePhoto({type:'chat',kind:'photo'});
-      if (action === 'chat-video') return configureFilePicker({type:'chat',kind:'video'}, 'video/*', 'environment');
+      if (action === 'chat-photo' || action === 'chat-video') return openMediaPicker({type:'chat'});
       if (action === 'chat-file') return configureFilePicker({type:'chat',kind:'file'}, '*/*');
       if (action === 'open-notification') return openNotification(button.dataset.event);
       if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return renderNotifications(); }

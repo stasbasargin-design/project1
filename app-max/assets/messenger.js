@@ -47,7 +47,7 @@
     async function restoreThread(k){if(restored.has(k)||!owner())return;restored.add(k);const item=await readStore('threads',persistentKey('thread',k));if(item?.owner===owner()&&Date.now()-item.updatedAt<CACHE_TTL&&Array.isArray(item.messages)){cache[k]=sortedMessages(item.messages);}}
     function messageIdentity(message,index){return String(message.id || message.messageRef || `${message.createdAt||''}:${message.author||''}:${message.text||''}:${index}`);}
     function mergeMessages(previous,incoming){const merged=new Map();[...(previous||[]),...(incoming||[])].forEach((message,index)=>{const id=messageIdentity(message,index),old=merged.get(id);const next=old?{...old,...message,attachments:(message.attachments?.length?message.attachments:old.attachments)||[]}:message;if(old?.authorKnown&&!message.authorKnown){next.author=old.author;next.authorKnown=true;}merged.set(id,next);});return sortedMessages([...merged.values()]);}
-    function attachmentKey(s,id,file){return file?.fileRef?persistentKey('media',`${s}:${id}:${file.fileRef}`):'';}
+    function attachmentKey(s,id,messageRef,file){return file?.fileRef&&messageRef?persistentKey('media',`${s}:${id}:${messageRef}:${file.fileRef}`):'';}
     function current(){return records[source].find(x=>x.ref===selected);}
     function initials(name){return String(name || '?').split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase();}
     function time(value){if(!value)return '';const d=new Date(value);return Number.isFinite(+d)?new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',...(root.ITUS_CONFIG?.DISPLAY_TIME_ZONE?{timeZone:root.ITUS_CONFIG.DISPLAY_TIME_ZONE}:{})}).format(d):'';}
@@ -223,16 +223,17 @@
       finally{if(generation===epoch){sending[k]=false;paint({bottom:true});}}
     }
     async function legacyMedia(mi,fi){
-      let file=cache[selectedKey()]?.[mi]?.attachments?.[fi];if(!file)return;
+      const message=cache[selectedKey()]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
       let url=safeUrl(file.downloadUrl);const mime=file.mimeType||'application/octet-stream';
-      if(!url&&!file.contentBase64&&file.fileRef){
+      if(!url&&!file.contentBase64&&file.fileRef&&message?.hasServerMessageRef){
         try{
-          const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,attachmentRef:file.fileRef},{silent:true});
+          const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},{silent:true});
           const fresh=sortedMessages(api.extractItems(response,['messages']).map(api.normalizeMessage));
           if(fresh.length){cache[selectedKey()]=fresh;file=cache[selectedKey()]?.[mi]?.attachments?.[fi]||file;url=safeUrl(file.downloadUrl);}
         }catch(e){return toast('Не удалось загрузить вложение: '+e.message,true);}
       }
+      if(!url&&file.fileRef&&!message?.hasServerMessageRef)return toast('1С не передала идентификатор сообщения для вложения',true);
       if(!url&&file.contentBase64){
         const k=selectedKey()+':'+mi+':'+fi;url=blobUrls.get(k);
         if(!url){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));const bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));url=URL.createObjectURL(new Blob([bytes],{type:mime}));blobUrls.set(k,url);}catch{return toast('Не удалось прочитать вложение',true);}}
@@ -243,9 +244,9 @@
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
     async function media(mi,fi){
-      const thread=selectedKey();let file=cache[thread]?.[mi]?.attachments?.[fi];if(!file)return;
+      const thread=selectedKey(),message=cache[thread]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
-      const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(source,selected,file);
+      const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(source,selected,message?.messageRef,file);
       async function asUrl(record){
         if(!record?.blob)return '';
         const existing=blobUrls.get(stableKey);if(existing)return existing;
@@ -254,12 +255,13 @@
       let record=stableKey?mediaMemory.get(stableKey):null;
       if(!record&&stableKey){record=await readStore('media',stableKey);if(record?.owner===owner()&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
       if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:owner(),key:stableKey};}catch{record=null;}}
+      if(!record&&file.fileRef&&!message?.hasServerMessageRef)return toast('1С не передала идентификатор сообщения для вложения',true);
       if(!record&&stableKey){
         let pending=mediaLoading.get(stableKey);
         if(!pending){pending=(async()=>{
-          const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,attachmentRef:file.fileRef},{silent:true});
+          const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},{silent:true});
           const fresh=api.extractItems(response,['messages']).map(api.normalizeMessage);cache[thread]=mergeMessages(cache[thread],fresh);void persistThread(thread);
-          const matched=cache[thread].flatMap(message=>message.attachments||[]).find(item=>item.fileRef===file.fileRef)||file;
+          const matched=cache[thread].find(item=>item.messageRef===message.messageRef)?.attachments?.find(item=>item.fileRef===file.fileRef);
           if(!matched.contentBase64)return null;
           const raw=atob(matched.contentBase64.replace(/^data:[^,]*,/,''));const saved={key:stableKey,owner:owner(),blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:matched.mimeType||mime}),size:raw.length,updatedAt:Date.now()};
           mediaMemory.set(stableKey,saved);await writeStore('media',saved);void trimPersistentCache();return saved;
@@ -287,7 +289,7 @@
       if(action==='msg-media')await media(Number(button.dataset.mi),Number(button.dataset.fi));
       if(action==='msg-settings')options.settings();
       if(action==='msg-attach'){
-        options.sheet('Вложения','Куда: '+current().title,`<div class="grid"><button data-action="msg-photo">Фото: камера или галерея</button><button data-action="msg-video">Видео из галереи</button><button data-action="msg-file">Документ</button></div>`);
+        options.sheet('Вложения','Куда: '+current().title,`<div class="grid"><button data-action="msg-photo">Фото и видео</button><button data-action="msg-file">Документ</button></div>`);
       }
       if(action==='msg-poll') options.sheet('Опрос согласования','Ответ клиента будет сохранён в 1С',`<label for="msgPollQuestion">Вопрос</label><input id="msgPollQuestion" value="Согласовано ли выполнение работ?" maxlength="200"><p class="tiny">Варианты: «Согласовано» и «Не согласовано»</p><button class="primary" data-action="msg-poll-send">Отправить опрос</button>`);
       if(action==='msg-poll-send'){
@@ -306,8 +308,11 @@
         catch(e){toast(e.message,true);}
       }
       const target={type:'messenger',source,ref:selected};
-      if(action==='msg-photo')photo({...target,kind:'photo'});
-      if(action==='msg-video')pickFile({...target,kind:'video'},'video/*');
+      if(action==='msg-photo'||action==='msg-video'){
+        if(options.media) options.media(target);
+        else if(action==='msg-photo')photo({...target,kind:'photo'});
+        else pickFile({...target,kind:'video'},'video/*');
+      }
       if(action==='msg-file')pickFile({...target,kind:'file'},'*/*');
     }
     document.addEventListener('input',e=>{
