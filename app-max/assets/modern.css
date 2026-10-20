@@ -67,3 +67,11 @@ input,textarea,select{background:#fff;border-color:#aeb8c5}
 .tab .chat-unread-dot{position:absolute;top:4px;right:6px;display:flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 4px;border-radius:999px;background:#c52b27;color:#fff;border:2px solid #fff;font-size:10px;font-weight:800;line-height:1;box-sizing:border-box;pointer-events:none}
 .tab .chat-unread-dot[hidden]{display:none}
 .tab.active .chat-unread-dot{background:#fff;color:#b92824;border-color:#fff}
+
+/* Responsive shell: existing content is reflowed, never globally scaled. */
+:root{--app-shell-max:520px}
+.top{width:min(var(--app-shell-max),100%)}
+@media (min-width:600px){:root{--app-shell-max:760px}.top{padding-left:clamp(18px,3vw,28px);padding-right:clamp(18px,3vw,28px)}.tabs{gap:8px}.tab{min-height:64px}.row>.primary,.row>.secondary,.row>.danger,.row>.success{width:auto;min-width:180px}}
+@media (min-width:1024px){:root{--app-shell-max:1100px}.top{padding-left:32px;padding-right:32px}.tabs{padding-bottom:14px}.tab{flex:0 1 128px}}
+@media (max-width:599px){.overlay{padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}.sheet{width:100%;max-width:100%;max-height:calc(100dvh - 20px)}.sheet-head{overflow-wrap:anywhere}}
+@media (max-height:560px) and (orientation:landscape){.top{position:sticky;left:auto;transform:none;width:auto;padding-top:8px}.phone{padding-top:calc(8px + env(safe-area-inset-top))}.tabs{top:0}}
