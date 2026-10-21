@@ -1,0 +1,85 @@
+name: Build I-MAX TEST APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-apk:
+    name: Isolated TEST APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Create isolated TEST project
+        run: |
+          cp -a app-max "$RUNNER_TEMP/imax-test"
+          cd "$RUNNER_TEMP/imax-test"
+          rm -f android/app/google-services.json
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'capacitor.config.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.appId = 'ru.eazia.imax.test';
+          config.appName = 'I-MAX TEST';
+          config.server = { url: 'https://max-test.ea-itus.ru', cleartext: false };
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+          sed -i \
+            -e 's/namespace = "ru\.eazia\.imax"/namespace = "ru.eazia.imax.test"/' \
+            -e 's/applicationId "ru\.eazia\.imax"/applicationId "ru.eazia.imax.test"/' \
+            -e 's/versionCode 2705/versionCode 27051/' \
+            -e 's/versionName "2\.7\.5"/versionName "2.7.5-webpush-test"/' \
+            android/app/build.gradle
+          sed -i \
+            -e 's/>I-MAX</>I-MAX TEST</g' \
+            -e 's/ru\.eazia\.imax/ru.eazia.imax.test/g' \
+            -e 's/i-max-events/i-max-test-events/g' \
+            android/app/src/main/res/values/strings.xml
+
+      - name: Test web application
+        working-directory: ${{ runner.temp }}/imax-test
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npx cap sync android
+
+      - name: Build unsigned Firebase-free TEST APK
+        working-directory: ${{ runner.temp }}/imax-test/android
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify packaged TEST values
+        working-directory: ${{ runner.temp }}/imax-test
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          "$AAPT" dump badging "$APK" | tee apk-badging.txt
+          unzip -p "$APK" assets/capacitor.config.json | tee packaged-capacitor.config.json
+          grep -F "package: name='ru.eazia.imax.test'" apk-badging.txt
+          grep -F "versionName='2.7.5-webpush-test'" apk-badging.txt
+          grep -F "application-label:'I-MAX TEST'" apk-badging.txt
+          grep -F 'https://max-test.ea-itus.ru' packaged-capacitor.config.json
+          ! unzip -l "$APK" | grep -q 'google-services.json'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-TEST-2.7.5-webpush-test-28eb72d6-debug
+          path: |
+            ${{ runner.temp }}/imax-test/android/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/imax-test/apk-badging.txt
+            ${{ runner.temp }}/imax-test/packaged-capacitor.config.json
+          if-no-files-found: error
