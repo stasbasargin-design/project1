@@ -34,6 +34,16 @@ jobs:
           cp -a app-max "$RUNNER_TEMP/imax-test"
           cd "$RUNNER_TEMP/imax-test"
           rm -f android/app/google-services.json
+
+      - name: Test source before TEST-only configuration
+        working-directory: ${{ runner.temp }}/imax-test
+        run: |
+          npm ci
+          npm test
+
+      - name: Configure isolated TEST project and web assets
+        working-directory: ${{ runner.temp }}/imax-test
+        run: |
           node <<'NODE'
           const fs = require('fs');
           const path = 'capacitor.config.json';
@@ -56,11 +66,6 @@ jobs:
           sed -i '1i window.__ITUS_API_BASE__ = "https://max-test.ea-itus.ru/api/1c";\nwindow.__ITUS_TEST_BUILD__ = "27053";' config/itus.config.js
           sed -i "s/version: 'i-max-2.7.5'/version: 'i-max-2.7.5-test-27053'/" assets/app.js
 
-      - name: Test web application
-        working-directory: ${{ runner.temp }}/imax-test
-        run: |
-          npm ci
-          npm test
           npm run build
           rm -rf node_modules/@capacitor/push-notifications
           npx cap sync android
