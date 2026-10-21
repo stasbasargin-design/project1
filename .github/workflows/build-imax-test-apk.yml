@@ -44,9 +44,8 @@ jobs:
           fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
           NODE
           sed -i \
-            -e 's/namespace = "ru\.eazia\.imax"/namespace = "ru.eazia.imax.test"/' \
             -e 's/applicationId "ru\.eazia\.imax"/applicationId "ru.eazia.imax.test"/' \
-            -e 's/versionCode 2705/versionCode 27051/' \
+            -e 's/versionCode 2705/versionCode 27052/' \
             -e 's/versionName "2\.7\.5"/versionName "2.7.5-webpush-test"/' \
             android/app/build.gradle
           sed -i \
@@ -61,6 +60,7 @@ jobs:
           npm ci
           npm test
           npm run build
+          rm -rf node_modules/@capacitor/push-notifications
           npx cap sync android
 
       - name: Build unsigned Firebase-free TEST APK
@@ -73,6 +73,7 @@ jobs:
         working-directory: ${{ runner.temp }}/imax-test
         run: |
           APK=android/app/build/outputs/apk/debug/app-debug.apk
+          MERGED_MANIFEST="$(find android/app/build/intermediates/merged_manifests/debug -name AndroidManifest.xml | head -1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
           "$AAPT" dump badging "$APK" | tee apk-badging.txt
           unzip -p "$APK" assets/capacitor.config.json | tee packaged-capacitor.config.json
@@ -80,6 +81,8 @@ jobs:
           grep -F "versionName='2.7.5-webpush-test'" apk-badging.txt
           grep -F "application-label:'I-MAX TEST'" apk-badging.txt
           grep -F 'https://max-test.ea-itus.ru' packaged-capacitor.config.json
+          grep -F 'android:name="ru.eazia.imax.MainActivity"' "$MERGED_MANIFEST"
+          test -f android/app/src/main/java/ru/eazia/imax/MainActivity.java
           ! unzip -l "$APK" | grep -q 'google-services.json'
 
       - uses: actions/upload-artifact@v4
