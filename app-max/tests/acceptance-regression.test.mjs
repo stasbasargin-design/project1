@@ -125,8 +125,11 @@ process.answers.required=false; // An explicit boolean "no" is a valid answer.
 assert.equal(app.processProgress(process,'_acceptance').done,2);
 await app.completeAcceptance();assert.equal(completions().length,2);
 const search=element('orderSearch');search.value='TEST-1';search.selectionStart=6;search.selectionEnd=6;
+let orderSearchRenderWrites=0, appMarkup=element('app').innerHTML;
+Object.defineProperty(element('app'),'innerHTML',{configurable:true,get(){return appMarkup;},set(value){orderSearchRenderWrites++;appMarkup=value;}});
 handlers.input({target:search});assert.equal(app.state.search,'TEST-1');assert.equal(search.selectionStart,6);
 search.selectionStart=2;search.selectionEnd=2;handlers.input({target:search});assert.equal(search.selectionStart,2);
+assert.equal(orderSearchRenderWrites,0,'typing in order search must not recreate the application DOM or reset the mobile keyboard');
 handlers.focusin({target:search});assert.equal(search.selectionStart,6);
 console.log('Acceptance regression: OK (required flags, progress, failed/successful upload, completion JSON, default values, role buttons, caret).');
 
