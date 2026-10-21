@@ -91,15 +91,34 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
           script: |
+            set -Eeuo pipefail
+            DIAG="$RUNNER_TEMP/imax-test/android-smoke-diagnostics.txt"
+            LOG="$RUNNER_TEMP/imax-test/android-smoke-log.txt"
+            trap 'adb devices -l >> "$DIAG" 2>&1 || true; adb logcat -d >> "$LOG" 2>&1 || true' EXIT
             APK="$RUNNER_TEMP/imax-test/android/app/build/outputs/apk/debug/app-debug.apk"
-            adb install -r "$APK"
+            adb devices -l | tee "$DIAG"
+            adb wait-for-device
+            for i in $(seq 1 30); do
+              test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" && break
+              sleep 2
+            done
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+            adb shell getprop | grep -E 'sys.boot_completed|dev.bootcomplete' | tee -a "$DIAG"
+            adb install -r "$APK" 2>&1 | tee -a "$DIAG"
             adb logcat -c
-            adb shell am start -W -n ru.eazia.imax.test/ru.eazia.imax.MainActivity
+            LAUNCHER="$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ru.eazia.imax.test | tr -d '\r')"
+            printf 'resolved_launcher=%s\n' "$LAUNCHER" | tee -a "$DIAG"
+            test -n "$LAUNCHER"
+            adb shell am start -W -n "$LAUNCHER" 2>&1 | tee -a "$DIAG"
             sleep 8
-            adb shell pidof ru.eazia.imax.test
-            adb logcat -d > "$RUNNER_TEMP/imax-test/android-smoke-log.txt"
-            ! grep -E 'FATAL EXCEPTION|AndroidRuntime.*(Fatal|Exception)' "$RUNNER_TEMP/imax-test/android-smoke-log.txt"
+            PID="$(adb shell pidof ru.eazia.imax.test | tr -d '\r')"
+            printf 'app_pid=%s\n' "$PID" | tee -a "$DIAG"
+            test -n "$PID"
+            adb logcat -d > "$LOG"
+            ! grep -A12 -B3 'Process: ru.eazia.imax.test' "$LOG" | grep -q 'FATAL EXCEPTION'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -109,4 +128,5 @@ jobs:
             ${{ runner.temp }}/imax-test/apk-badging.txt
             ${{ runner.temp }}/imax-test/packaged-capacitor.config.json
             ${{ runner.temp }}/imax-test/android-smoke-log.txt
+            ${{ runner.temp }}/imax-test/android-smoke-diagnostics.txt
           if-no-files-found: error
