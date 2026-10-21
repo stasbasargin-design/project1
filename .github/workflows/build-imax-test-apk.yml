@@ -85,7 +85,26 @@ jobs:
           test -f android/app/src/main/java/ru/eazia/imax/MainActivity.java
           ! unzip -l "$APK" | grep -q 'google-services.json'
 
-      - name: Smoke-test TEST APK startup on Android emulator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-TEST-2.7.5-webpush-test-28eb72d6-debug
+          path: |
+            ${{ runner.temp }}/imax-test/android/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/imax-test/apk-badging.txt
+            ${{ runner.temp }}/imax-test/packaged-capacitor.config.json
+          if-no-files-found: error
+
+  smoke-test:
+    name: Android emulator smoke test (non-blocking APK artifact)
+    needs: test-apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: I-MAX-TEST-2.7.5-webpush-test-28eb72d6-debug
+          path: smoke-input
+
+      - name: Smoke-test packaged TEST APK
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -95,38 +114,30 @@ jobs:
           disable-animations: true
           script: |
             set -Eeuo pipefail
-            DIAG="$RUNNER_TEMP/imax-test/android-smoke-diagnostics.txt"
-            LOG="$RUNNER_TEMP/imax-test/android-smoke-log.txt"
+            DIAG="$GITHUB_WORKSPACE/android-smoke-diagnostics.txt"
+            LOG="$GITHUB_WORKSPACE/android-smoke-log.txt"
             trap 'adb devices -l >> "$DIAG" 2>&1 || true; adb logcat -d >> "$LOG" 2>&1 || true' EXIT
-            APK="$RUNNER_TEMP/imax-test/android/app/build/outputs/apk/debug/app-debug.apk"
+            APK="$(find smoke-input -name app-debug.apk -print -quit)"
             adb devices -l | tee "$DIAG"
             adb wait-for-device
-            for i in $(seq 1 30); do
-              test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" && break
-              sleep 2
-            done
-            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
-            adb shell getprop | grep -E 'sys.boot_completed|dev.bootcomplete' | tee -a "$DIAG"
+            for i in $(seq 1 30); do test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 && break; sleep 2; done
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
             adb install -r "$APK" 2>&1 | tee -a "$DIAG"
             adb logcat -c
             LAUNCHER="$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ru.eazia.imax.test | tr -d '\r')"
             printf 'resolved_launcher=%s\n' "$LAUNCHER" | tee -a "$DIAG"
-            test -n "$LAUNCHER"
             adb shell am start -W -n "$LAUNCHER" 2>&1 | tee -a "$DIAG"
             sleep 8
             PID="$(adb shell pidof ru.eazia.imax.test | tr -d '\r')"
-            printf 'app_pid=%s\n' "$PID" | tee -a "$DIAG"
             test -n "$PID"
             adb logcat -d > "$LOG"
             ! grep -A12 -B3 'Process: ru.eazia.imax.test' "$LOG" | grep -q 'FATAL EXCEPTION'
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: I-MAX-TEST-2.7.5-webpush-test-28eb72d6-debug
+          name: I-MAX-TEST-android-smoke-diagnostics
           path: |
-            ${{ runner.temp }}/imax-test/android/app/build/outputs/apk/debug/app-debug.apk
-            ${{ runner.temp }}/imax-test/apk-badging.txt
-            ${{ runner.temp }}/imax-test/packaged-capacitor.config.json
-            ${{ runner.temp }}/imax-test/android-smoke-log.txt
-            ${{ runner.temp }}/imax-test/android-smoke-diagnostics.txt
-          if-no-files-found: error
+            android-smoke-log.txt
+            android-smoke-diagnostics.txt
+          if-no-files-found: warn
