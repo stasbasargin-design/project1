@@ -357,10 +357,29 @@
     return `<button class="order ${state.selectedOrderId === order.id ? 'active' : ''}" data-action="select-order" data-ref="${escAttr(order.orderRef || order.id)}"><div class="row"><b>ЗН ${esc(order.num)} · ${esc(order.plate)}</b><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><div class="tiny">${esc(order.car)} · ${esc(order.client)}</div><div class="tiny">Исполнитель: ${esc(order.executor)} · дефекты: ${Number(order.counters?.defects || order.defects?.length || 0)}</div></button>`;
   }
 
+  function orderSearchText(order) {
+    return [order.num, order.plate, order.car, order.client, order.status].join(' ').toLowerCase();
+  }
+
+  function filterRenderedOrderList(value = state.search) {
+    const query = String(value || '').toLowerCase().trim();
+    const rows = document.querySelectorAll?.('[data-order-search-text]') || [];
+    let matches = 0;
+    rows.forEach(row => {
+      const visible = !query || String(row.dataset.orderSearchText || '').includes(query);
+      row.hidden = !visible;
+      if (visible) matches += 1;
+    });
+    const empty = $('orderSearchEmpty');
+    if (empty) empty.hidden = matches > 0;
+  }
+
   function renderOrderList() {
     const query = state.search.toLowerCase().trim();
-    const orders = state.orders.filter(o => !query || [o.num,o.plate,o.car,o.client,o.status].join(' ').toLowerCase().includes(query));
-    return `<div class="card"><label for="orderSearch">Поиск заказ-наряда</label><input id="orderSearch" value="${escAttr(state.search)}" placeholder="Номер ЗН, госномер или контрагент"><div class="grid two"><button data-action="search-orders">Найти в 1С</button><button data-action="scan-order-qr">Сканировать QR</button><button data-action="refresh-orders">Обновить из 1С</button></div></div>${orders.length ? orders.map(orderCard).join('') : '<div class="card empty">1С не вернула доступные заказ-наряды или ничего не найдено.</div>'}`;
+    const orders = state.orders;
+    const matching = orders.filter(order => !query || orderSearchText(order).includes(query));
+    const rows = orders.map(order => `<div data-order-search-text="${escAttr(orderSearchText(order))}"${!query || orderSearchText(order).includes(query) ? '' : ' hidden'}>${orderCard(order)}</div>`).join('');
+    return `<div class="card"><label for="orderSearch">Поиск заказ-наряда</label><input id="orderSearch" value="${escAttr(state.search)}" placeholder="Номер ЗН, госномер или контрагент"><div class="grid two"><button data-action="search-orders">Найти в 1С</button><button data-action="scan-order-qr">Сканировать QR</button><button data-action="refresh-orders">Обновить из 1С</button></div></div>${orders.length ? `${rows}<div id="orderSearchEmpty" class="card empty"${matching.length ? ' hidden' : ''}>По указанному запросу заказ-наряды не найдены.</div>` : '<div class="card empty">1С не вернула доступные заказ-наряды.</div>'}`;
   }
 
   function renderSelectedCard() {
@@ -1499,10 +1518,10 @@
   document.addEventListener('input', event => {
     if (event.target.id === 'orderSearch') {
       const { selectionStart, selectionEnd } = event.target;
-      state.search = event.target.value; render();
-      const search = $('orderSearch');
-      search?.focus();
-      search?.setSelectionRange(selectionStart ?? search.value.length, selectionEnd ?? search.value.length);
+      state.search = event.target.value;
+      // Keep the same focused element: recreating it resets Android's virtual keyboard layout.
+      filterRenderedOrderList(state.search);
+      event.target.setSelectionRange(selectionStart ?? event.target.value.length, selectionEnd ?? event.target.value.length);
     }
     const processKey = event.target.dataset.processInput;
     const answerKey = event.target.dataset.processAnswer;
