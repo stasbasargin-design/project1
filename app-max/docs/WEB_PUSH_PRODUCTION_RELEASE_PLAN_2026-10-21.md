@@ -23,6 +23,12 @@ X-ITUS-Push-Context: production | test
 Прокси удаляет одноимённый входящий заголовок клиента и устанавливает своё значение. 1С
 доверяет только этому заголовку на server-to-server запросе, а не полю JSON.
 
+Реализация кандидата назначает заголовок только для Web-регистраций в
+`/notifications/push/subscribe` и `/notifications/push/unsubscribe`. Если Web-регистрация
+пришла на службу без `WEB_PUSH_CONTEXT=test|production`, прокси отвечает
+`503 WEB_PUSH_CONTEXT_NOT_CONFIGURED` и не обращается к 1С. Android-регистрации не получают
+этот заголовок.
+
 Android не меняется: его `platform: "android"`, FCM-токен, `/api/push/dispatch` и текущая
 регистрация продолжают работать по прежнему контракту.
 

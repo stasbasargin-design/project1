@@ -42,7 +42,9 @@ const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowe
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
 const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
+const webPushContext = String(process.env.WEB_PUSH_CONTEXT || '').trim().toLowerCase();
 const capacitorOrigins = new Set(['https://localhost', 'capacitor://localhost']);
+const webPushRegistrationRoutes = new Set(['/notifications/push/subscribe', '/notifications/push/unsubscribe']);
 
 // Some VPS resolvers publish an unreachable IPv6 address before the working IPv4
 // address. Prefer IPv4 without disabling IPv6 for installations where it works.
@@ -265,6 +267,17 @@ async function proxy1C(req, res, pathname) {
   const requestId = String(req.headers['x-itus-request-id'] || '').trim();
   try {
     const body = await readBody(req);
+    let webPushRegistration = false;
+    if (webPushRegistrationRoutes.has(suffix)) {
+      try {
+        const payload = JSON.parse(body.toString('utf8'));
+        webPushRegistration = payload?.platform === 'web' || typeof payload?.subscription?.endpoint === 'string';
+      } catch { /* The upstream retains its existing JSON validation contract. */ }
+      if (webPushRegistration && !['test', 'production'].includes(webPushContext)) {
+        json(res, 503, { success: false, error: { code: 'WEB_PUSH_CONTEXT_NOT_CONFIGURED' } });
+        return;
+      }
+    }
     try {
       if (Object.values(globalThis.ITUS_WORKTIME.methods).includes(suffix)) {
         globalThis.ITUS_WORKTIME.validateRequest(suffix, JSON.parse(body.toString('utf8')));
@@ -287,6 +300,9 @@ async function proxy1C(req, res, pathname) {
     if (oneCBasicUser) {
       headers.Authorization = `Basic ${Buffer.from(`${oneCBasicUser}:${oneCBasicPassword}`).toString('base64')}`;
     }
+    // Never trust a browser-provided context. Only the configured server contour
+    // may label a Web Push registration for 1C selection.
+    if (webPushRegistration) headers['X-ITUS-Push-Context'] = webPushContext;
 
     if (logProxyRequests) {
       console.log(`[ИТУС -> 1С] POST ${suffix}${requestId ? ` requestId=${requestId}` : ''}`);
