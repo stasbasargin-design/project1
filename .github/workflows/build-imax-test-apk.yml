@@ -65,7 +65,9 @@ jobs:
 
       - name: Build unsigned Firebase-free TEST APK
         working-directory: ${{ runner.temp }}/imax-test/android
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
 
       - name: Verify packaged TEST values
         working-directory: ${{ runner.temp }}/imax-test
