@@ -2,6 +2,11 @@ name: Build I-MAX TEST APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/web-push-ios-yandex
+    paths:
+      - .github/workflows/build-imax-test-apk.yml
 
 permissions:
   contents: read
