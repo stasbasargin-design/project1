@@ -40,12 +40,12 @@ jobs:
           const config = JSON.parse(fs.readFileSync(path, 'utf8'));
           config.appId = 'ru.eazia.imax.test';
           config.appName = 'I-MAX TEST';
-          config.server = { url: 'https://max-test.ea-itus.ru', cleartext: false };
+          delete config.server;
           fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
           NODE
           sed -i \
             -e 's/applicationId "ru\.eazia\.imax"/applicationId "ru.eazia.imax.test"/' \
-            -e 's/versionCode 2705/versionCode 27052/' \
+            -e 's/versionCode 2705/versionCode 27053/' \
             -e 's/versionName "2\.7\.5"/versionName "2.7.5-webpush-test"/' \
             android/app/build.gradle
           sed -i \
@@ -53,6 +53,8 @@ jobs:
             -e 's/ru\.eazia\.imax/ru.eazia.imax.test/g' \
             -e 's/i-max-events/i-max-test-events/g' \
             android/app/src/main/res/values/strings.xml
+          sed -i '1i window.__ITUS_API_BASE__ = "https://max-test.ea-itus.ru/api/1c";\nwindow.__ITUS_TEST_BUILD__ = "27053";' config/itus.config.js
+          sed -i "s/version: 'i-max-2.7.5'/version: 'i-max-2.7.5-test-27053'/" assets/app.js
 
       - name: Test web application
         working-directory: ${{ runner.temp }}/imax-test
@@ -78,9 +80,11 @@ jobs:
           "$AAPT" dump badging "$APK" | tee apk-badging.txt
           unzip -p "$APK" assets/capacitor.config.json | tee packaged-capacitor.config.json
           grep -F "package: name='ru.eazia.imax.test'" apk-badging.txt
+          grep -F "versionCode='27053'" apk-badging.txt
           grep -F "versionName='2.7.5-webpush-test'" apk-badging.txt
           grep -F "application-label:'I-MAX TEST'" apk-badging.txt
-          grep -F 'https://max-test.ea-itus.ru' packaged-capacitor.config.json
+          grep -F 'https://max-test.ea-itus.ru/api/1c' android/app/src/main/assets/public/config/itus.config.js
+          ! grep -Fq 'https://ea-itus.ru/p/max-service/api/1c' android/app/src/main/assets/public/config/itus.config.js
           grep -F 'android:name="ru.eazia.imax.MainActivity"' "$MERGED_MANIFEST"
           test -f android/app/src/main/java/ru/eazia/imax/MainActivity.java
           ! unzip -l "$APK" | grep -q 'google-services.json'
