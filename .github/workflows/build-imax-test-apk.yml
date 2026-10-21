@@ -85,6 +85,22 @@ jobs:
           test -f android/app/src/main/java/ru/eazia/imax/MainActivity.java
           ! unzip -l "$APK" | grep -q 'google-services.json'
 
+      - name: Smoke-test TEST APK startup on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: |
+            APK="$RUNNER_TEMP/imax-test/android/app/build/outputs/apk/debug/app-debug.apk"
+            adb install -r "$APK"
+            adb logcat -c
+            adb shell am start -W -n ru.eazia.imax.test/ru.eazia.imax.MainActivity
+            sleep 8
+            adb shell pidof ru.eazia.imax.test
+            adb logcat -d > "$RUNNER_TEMP/imax-test/android-smoke-log.txt"
+            ! grep -E 'FATAL EXCEPTION|AndroidRuntime.*(Fatal|Exception)' "$RUNNER_TEMP/imax-test/android-smoke-log.txt"
+
       - uses: actions/upload-artifact@v4
         with:
           name: I-MAX-TEST-2.7.5-webpush-test-28eb72d6-debug
@@ -92,4 +108,5 @@ jobs:
             ${{ runner.temp }}/imax-test/android/app/build/outputs/apk/debug/app-debug.apk
             ${{ runner.temp }}/imax-test/apk-badging.txt
             ${{ runner.temp }}/imax-test/packaged-capacitor.config.json
+            ${{ runner.temp }}/imax-test/android-smoke-log.txt
           if-no-files-found: error
