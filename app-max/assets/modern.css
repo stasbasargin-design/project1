@@ -11,8 +11,8 @@ body::after{display:none}.brand-rail{width:3px;background:#ba2925}
 .user-panel{min-width:120px;max-width:170px;border-radius:14px;padding:9px;box-shadow:none;background:#fff;gap:7px}
 .avatar{background:#faeae8;color:#ae2923;font-size:14px;font-weight:700}.user-name{color:var(--text);font-size:13px;font-weight:700}.user-role{font-size:12px;font-weight:500}
 .tabs{top:87px;gap:6px;padding:4px 0 12px;margin-bottom:4px;background:#f4f5f7f5}
-.tab{flex:1 0 52px;width:auto;height:64px;border:1px solid var(--line);border-radius:14px;box-shadow:none;gap:1px;padding:6px 3px;color:#626b78}
-.tab svg{width:24px;height:24px;stroke-width:1.7}.tab span{font-size:12px;font-weight:700}.tab.active{background:#b92824;border-color:#b92824;box-shadow:0 4px 10px #b9282420;color:#fff}
+.tab{flex:1 0 52px;width:auto;height:58px;border:1px solid var(--line);border-radius:14px;box-shadow:none;padding:6px;color:#626b78}
+.tab .nav-icon{display:block;width:28px;height:28px;object-fit:contain;pointer-events:none}.tab.active{background:#b92824;border-color:#b92824;box-shadow:0 4px 10px #b9282420;color:#fff}.tab.active .nav-icon{filter:brightness(0) invert(1)}
 .card{padding:18px;border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow);margin-bottom:14px}.card::before{display:none}.card h2{font-size:18px;line-height:1.35;letter-spacing:-.025em;font-weight:750}.card h3{font-size:16px}.card p{line-height:1.5}.tiny{font-size:13px;line-height:1.45}
 .row{flex-wrap:wrap}.row>*{min-width:0}.section-title{flex-wrap:wrap}
 .button,.grid button,.primary,.secondary,.danger,.success,.question>button,.notice-actions button{min-height:46px;border-radius:12px;padding:12px;font-size:14px;font-weight:650;line-height:1.3;transition:background .15s,box-shadow .15s,transform .15s}

@@ -32,13 +32,10 @@
     orders: 'Заказ-наряды', mp: 'Мастер-приёмщик', executor: 'Исполнитель',
     tech: 'Технолог', clients: 'B2B: общение с клиентами', chat: 'Чат между отделами'
   };
-  const ICONS = {
-    orders: '<svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5a1.5 1.5 0 0 1 1-1.5Z"/><path d="M14 3.5V8h4M9 12h6M9 16h6"/></svg>',
-    mp: '<svg viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3"/><path d="M5.5 19c1.3-3.1 3.5-4.7 6.5-4.7s5.2 1.6 6.5 4.7"/></svg>',
-    executor: '<svg viewBox="0 0 24 24"><path d="M4 18.5 12.5 10M14.5 4a4 4 0 0 0-4.8 5.7l-6.2 6.2a2 2 0 0 0 2.8 2.8l6.2-6.2A4 4 0 0 0 18.2 7l-2.5 2.5-2-2Z"/><path d="m15 14 5 5"/></svg>',
-    tech: '<svg viewBox="0 0 24 24"><path d="m9.5 3 .7 2.1 2 .8 2-1 1.9 1.9-1 2 .8 2 2.1.7v2.6l-2.1.7-.8 2 1 2-1.9 1.9-2-1-2 .8-.7 2.1H6.9l-.7-2.1-2-.8-2 1-1.9-1.9 1-2-.8-2-2.1-.7v-2.6l2.1-.7.8-2-1-2 1.9-1.9 2 1 2-.8L6.9 3Z"/><circle cx="8.2" cy="12" r="2.7"/><path d="M15.5 4.5h2v2h2v2h-2v2h-2v-2h-2v-2h2Z"/></svg>',
-    clients: '<svg viewBox="0 0 24 24"><path d="M5 8a7.5 7.5 0 0 1 12-2M17 6h-3M17 6V3M19 16a7.5 7.5 0 0 1-12 2M7 18h3M7 18v3"/><path d="M8 10h3a1.5 1.5 0 0 1 0 3H8Zm0 3h3.5a1.5 1.5 0 0 1 0 3H8Z"/></svg>',
-    chat: '<svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5v5a2.5 2.5 0 0 1-2.5 2.5H9l-4 3v-3.5A2.5 2.5 0 0 1 4 11.5Z"/><path d="M16 9h1.5a2.5 2.5 0 0 1 2.5 2.5V18l-3-2h-3"/></svg>'
+  const NAV_ICONS = {
+    orders: './assets/nav-icons/orders.svg', mp: './assets/nav-icons/mp.svg',
+    executor: './assets/nav-icons/executor.svg', tech: './assets/nav-icons/tech.svg',
+    chat: './assets/nav-icons/chat.svg'
   };
 
   const state = {
@@ -298,7 +295,7 @@
   function renderTabs() {
     const keys=Object.keys(state.views).filter(k=>k!=='clients'&&k!=='chat');
     if(state.views.clients||state.views.chat)keys.push('chat');
-    $('tabs').innerHTML = keys.map(key => `<button class="tab ${state.view === key ? 'active' : ''}" data-action="view" data-view="${key}" title="${escAttr(VIEW_TITLES[key])}" aria-label="${escAttr(VIEW_TITLES[key])}">${ICONS[key]}<span>${esc(key === 'chat' ? 'Чаты' : state.views[key])}</span>${key === 'chat' ? `<span id="botUnread" class="chat-unread-dot" aria-label="Непрочитанные сообщения: ${Number(state.unreadMessages) || 0}" ${Number(state.unreadMessages) > 0 ? '' : 'hidden'}>${Number(state.unreadMessages) || ''}</span>` : ''}</button>`).join('');
+    $('tabs').innerHTML = keys.map(key => `<button class="tab ${state.view === key ? 'active' : ''}" data-action="view" data-view="${key}" title="${escAttr(VIEW_TITLES[key])}" aria-label="${escAttr(VIEW_TITLES[key])}"><img class="nav-icon" src="${NAV_ICONS[key]}" alt="" aria-hidden="true">${key === 'chat' ? `<span id="botUnread" class="chat-unread-dot" aria-label="Непрочитанные сообщения: ${Number(state.unreadMessages) || 0}" ${Number(state.unreadMessages) > 0 ? '' : 'hidden'}>${Number(state.unreadMessages) || ''}</span>` : ''}</button>`).join('');
   }
 
   function renderNotifications() {
