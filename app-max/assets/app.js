@@ -46,7 +46,7 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false
+    search: '', pollTimer: null, initialized: false, failedOperationId: ''
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
@@ -165,10 +165,10 @@
     if (!base) throw new Error('Не заполнен ONE_C_API_BASE_URL');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CONFIG.timeoutMs);
-    const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': requestId() };
+    const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
     const envelope = {
-      requestId: headers['X-ITUS-Request-Id'], timestamp: nowIso(), ...authPayload(), ...payload,
+      requestId: headers['X-ITUS-Request-Id'], timestamp: options.timestamp || nowIso(), ...authPayload(), ...payload,
       max: maxContext(), miniApp: 'ITUS', version: CONFIG.version
     };
     try {
@@ -235,6 +235,7 @@
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
       await loadOrders(false);
+      await resumeSavedOperations();
       state.initialized = true;
       startPolling();
       void startNativePush();
@@ -355,6 +356,61 @@
 
   function orderCard(order) {
     return `<button class="order ${state.selectedOrderId === order.id ? 'active' : ''}" data-action="select-order" data-ref="${escAttr(order.orderRef || order.id)}"><div class="row"><b>ЗН ${esc(order.num)} · ${esc(order.plate)}</b><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><div class="tiny">${esc(order.car)} · ${esc(order.client)}</div><div class="tiny">Исполнитель: ${esc(order.executor)} · дефекты: ${Number(order.counters?.defects || order.defects?.length || 0)}</div></button>`;
+  }
+
+  const operationQueue = window.ITUS_OPERATION_QUEUE?.create({
+    sender: operation => call1C(operation.method, operation.body, { silent: true, requestId: operation.requestId, timestamp: operation.createdAt })
+  });
+  const queueScope = () => [String(CONFIG.apiBase || ''), String(CONFIG.publicBase || ''), String(state.userId || '')].join('|');
+
+  function showQueuedOperationError(error) {
+    const operation = error?.operation;
+    if (!operation) throw error;
+    state.failedOperationId = operation.id;
+    if (operation.kind === 'complete') {
+      showSheet('Статус завершения не подтверждён', 'Повтор отключён: идемпотентность complete отдельно не подтверждена разработчиком 1С. Проверьте документ в 1С.', '<button class="secondary" data-action="close-sheet">Закрыть</button>');
+      return;
+    }
+    if (error.queueStatus === 'invalid') {
+      showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', '<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>');
+      return;
+    }
+    showSheet('Не удалось подтвердить отправку', 'Пакет сохранён на устройстве. Автоматические попытки остановлены.', '<button class="primary" data-action="retry-failed-operation">Повторить</button>');
+  }
+
+  async function sendQueuedOperation(definition, { manual = false } = {}) {
+    if (!operationQueue) throw new Error('Очередь отправки недоступна');
+    const operation = await operationQueue.prepare(definition);
+    const restart = manual || operation.status === 'failed' || operation.status === 'invalid';
+    try { return await operationQueue.run(operation.id, { manual: restart }); }
+    catch (error) { showQueuedOperationError(error); throw error; }
+  }
+
+  async function retryFailedOperation() {
+    const id = state.failedOperationId;
+    if (!id || !operationQueue) return toast('Сохранённый пакет не найден', true);
+    try {
+      await operationQueue.run(id, { manual: true });
+      state.failedOperationId = '';
+      closeSheet();
+      const order = currentOrder();
+      if (order) await loadSingleOrder(order.orderRef || order.id);
+      render(); toast('Отправка подтверждена');
+    } catch (error) {
+      showQueuedOperationError(error);
+    }
+  }
+
+  async function resumeSavedOperations() {
+    if (!operationQueue || !state.userId) return;
+    const operations = await operationQueue.list(queueScope());
+    let restored = false;
+    for (const operation of operations) {
+      if (operation.kind !== 'entry' || !['pending','sending'].includes(operation.status) || operation.attempts >= operation.maxAttempts) continue;
+      try { await operationQueue.run(operation.id); restored = true; }
+      catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
+    }
+    if (restored) await loadOrders(false);
   }
 
   function orderSearchText(order) {
@@ -589,7 +645,9 @@
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
     state.busy = true; render();
     try {
-      await call1C('/acceptance/complete', orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers }));
+      const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
+      const scope = queueScope();
+      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, requestId:requestId(), kind:'complete', operationMaxAttempts:1 });
       const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
       const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
       const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
@@ -889,6 +947,7 @@
 
   const pendingDefectSheets = new Map();
   const pendingDefectEntries = new Map();
+  const activeEntrySubmissions = new Set();
 
   function defectEntryKey(order, documentRef, kind, value) {
     const identity = typeof value === 'string'
@@ -907,6 +966,29 @@
 
   function finishDefectEntry(key, id) {
     if (pendingDefectEntries.get(key) === id) pendingDefectEntries.delete(key);
+  }
+
+  async function sendQueuedEntry(attemptKey, method, body) {
+    const scope = queueScope();
+    const queueId = `${scope}:entry:${attemptKey}`;
+    if (activeEntrySubmissions.has(queueId)) throw Object.assign(new Error('Эта операция уже отправляется'), {code:'QUEUE_BUSY'});
+    activeEntrySubmissions.add(queueId);
+    try {
+      const proposedId = defectEntryId(attemptKey);
+      const operation = await operationQueue.prepare({
+        id: queueId, scope, method, clientEntryId: proposedId,
+        body: { ...body, clientEntryId: proposedId, entry: { ...body.entry, clientEntryId: proposedId } },
+        requestId: requestId(), kind: 'entry'
+      });
+      try {
+        const response = await operationQueue.run(operation.id, { manual: operation.status === 'failed' || operation.status === 'invalid' });
+        finishDefectEntry(attemptKey, operation.clientEntryId);
+        return { response, operation };
+      } catch (error) {
+        showQueuedOperationError(error);
+        throw error;
+      }
+    } finally { activeEntrySubmissions.delete(queueId); }
   }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
@@ -1007,17 +1089,14 @@
     toast('Подготавливаем файл для акта приёма…');
     const payload = await fileToPayload(file, kind);
     const attemptKey = defectEntryKey(order, process.documentRef, kind, file);
-    const clientEntryId = defectEntryId(attemptKey);
-    const requestBody = { ...orderPayload(), documentRef: process.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } };
-    let response;
-    try { response = await call1C('/defects/entries/add', requestBody, {silent:true}); }
+    const requestBody = { ...orderPayload(), documentRef: process.documentRef, entry: { type: kind, file: payload } };
+    let response, operation;
+    try { ({response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', requestBody)); }
     catch (error) {
       if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
-    finishDefectEntry(attemptKey, clientEntryId);
-
-    const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
+    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     process.entries = Array.isArray(process.entries) ? process.entries : [];
     process.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
     render(); toast('Файл добавлен в акт приёма');
@@ -1028,10 +1107,8 @@
     if (!text) return toast('Введите описание дефекта', true);
     const sheet = await ensureDefectSheet();
     const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
-    const clientEntryId = defectEntryId(attemptKey);
-    const response = await call1C('/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: 'text', text } }));
-    finishDefectEntry(attemptKey, clientEntryId);
-    const entry = response.entry || response.data?.entry || { id: clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
+    const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, entry: { type: 'text', text } }));
+    const entry = response.entry || response.data?.entry || { id: operation.clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
   }
@@ -1107,18 +1184,20 @@
     toast('Подготавливаем файл…');
     const payload = await fileToPayload(file, kind);
     const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
-    const clientEntryId = defectEntryId(attemptKey);
-    const response = await call1C('/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, clientEntryId, entry: { clientEntryId, type: kind, file: payload } });
-    finishDefectEntry(attemptKey, clientEntryId);
-    const raw = response.entry || response.data?.entry || { id: clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
+    const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, entry: { type: kind, file: payload } });
+    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
     sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
   }
 
   async function completeDefectSheet() {
-    const sheet = currentOrder()?._defectSheet; if (!sheet) return;
-    await call1C('/defects/complete', orderPayload({ documentRef: sheet.documentRef }));
+    const sheet = currentOrder()?._defectSheet; if (!sheet || state.busy) return;
+    state.busy = true;
+    try {
+    const scope = queueScope();
+    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), requestId:requestId(), kind:'complete', operationMaxAttempts:1 });
     currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
+    } finally { state.busy = false; }
   }
 
   async function loadClientTopics() {
@@ -1574,6 +1653,7 @@
       if (action === 'bot-messages') return setView('clients');
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
+      if (action === 'retry-failed-operation') return retryFailedOperation();
       if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }

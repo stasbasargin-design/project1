@@ -41,6 +41,15 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
 context.window=context;
 vm.runInContext(fs.readFileSync(new URL('../assets/review-features.js',import.meta.url),'utf8'),context);
 vm.runInContext(fs.readFileSync(new URL('../assets/api-normalizers.js',import.meta.url),'utf8'),context);
+vm.runInContext(fs.readFileSync(new URL('../assets/operation-queue.js',import.meta.url),'utf8'),context);
+const queueRecords = new Map();
+const queueStore = {
+  async get(id){ return queueRecords.get(id); },
+  async put(value){ queueRecords.set(value.id, structuredClone(value)); },
+  async delete(id){ queueRecords.delete(id); }
+};
+const createQueue = context.ITUS_OPERATION_QUEUE.create;
+context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
 source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet};\n  setAuth(readAuthFromContext(), 'max');`);
 source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages};\n  setAuth(readAuthFromContext(), 'max');`);
@@ -89,7 +98,7 @@ assert.equal(app.acceptanceHasPhoto(),false);
 assert.equal(app.processProgress(process,'_acceptance').done,2);
 failPhoto=false;await app.uploadDefectFile(file,'photo');
 const retryCalls=calls.filter(c=>c.url.endsWith('/defects/entries/add')).slice(retryStart);
-assert.equal(retryCalls.length,2);assert.equal(retryCalls[0].body.clientEntryId,retryCalls[1].body.clientEntryId);
+assert.equal(retryCalls.length,6);assert.ok(retryCalls.every(call=>call.body.clientEntryId===retryCalls[0].body.clientEntryId));
 app.renderDefectSheet();assert.match(element('sheetBody').innerHTML,/class="defect-photo-preview"/);assert.doesNotMatch(element('sheetBody').innerHTML,/Открыть вложение/);
 assert.equal(app.acceptanceHasPhoto(),false);
 assert.equal(app.processProgress(process,'_acceptance').done,2);

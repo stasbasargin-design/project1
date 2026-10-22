@@ -279,31 +279,6 @@
         }
       }
     },
-    "/acceptance/entries/add": {
-      "purpose": "Attach camera/gallery photo or video to the active acceptance document; this route currently responds 404 in the deployed 1C instance and must be implemented there",
-      "request": {
-        "orderRef": "ORDER_GUID",
-        "documentRef": "ACCEPTANCE_GUID",
-        "clientEntryId": "UUID",
-        "entry": {
-          "clientEntryId": "UUID",
-          "type": "photo | video",
-          "file": "fileSchema"
-        }
-      },
-      "responseData": {
-        "entry": {
-          "entryRef": "ENTRY_GUID",
-          "type": "photo",
-          "file": {
-            "fileRef": "FILE_GUID",
-            "fileName": "photo.jpg",
-            "mimeType": "image/jpeg",
-            "sizeBytes": 523000
-          }
-        }
-      }
-    },
     "/acceptance/complete": {
       "purpose": "Save and post the acceptance act; app hides the form after success",
       "request": {
