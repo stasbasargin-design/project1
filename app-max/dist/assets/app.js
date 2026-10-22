@@ -364,10 +364,6 @@
     const operation = error?.operation;
     if (!operation) throw error;
     state.failedOperationId = operation.id;
-    if (operation.kind === 'complete') {
-      showSheet('Статус завершения не подтверждён', 'Повтор отключён: идемпотентность complete отдельно не подтверждена разработчиком 1С. Проверьте документ в 1С.', '<button class="secondary" data-action="close-sheet">Закрыть</button>');
-      return;
-    }
     if (error.queueStatus === 'invalid') {
       showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', '<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>');
       return;
@@ -403,7 +399,7 @@
     const operations = await operationQueue.list(queueScope());
     let restored = false;
     for (const operation of operations) {
-      if (operation.kind !== 'entry' || !['pending','sending'].includes(operation.status) || operation.attempts >= operation.maxAttempts) continue;
+      if (!['entry','complete'].includes(operation.kind) || !['pending','sending'].includes(operation.status) || operation.attempts >= operation.maxAttempts) continue;
       try { await operationQueue.run(operation.id); restored = true; }
       catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
     }
@@ -644,7 +640,7 @@
     try {
       const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
       const scope = queueScope();
-      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, requestId:requestId(), kind:'complete', operationMaxAttempts:1 });
+      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, requestId:requestId(), kind:'complete' });
       const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
       const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
       const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
@@ -1192,7 +1188,7 @@
     state.busy = true;
     try {
     const scope = queueScope();
-    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), requestId:requestId(), kind:'complete', operationMaxAttempts:1 });
+    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), requestId:requestId(), kind:'complete' });
     currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
     } finally { state.busy = false; }
   }

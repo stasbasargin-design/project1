@@ -11,16 +11,35 @@ function memoryStore() {
   return { records, async get(id){return records.get(id);}, async put(value){records.set(value.id, structuredClone(value));}, async delete(id){records.delete(id);}, async list(scope){return [...records.values()].filter(item=>item.scope===scope);} };
 }
 
-// Queues are isolated by user/API scope and a completion without confirmed idempotency is sent once.
+// Queues are isolated by user/API scope.
 {
-  const store = memoryStore(); let completeCalls = 0;
-  const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0,0,0,0,0], sender:async () => {completeCalls++; throw Object.assign(new Error('response lost'), {code:'TIMEOUT'});}});
-  await queue.prepare({id:'test|user-a|complete:doc-1', scope:'test|user-a', method:'/acceptance/complete', kind:'complete', operationMaxAttempts:1, requestId:'stable-complete', body:{documentRef:'doc-1'}});
+  const store = memoryStore();
+  const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0,0,0,0,0], sender:async () => ({success:true})});
+  await queue.prepare({id:'test|user-a|complete:doc-1', scope:'test|user-a', method:'/acceptance/complete', kind:'complete', requestId:'stable-complete', body:{documentRef:'doc-1'}});
   await queue.prepare({id:'test|user-b|entry:1', scope:'test|user-b', method:'/defects/entries/add', clientEntryId:'other-user', body:{documentRef:'doc-2'}});
   assert.equal((await queue.list('test|user-a')).length, 1);
   assert.equal((await queue.list('test|user-b')).length, 1);
-  await assert.rejects(queue.run('test|user-a|complete:doc-1'), /response lost/);
-  assert.equal(completeCalls, 1);
+}
+
+// 1C completes the document but the first response is lost. The retry is identical and 1C
+// returns the original result for the same requestId instead of completing a second document.
+{
+  for (const method of ['/acceptance/complete', '/defects/complete']) {
+    const store = memoryStore(), sent = []; let completedDocuments = 0;
+    const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0,0,0,0,0], sender:async operation => {
+      sent.push({requestId:operation.requestId, body:structuredClone(operation.body)});
+      if (sent.length === 1) { completedDocuments++; throw Object.assign(new Error('complete response lost'), {code:'TIMEOUT'}); }
+      return {success:true, completed:true};
+    }});
+    const id = `complete:lost-response:${method}`;
+    await queue.prepare({id, scope:'test|user-a', method, kind:'complete', requestId:`complete-request-id:${method}`, body:{documentRef:`document:${method}`,answers:{required:'ok'}}});
+    const result = await queue.run(id);
+    assert.equal(result.completed, true);
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].requestId, sent[1].requestId);
+    assert.deepEqual(sent[0].body, sent[1].body);
+    assert.equal(completedDocuments, 1);
+  }
 }
 
 // Two tabs share one persistent lease; only the owner is allowed to send.
