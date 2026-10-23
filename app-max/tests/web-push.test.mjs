@@ -64,16 +64,18 @@ try {
 } finally { child.kill(); }
 
 // Execute Service Worker, including cold launch and rejection of external URL injection.
-const handlers={}, notifications=[],opened=[];
+const handlers={}, notifications=[],opened=[],received=[];
+let matchAllCalls=0;
 const scope='https://example.com/p/max-service/';
 vm.runInNewContext(readFileSync(new URL('../notification-sw.js',import.meta.url),'utf8'), {
-  URL,self:{addEventListener:(type,fn)=>handlers[type]=fn,registration:{scope,showNotification:async(title,options)=>notifications.push({title,options})},clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}}
+  URL,self:{addEventListener:(type,fn)=>handlers[type]=fn,registration:{scope,showNotification:async(title,options)=>notifications.push({title,options})},clients:{matchAll:async()=>++matchAllCalls===1?[{postMessage:value=>received.push(value)}]:[],openWindow:async url=>opened.push(url)}}
 });
 let pending;
 handlers.push({data:{json:()=>({title:'Test',body:'Text',data:{eventId:'e1',type:'new_messages',topicRef:'t1',url:'https://evil.test'}})},waitUntil:p=>pending=p});
 await pending;
 assert.equal(notifications[0].options.tag,'imax:e1');
 assert.equal(new URL(notifications[0].options.data.url).searchParams.get('topicRef'),'t1');
+assert.deepEqual(JSON.parse(JSON.stringify(received)),[{type:'itus-push',data:{eventId:'e1',type:'new_messages',topicRef:'t1',url:'https://evil.test'}}]);
 handlers.notificationclick({notification:{close(){},data:notifications[0].options.data},waitUntil:p=>pending=p}); await pending;
 assert.equal(new URL(opened[0]).origin,'https://example.com');
 handlers.notificationclick({notification:{close(){},data:{url:'https://evil.test/'}},waitUntil:p=>pending=p}); await pending;

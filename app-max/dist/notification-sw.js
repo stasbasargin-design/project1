@@ -18,13 +18,20 @@ self.addEventListener('push', event => {
   if (!payload || typeof payload !== 'object') payload = {};
   const data = payload.data && typeof payload.data === 'object' ? payload.data : {};
   const title = typeof payload.title === 'string' ? payload.title : 'I-MAX';
-  event.waitUntil(self.registration.showNotification(title, {
-    body: typeof payload.body === 'string' ? payload.body : 'Новое уведомление',
-    tag: typeof data.eventId === 'string' ? `imax:${data.eventId}` : undefined,
-    renotify: false,
-    data: { url: targetUrl(data) },
-    icon: new URL('./assets/itus-logo.png', self.registration.scope).href
-  }));
+  event.waitUntil((async () => {
+    await Promise.all([
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
+        for (const client of windows) client.postMessage({type:'itus-push',data});
+      }).catch(() => {}),
+      self.registration.showNotification(title, {
+        body: typeof payload.body === 'string' ? payload.body : 'Новое уведомление',
+        tag: typeof data.eventId === 'string' ? `imax:${data.eventId}` : undefined,
+        renotify: false,
+        data: { url: targetUrl(data) },
+        icon: new URL('./assets/itus-logo.png', self.registration.scope).href
+      })
+    ]);
+  })());
 });
 
 self.addEventListener('notificationclick', event => {

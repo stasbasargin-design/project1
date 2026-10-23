@@ -1378,22 +1378,24 @@
           if (!token || !state.userId) return;
           await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
             clientInstanceId:pushClientInstanceId()}, {silent:true});
-        },
-        onNotification: event => { if (document.hidden) return; toast(event?.title || 'Новое уведомление'); },
-        onAction: data => void openPushTarget(data),
-        onError: error => console.warn('Native push:', error)
+        }
       });
     } catch (error) { console.warn('Native push start:',error.message); return false; }
   }
   function normalizePushTarget(data) {
-    const type = String(data?.type || '').trim();
-    const orderRef = String(data?.orderRef || data?.orderId || '').trim();
-    const topicRef = String(data?.topicRef || data?.topicId || '').trim();
-    if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(data?.eventId || data?.notificationId || data?.messageId || '')} : null;
-    if (type === 'quality_control_requested') return orderRef ? {type,orderRef,payload:data?.payload,message:data?.message,eventId:String(data?.eventId || data?.notificationId || '')} : null;
-    if (type === 'new_messages') return topicRef ? {type,topicRef,eventId:String(data?.eventId || data?.notificationId || data?.messageId || '')} : null;
-    if (orderRef) return {type,orderRef,eventId:String(data?.eventId || data?.notificationId || '')};
+    const payload = data?.data && typeof data.data === 'object' ? data.data : data;
+    const type = String(payload?.type || '').trim();
+    const orderRef = String(payload?.orderRef || payload?.orderId || '').trim();
+    const topicRef = String(payload?.topicRef || payload?.topicId || '').trim();
+    if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
+    if (type === 'quality_control_requested') return orderRef ? {type,orderRef,payload:payload?.payload,message:payload?.message,eventId:String(payload?.eventId || payload?.notificationId || '')} : null;
+    if (type === 'new_messages') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
+    if (orderRef) return {type,orderRef,eventId:String(payload?.eventId || payload?.notificationId || '')};
     return null;
+  }
+  function refreshOpenInternalChatFromPush(data) {
+    const target = normalizePushTarget(data);
+    return target?.type === 'internal_chat_message' ? Boolean(messenger?.refreshInternalThreadFromPush?.(target.topicRef)) : false;
   }
   function pushTargetKey(target) { return target.eventId || `${target.type}:${target.topicRef || target.orderRef || ''}`; }
   async function openQualityPushTarget(target) {
@@ -1758,16 +1760,24 @@
   $('closeSheetButton').addEventListener('click', closeSheet);
   $('overlay').addEventListener('click', event => { if (event.target === $('overlay')) closeSheet(); });
   $('userPanel').addEventListener('click', () => state.userId ? showSettings() : null);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && state.initialized) pollNotifications(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.initialized) {
+      pollNotifications();
+      void messenger?.refreshVisibleInternalThread?.();
+    }
+  });
 
   window.ITUS_BACK = () => {
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
     return messenger?.back() || false;
   };
   window.ITUS_NATIVE_PUSH?.listen?.({
-    onNotification: event => { if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
+    onNotification: event => { refreshOpenInternalChatFromPush(event); if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
     onAction: data => void openPushTarget(data),
     onError: error => console.warn('Native push:', error)
+  });
+  navigator.serviceWorker?.addEventListener?.('message', event => {
+    if (event.data?.type === 'itus-push') refreshOpenInternalChatFromPush(event.data.data);
   });
   if (!window.ITUS_NATIVE_PUSH?.supported?.()) {
     void window.ITUS_WEB_PUSH?.prepare().catch(() => {});
