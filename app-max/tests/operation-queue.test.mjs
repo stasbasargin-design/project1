@@ -21,6 +21,20 @@ function memoryStore() {
   assert.equal((await queue.list('test|user-b')).length, 1);
 }
 
+// A three-file package is prepared in full before transport starts, and each body is immutable.
+{
+  const store = memoryStore(), sent = [];
+  store.putBatch = async values => { for (const value of values) await store.put(value); return values; };
+  const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0], sender:async operation => { sent.push(structuredClone(operation)); return {success:true}; }});
+  const definitions = ['one','two','three'].map(name => ({id:`entry:${name}`,scope:'test|user-a',method:'/defects/entries/add',kind:'entry',documentKey:'doc-3',clientEntryId:`client:${name}`,body:{documentRef:'doc-3',clientEntryId:`client:${name}`,entry:{clientEntryId:`client:${name}`,file:{fileName:`${name}.jpg`,contentBase64:name}}}}));
+  const prepared = await queue.prepareBatch(definitions);
+  assert.equal((await queue.list('test|user-a')).length, 3);
+  definitions[0].body.entry.file.contentBase64 = 'changed-after-save';
+  for (const operation of prepared) await queue.run(operation.id);
+  assert.deepEqual(sent.map(item => item.body.entry.file.contentBase64), ['one','two','three']);
+  assert.equal(new Set(sent.map(item => item.clientEntryId)).size, 3);
+}
+
 // 1C completes the document but the first response is lost. The retry is identical and 1C
 // returns the original result for the same requestId instead of completing a second document.
 {

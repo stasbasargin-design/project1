@@ -66,4 +66,30 @@ await new Promise(resolve => setTimeout(resolve, 0));
 assert.deepEqual(attempts.map(item => item[0]), ['first.jpg', 'broken.jpg', 'last.mp4', 'broken.jpg'], 'only the failed file is retried');
 assert.equal(attempts[1][1], attempts[3][1], 'retry keeps the idempotency key');
 
+let releaseCommit;
+let closeCount = 0;
+let committed = [];
+const batchPicker = context.ITUS_MEDIA_PICKER.create({
+  showSheet(title, _hint, html) { lastTitle = title; lastSheet = html; },
+  closeSheet() { closeCount++; }, toast() {}, maxBytes: 1024
+});
+batchPicker.open({hint:'queue', onCommit: async files => {
+  committed = files.map(item => [item.file.name, item.uploadId]);
+  await new Promise(resolve => { releaseCommit = resolve; });
+}});
+input.files = [
+  {name:'one.jpg',type:'image/jpeg',size:100,lastModified:11},
+  {name:'two.jpg',type:'image/jpeg',size:100,lastModified:12},
+  {name:'three.jpg',type:'image/jpeg',size:100,lastModified:13}
+];
+input.listeners.change();
+batchPicker.handle('media-send');
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(batchPicker.dismiss(), false, 'manual close is blocked until the complete batch is locally committed');
+assert.deepEqual(Array.from(committed, item => item[0]), ['one.jpg','two.jpg','three.jpg']);
+assert.equal(new Set(committed.map(item => item[1])).size, 3);
+releaseCommit();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(closeCount, 1, 'picker closes automatically after local commit, without waiting for transport');
+
 console.log('media picker tests passed');

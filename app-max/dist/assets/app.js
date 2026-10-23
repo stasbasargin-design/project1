@@ -80,11 +80,12 @@
   }
 
   function closeSheet() {
-    mediaPicker?.dismiss?.();
+    if (mediaPicker?.dismiss?.() === false) return false;
     state.cameraStream?.getTracks().forEach(track => track.stop());
     state.cameraStream = null;
     $('overlay').classList.add('hidden');
     $('sheetBody').innerHTML = '';
+    return true;
   }
 
   function readAuthFromContext() {
@@ -118,8 +119,7 @@
     };
   }
 
-  function orderPayload(extra = {}) {
-    const order = currentOrder();
+  function orderPayloadFor(order, extra = {}) {
     if (!order) throw new Error('Сначала выберите заказ-наряд');
     return {
       orderRef: order.orderRef || order.id, orderId: order.orderRef || order.id,
@@ -127,6 +127,7 @@
       clientRef: order.clientRef || '', counterpartyName: order.client, ...extra
     };
   }
+  function orderPayload(extra = {}) { return orderPayloadFor(currentOrder(), extra); }
 
   function connectionStatus(status, message) {
     const el = $('connectionStatus');
@@ -398,8 +399,10 @@
     if (!operationQueue || !state.userId) return;
     const operations = await operationQueue.list(queueScope());
     let restored = false;
-    for (const operation of operations) {
+    const ordered = operations.slice().sort((a, b) => Number(a.kind === 'complete') - Number(b.kind === 'complete'));
+    for (const operation of ordered) {
       if (!['entry','complete'].includes(operation.kind) || !['pending','sending'].includes(operation.status) || operation.attempts >= operation.maxAttempts) continue;
+      if (operation.kind === 'complete' && (await operationQueue.list(queueScope())).some(item => item.kind === 'entry' && item.documentKey === operation.documentKey)) continue;
       try { await operationQueue.run(operation.id); restored = true; }
       catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
     }
@@ -638,9 +641,10 @@
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
     state.busy = true; render();
     try {
+      await waitForDocumentEntries(String(process.documentRef || ''));
       const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
       const scope = queueScope();
-      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, requestId:requestId(), kind:'complete' });
+      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
       const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
       const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
       const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
@@ -970,6 +974,7 @@
       const proposedId = defectEntryId(attemptKey);
       const operation = await operationQueue.prepare({
         id: queueId, scope, method, clientEntryId: proposedId,
+        documentKey: String(body.documentRef || ''),
         body: { ...body, clientEntryId: proposedId, entry: { ...body.entry, clientEntryId: proposedId } },
         requestId: requestId(), kind: 'entry'
       });
@@ -982,6 +987,20 @@
         throw error;
       }
     } finally { activeEntrySubmissions.delete(queueId); }
+  }
+
+  async function runPreparedOperations(operations) {
+    for (const operation of operations) {
+      try { await operationQueue.run(operation.id); }
+      catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
+    }
+  }
+
+  async function waitForDocumentEntries(documentKey) {
+    const pending = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    if (pending.length) await runPreparedOperations(pending);
+    const remaining = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    if (remaining.length) throw new Error('Завершение недоступно: не все записи и вложения подтверждены 1С');
   }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
@@ -1116,8 +1135,10 @@
     }
     if (!mediaPicker) return configureFilePicker(target, 'image/*,video/*', null, true);
     const labels = { acceptance: 'акт приёма', defect: 'дефектовку', client: 'чат с клиентом', chat: 'внутренний чат', messenger: 'чат' };
+    const queueTarget = target.type === 'acceptance' || target.type === 'defect';
     mediaPicker.open({
       hint: `Файлы будут отправлены в ${labels[target.type] || 'текущий раздел'} по одному действию.`,
+      onCommit: queueTarget ? files => commitMediaBatch(target.type, files) : null,
       onSend: async (file, kind, uploadId) => {
         toast(`Загрузка файла «${file.name || 'вложения'}»…`);
         if (target.type === 'messenger') return messenger.upload(file, { ...target, kind });
@@ -1128,6 +1149,36 @@
         throw new Error('Не определено место прикрепления файла');
       }
     });
+  }
+
+  async function commitMediaBatch(type, files) {
+    if (!operationQueue || !files.length) throw new Error('Очередь отправки недоступна');
+    const order = currentOrder();
+    if (!order) throw new Error('Сначала выберите заказ-наряд');
+    const orderData = orderPayloadFor(order);
+    const process = type === 'acceptance' ? order._acceptance : await ensureDefectSheet(order);
+    if (!process?.documentRef) throw new Error(type === 'acceptance' ? 'Сначала создайте акт приёма' : 'Не найден документ дефектовки');
+    const documentKey = String(process.documentRef);
+    const scope = queueScope();
+    // Finish every conversion before opening the atomic IndexedDB transaction.
+    const preparedFiles = await Promise.all(files.map(async item => ({ ...item, payload:await fileToPayload(item.file, item.kind) })));
+    const definitions = preparedFiles.map(item => {
+      const attemptKey = [orderData.orderRef, documentKey, item.kind, item.uploadId].join('|');
+      const clientEntryId = item.uploadId;
+      const body = { ...orderData, documentRef:documentKey, clientEntryId, entry:{ type:item.kind, file:item.payload, clientEntryId } };
+      return { id:`${scope}:entry:${attemptKey}`, scope, method:'/defects/entries/add', documentKey, clientEntryId, body, requestId:requestId(), kind:'entry' };
+    });
+    const operations = await operationQueue.prepareBatch(definitions);
+    process.entries = Array.isArray(process.entries) ? process.entries : [];
+    for (const [index, operation] of operations.entries()) {
+      if (!process.entries.some(entry => entry.id === operation.clientEntryId)) {
+        const item = preparedFiles[index];
+        process.entries.push(API.normalizeProcess({entries:[{id:operation.clientEntryId,type:item.kind,file:item.payload,createdAt:nowIso(),author:state.user?.name || ''}]}, 'x').entries[0]);
+      }
+    }
+    // The picker may now close; transport no longer references its File objects or DOM.
+    void runPreparedOperations(operations);
+    return operations;
   }
 
   function configureFilePicker(target, accept, capture, multiple = false) {
@@ -1187,8 +1238,9 @@
     const sheet = currentOrder()?._defectSheet; if (!sheet || state.busy) return;
     state.busy = true;
     try {
+    await waitForDocumentEntries(String(sheet.documentRef || ''));
     const scope = queueScope();
-    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), requestId:requestId(), kind:'complete' });
+    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' });
     currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
     } finally { state.busy = false; }
   }

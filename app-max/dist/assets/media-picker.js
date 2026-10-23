@@ -58,20 +58,42 @@
     picker.addEventListener('change', () => add(Array.from(picker.files || [])));
     async function send() {
       if (!session || !session.files.length || session.sending) return;
-      const queue = session.files.filter(item => item.status !== 'success');
-      session.sending = true; session.sent = 0; session.total = queue.length; render();
-      for (const item of queue) {
-        item.status = 'sending'; item.error = ''; render();
-        try { await session.onSend(item.file, mediaKind(item.file), item.uploadId); item.status = 'success'; }
-        catch (error) { item.status = 'failed'; item.error = error.message || 'Не удалось отправить файл'; }
-        session.sent++; render();
+      const activeSession = session;
+      const queue = activeSession.files.filter(item => item.status !== 'success');
+      // Freeze the complete selection before any asynchronous preparation starts.
+      const snapshot = queue.map(item => ({ file:item.file, kind:mediaKind(item.file), uploadId:item.uploadId }));
+      activeSession.sending = true; activeSession.sent = 0; activeSession.total = queue.length;
+      if (!activeSession.onCommit) {
+        for (const [index, item] of queue.entries()) {
+          item.status = 'sending'; item.error = ''; render();
+          try { await activeSession.onSend(item.file, snapshot[index].kind, item.uploadId); item.status = 'success'; }
+          catch (error) { item.status = 'failed'; item.error = error.message || 'Не удалось отправить файл'; }
+          activeSession.sent++; render();
+        }
+        activeSession.sending = false;
+        const failed = activeSession.files.filter(item => item.status === 'failed').length;
+        render(); toast(failed ? `Загружено: ${activeSession.files.length - failed}, ошибки: ${failed}` : 'Фото и видео отправлены', Boolean(failed));
+        return;
       }
-      session.sending = false;
-      const failed = session.files.filter(item => item.status === 'failed').length;
-      render(); toast(failed ? `Загружено: ${session.files.length - failed}, ошибок: ${failed}` : 'Фото и видео отправлены', Boolean(failed));
+      queue.forEach(item => { item.status = 'saving'; item.error = ''; }); render();
+      try {
+        await activeSession.onCommit(snapshot);
+        queue.forEach(item => { item.status = 'success'; });
+        activeSession.sent = queue.length;
+        activeSession.sending = false;
+        if (session === activeSession) close();
+        toast('Файлы сохранены на устройстве и будут отправлены в фоне');
+      } catch (error) {
+        queue.forEach(item => { item.status = 'failed'; item.error = error.message || 'Не удалось сохранить файл'; });
+        activeSession.sending = false; render();
+        toast(error.message || 'Не удалось сохранить все файлы', true);
+      }
     }
-    function dismiss() { revoke(); session = null; }
-    function close() { dismiss(); closeSheet(); }
+    function dismiss({force = false} = {}) {
+      if (session?.sending && !force) { toast('Подождите, пока все файлы сохранятся на устройстве', true); return false; }
+      revoke(); session = null; return true;
+    }
+    function close() { if (dismiss()) closeSheet(); }
     function handle(action, button) {
       if (!session || !action.startsWith('media-')) return false;
       if (action === 'media-gallery') openInput('gallery');
@@ -82,7 +104,7 @@
       return true;
     }
     return {
-      open({hint, onSend}) { revoke(); session = {hint, onSend, files:[], sending:false, sent:0, total:0}; render(); },
+      open({hint, onCommit, onSend}) { revoke(); session = {hint, onCommit, onSend, files:[], sending:false, sent:0, total:0}; render(); },
       handle,
       close,
       dismiss

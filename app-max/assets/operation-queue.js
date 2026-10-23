@@ -59,12 +59,31 @@
       if (!value || value.leaseOwner !== owner) return;
       await transact('readwrite', store => store.put({ ...value, leaseOwner: '', leaseUntil: 0 }));
     };
+    const putBatch = async values => {
+      const db = await openDb();
+      if (!db) throw new Error('IndexedDB недоступна: пакет отправки не может быть сохранён');
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const saved = new Array(values.length);
+        values.forEach((value, index) => {
+          const request = store.get(value.id);
+          request.onsuccess = () => {
+            saved[index] = request.result || clone(value);
+            if (!request.result) store.put(saved[index]);
+          };
+        });
+        tx.oncomplete = () => resolve(saved);
+        tx.onerror = () => reject(tx.error || new Error('Не удалось сохранить полный пакет в IndexedDB'));
+        tx.onabort = () => reject(tx.error || new Error('Сохранение полного пакета отменено'));
+      });
+    };
     return {
       get: id => transact('readonly', store => store.get(id)),
       put: value => transact('readwrite', store => store.put(clone(value))),
       delete: id => transact('readwrite', store => store.delete(id)),
       list: async scope => (await transact('readonly', store => store.getAll()) || []).filter(item => item.scope === scope),
-      claim, release
+      claim, release, putBatch
     };
   }
 
@@ -79,15 +98,25 @@
     const owner = root.crypto?.randomUUID?.() || `queue-${Date.now()}-${Math.random()}`;
     const running = new Map();
 
-    async function prepare({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', operationMaxAttempts = maxAttempts }) {
+    async function prepare({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }) {
       const existing = await store.get(id);
       if (existing) return existing;
       const operation = {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt: new Date().toISOString(), error: '', leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt: new Date().toISOString(), error: '', leaseOwner: '', leaseUntil: 0
       };
       await store.put(operation);
       return operation;
+    }
+
+    async function prepareBatch(definitions) {
+      const createdAt = new Date().toISOString();
+      const values = definitions.map(({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }) => ({
+        id, method, body:clone(body), clientEntryId, requestId, kind, scope, documentKey,
+        maxAttempts:operationMaxAttempts, attempts:0, status:'pending', createdAt, error:'', leaseOwner:'', leaseUntil:0
+      }));
+      if (store.putBatch) return store.putBatch(values);
+      return Promise.all(definitions.map(definition => prepare(definition)));
     }
 
     async function execute(id, { manual = false } = {}) {
@@ -141,7 +170,7 @@
       return promise;
     }
 
-    return { prepare, run, get: id => store.get(id), list: scope => store.list ? store.list(scope) : Promise.resolve([]), MAX_ATTEMPTS: maxAttempts };
+    return { prepare, prepareBatch, run, get: id => store.get(id), list: scope => store.list ? store.list(scope) : Promise.resolve([]), MAX_ATTEMPTS: maxAttempts };
   }
 
   root.ITUS_OPERATION_QUEUE = { create, indexedDbStore, isRetryable, MAX_ATTEMPTS, RETRY_DELAYS_MS };
