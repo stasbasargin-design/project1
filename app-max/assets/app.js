@@ -1626,6 +1626,10 @@
     } catch (error) { toast(error.message, true); }
   }
 
+  function firstMainView() {
+    return Object.keys(state.views).find(view => view !== 'clients' && view !== 'chat') || ((state.views.clients || state.views.chat) ? 'chat' : 'orders');
+  }
+
   if (typeof ResizeObserver !== 'undefined') {
     const header = document.querySelector('.top');
     if (header) new ResizeObserver(() => document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`)).observe(header);
@@ -1769,7 +1773,9 @@
 
   window.ITUS_BACK = () => {
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
-    return messenger?.back() || false;
+    const view = firstMainView();
+    if (state.view !== view) void setView(view);
+    return true;
   };
   window.ITUS_NATIVE_PUSH?.listen?.({
     onNotification: event => { refreshOpenInternalChatFromPush(event); if (!document.hidden) toast(event?.title || 'Новое уведомление'); },

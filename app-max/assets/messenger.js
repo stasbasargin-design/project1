@@ -329,6 +329,10 @@
       if(e.target.id==='msgDraft')drafts[selectedKey()]=e.target.value;
       if(e.target.id==='msgSearch'){query=e.target.value;const list=document.querySelector('.msg-thread-list');if(list)list.innerHTML=listHtml();}
     });
+    document.addEventListener('keydown',e=>{
+      if(!visible||!selected||e.target?.id!=='msgDraft'||e.key!=='Enter'||e.ctrlKey||e.altKey||e.metaKey||e.shiftKey||e.repeat||e.isComposing||e.keyCode===229)return;
+      e.preventDefault();void send();
+    });
     async function openThread(threadSource, ref){
       if(!permitted(threadSource) || !ref)return false;
       selectionEpoch++;visible=true;source=threadSource;section='chats';query='';
