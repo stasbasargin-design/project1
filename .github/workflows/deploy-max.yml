@@ -36,5 +36,23 @@ jobs:
           SSH_HOST: ${{ secrets.TIMEWEB_HOST }}
           SSH_USER: ${{ secrets.TIMEWEB_USER }}
         run: |
+          ssh "$SSH_USER@$SSH_HOST" 'sudo bash -s' <<'REMOTE'
+          set -euo pipefail
+          matches=()
+          while IFS= read -r git_dir; do
+            repo="${git_dir%/.git}"
+            [[ -d "$repo/app-max" ]] || continue
+            origin="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+            [[ "$origin" == *"stasbasargin-design/project1"* ]] || continue
+            matches+=("$repo")
+          done < <(find /opt /srv /root -maxdepth 6 -type d -name .git -print 2>/dev/null)
+          [[ ${#matches[@]} -eq 1 ]] || { echo "Expected one project1 checkout, found ${#matches[@]}" >&2; exit 1; }
+          git -C "${matches[0]}" restore -- \
+            app-max/OPEN_REVIEW.html \
+            app-max/dist/assets/app.css \
+            app-max/dist/assets/media-picker.css \
+            app-max/dist/assets/messenger.css \
+            app-max/dist/preview.html
+          REMOTE
           ssh "$SSH_USER@$SSH_HOST" \
             "sudo /usr/local/bin/deploy-max.sh"
