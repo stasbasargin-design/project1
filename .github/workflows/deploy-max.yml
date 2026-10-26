@@ -36,7 +36,7 @@ jobs:
           SSH_HOST: ${{ secrets.TIMEWEB_HOST }}
           SSH_USER: ${{ secrets.TIMEWEB_USER }}
         run: |
-          ssh "$SSH_USER@$SSH_HOST" 'sudo bash -s' <<'REMOTE'
+          ssh "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           matches=()
           while IFS= read -r git_dir; do
