@@ -8,14 +8,15 @@
   }
   function create(options) {
     const {api,call,user,allowed,toast,pickFile,photo,filePayload,closeSheet}=options;
-    let source='clients',section='chats',selected='',query='',visible=false,epoch=0;
-    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={};
+    let source='clients',section='chats',selected='',query='',visible=false,epoch=0,selectionEpoch=0;
+    let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={},refreshPending={};
     const blobUrls=new Map();
     const mediaMemory=new Map(), mediaLoading=new Map(), restored=new Set();
     const CACHE_DB='itus-max-messenger-v1', CACHE_TTL=7*24*60*60*1000, CACHE_THREADS=40, CACHE_MEDIA_BYTES=25*1024*1024;
     let openingContact=false;
     const key=(s,id)=>s+':'+id;
     const selectedKey=()=>key(source,selected);
+    const isVisibleThread=(s,id)=>visible&&!document.hidden&&source===s&&selected===id;
     const owner=()=>String(options.cacheOwner?.() || user()?.id || user()?.userId || '').trim();
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
@@ -149,16 +150,19 @@
     }
     async function loadMessages(s,id,{refresh=false}={}){
       const k=key(s,id);if(!permitted(s)||busy[k])return;
+      const generation=epoch,threadSelectionEpoch=selectionEpoch;busy[k]=true;
       await restoreThread(k);
+      if(epoch!==generation||selectionEpoch!==threadSelectionEpoch||!isVisibleThread(s,id)){busy[k]=false;delete refreshPending[k];return;}
       if(!refresh&&cache[k]){
         try{if(visible && !document.hidden && records[s].find(x=>x.ref===id)?.unread)await markRead(s,id,cache[k]);errors[k]='';}
         catch(e){errors[k]=e.message;}
+        finally{busy[k]=false;}
         paint({bottom:true});return;
       }
-      const generation=epoch;busy[k]=true;errors[k]='';paint();
+      errors[k]='';paint();
       try{
         const response=await call(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:false},{silent:true});
-        if(epoch!==generation)return;
+        if(epoch!==generation||selectionEpoch!==threadSelectionEpoch||!isVisibleThread(s,id))return;
         // Current 1C contract has no cursor/afterMessageRef. Merge the light list
         // by stable message id, preserving already cached attachment metadata.
         cache[k]=mergeMessages(cache[k],api.extractItems(response,['messages']).map(api.normalizeMessage));
@@ -170,8 +174,13 @@
           if(Number.isFinite(data.unreadCount))item.unread=data.unreadCount;
         }
         if(visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
-      }catch(e){if(epoch===generation)errors[k]=e.message;}
-      finally{if(epoch===generation){busy[k]=false;if(source===s&&selected===id&&!paintHistory({bottom:true}))paint();}}
+      }catch(e){if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id))errors[k]=e.message;}
+      finally{
+        busy[k]=false;
+        if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id)&&!paintHistory({bottom:true}))paint();
+        const refreshAgain=refreshPending[k];delete refreshPending[k];
+        if(refreshAgain&&isVisibleThread(s,id))void loadMessages(s,id,{refresh:true});
+      }
     }
     async function open(id){
       if(source==='staff'&&section==='contacts'){
@@ -188,7 +197,7 @@
         }catch(e){errors[key(source,id)]=e.message;toast(e.message,true);return;}
         finally{openingContact=false;}
       }
-      selected=id;if(!current()){selected='';return paint();}paint({bottom:true});
+      selectionEpoch++;selected=id;if(!current()){selected='';return paint();}paint({bottom:true});
       // A cached thread is rendered immediately, but switching to a conversation
       // must also fetch its current light-weight history.  Attachments stay lazy
       // and cached: this request explicitly does not include file content.
@@ -274,11 +283,11 @@
       else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
-    function back(){if(!visible||!selected)return false;selected='';paint();return true;}
-    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);}
+    function back(){if(!visible||!selected)return false;selectionEpoch++;selected='';paint();return true;}
+    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);}
     async function handle(action,button){
-      if(action==='msg-new-chat'){if(!permitted('staff'))return;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
-      if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
+      if(action==='msg-new-chat'){if(!permitted('staff'))return;selectionEpoch++;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
+      if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;selectionEpoch++;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
       if(action==='msg-section'){section=button.dataset.section;paint();if(section==='contacts'&&source==='staff')await loadContacts();}
       if(action==='msg-open')await open(button.dataset.ref);
       if(action==='msg-back')back();
@@ -320,16 +329,30 @@
       if(e.target.id==='msgDraft')drafts[selectedKey()]=e.target.value;
       if(e.target.id==='msgSearch'){query=e.target.value;const list=document.querySelector('.msg-thread-list');if(list)list.innerHTML=listHtml();}
     });
+    document.addEventListener('keydown',e=>{
+      if(!visible||!selected||e.target?.id!=='msgDraft'||e.key!=='Enter'||e.ctrlKey||e.altKey||e.metaKey||e.shiftKey||e.repeat||e.isComposing||e.keyCode===229)return;
+      e.preventDefault();void send();
+    });
     async function openThread(threadSource, ref){
       if(!permitted(threadSource) || !ref)return false;
-      visible=true;source=threadSource;section='chats';query='';
+      selectionEpoch++;visible=true;source=threadSource;section='chats';query='';
       await loadList(source);
       if(!records[source].some(item=>item.ref===ref))return false;
       await open(ref);return true;
     }
+    function refreshInternalThreadFromPush(ref){
+      const id=String(ref||'').trim();
+      if(!id||!isVisibleThread('staff',id))return false;
+      const k=key('staff',id);
+      if(busy[k]){refreshPending[k]=true;return true;}
+      void loadMessages('staff',id,{refresh:true});
+      return true;
+    }
+    function refreshVisibleInternalThread(){return refreshInternalThreadFromPush(source==='staff'?selected:'');}
     return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),
-      leave(){visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
-      reset(){void clearPersistentCache();epoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};selected='';query='';},
+      refreshInternalThreadFromPush,refreshVisibleInternalThread,
+      leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
+      reset(){void clearPersistentCache();epoch++;selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}
     };
   }
