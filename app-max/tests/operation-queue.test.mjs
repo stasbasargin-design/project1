@@ -26,11 +26,11 @@ function memoryStore() {
   const store = memoryStore(), sent = [];
   store.putBatch = async values => { for (const value of values) await store.put(value); return values; };
   const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0], sender:async operation => { sent.push(structuredClone(operation)); return {success:true}; }});
-  const definitions = ['one','two','three'].map(name => ({id:`entry:${name}`,scope:'test|user-a',method:'/defects/entries/add',kind:'entry',documentKey:'doc-3',clientEntryId:`client:${name}`,body:{documentRef:'doc-3',clientEntryId:`client:${name}`,entry:{clientEntryId:`client:${name}`,file:{fileName:`${name}.jpg`,contentBase64:name}}}}));
+  const definitions = ['one','two','three'].map(name => ({id:`entry:${name}`,scope:'test|user-a',method:'/defects/entries/add',kind:'entry',documentKey:'doc-3',clientEntryId:`client:${name}`,body:{documentRef:'doc-3',clientEntryId:`client:${name}`,entry:{clientEntryId:`client:${name}`,file:{fileName:`${name}.jpg`,contentBase64:name,clientFileId:`file:${name}`}}}}));
   const prepared = await queue.prepareBatch(definitions);
   assert.equal((await queue.list('test|user-a')).length, 3);
   const restartedQueue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0], sender:async operation => { sent.push(structuredClone(operation)); return {success:true}; }});
-  const replay = await restartedQueue.prepareBatch(definitions.map(item => ({...item, requestId:'changed-request'})));
+  const replay = await restartedQueue.prepareBatch(definitions.map(item => ({...item, requestId:'changed-request', body:{...item.body, entry:{...item.body.entry, file:{...item.body.entry.file, clientFileId:'changed-file-id'}}}})));
   assert.deepEqual(replay.map(item => item.clientEntryId), prepared.map(item => item.clientEntryId));
   assert.deepEqual(replay.map(item => item.body.entry.file.contentBase64), ['one','two','three']);
   await assert.rejects(

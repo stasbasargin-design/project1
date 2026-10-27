@@ -9,13 +9,19 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const wait = ms => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 
+  function contentBody(value) {
+    const body = clone(value);
+    if (body?.entry?.file) delete body.entry.file.clientFileId;
+    return body;
+  }
+
   function sameOperation(existing, value) {
     return existing.method === value.method
       && existing.kind === value.kind
       && existing.scope === value.scope
       && existing.documentKey === value.documentKey
       && existing.clientEntryId === value.clientEntryId
-      && JSON.stringify(existing.body) === JSON.stringify(value.body);
+      && JSON.stringify(contentBody(existing.body)) === JSON.stringify(contentBody(value.body));
   }
 
   function requireSameOperation(existing, value) {
