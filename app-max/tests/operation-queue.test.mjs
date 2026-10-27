@@ -101,6 +101,8 @@ function memoryStore() {
   assert.equal(calls, 5);
   assert.equal((await store.get('entry:2')).attempts, 5);
   assert.equal((await store.get('entry:2')).status, 'failed');
+  assert.equal((await store.get('entry:2')).errorCode, 'TIMEOUT');
+  assert.equal((await store.get('entry:2')).errorStatus, 0);
 }
 
 {

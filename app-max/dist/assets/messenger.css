@@ -58,4 +58,8 @@ body.messenger-view footer{display:none}
  .msg-bubble{max-width:91%}.msg-compose{padding-left:8px;padding-right:8px}.msg-placeholder{display:none}
 }
 
+@media (min-width:701px) and (max-width:1023px){.messenger{grid-template-columns:280px minmax(0,1fr);height:calc(100dvh - 190px)}.msg-sidebar-head{padding:12px}.msg-sidebar-head h2{font-size:21px}.msg-filters,.msg-sections{padding-left:10px;padding-right:10px}#msgSearch{width:calc(100% - 20px);margin-left:10px;margin-right:10px}.msg-history{padding:16px}.msg-compose{padding-left:12px;padding-right:12px}}
+@media (min-width:1024px){.messenger{grid-template-columns:clamp(300px,28vw,360px) minmax(0,1fr);height:calc(100dvh - 200px)}.msg-history{padding:clamp(18px,2vw,28px)}.msg-bubble{max-width:min(85%,720px)}}
+@media (max-height:560px) and (min-width:701px) and (orientation:landscape){.messenger{height:calc(100dvh - 24px);min-height:260px}.msg-sidebar-head{padding-top:8px;padding-bottom:8px}.msg-sidebar-head h2{font-size:20px}.msg-filters,.msg-sections{padding-bottom:4px}.messenger .msg-thread{padding-top:9px;padding-bottom:9px}.msg-conversation-head{min-height:60px;padding-top:8px;padding-bottom:8px}.msg-history{padding:10px}.msg-compose{padding-top:7px;padding-bottom:7px}}
+
 .msg-new-chat{display:block;width:calc(100% - 24px);margin:0 12px 10px;padding:10px 12px;border-radius:10px;border:1px solid #b92824;color:#a51f1b;background:#fff;font-size:13px;font-weight:700}

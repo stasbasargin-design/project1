@@ -14,4 +14,9 @@ for (const route of ['/clients/messages/read','/internal-chat/messages/read','/i
 assert.ok(contract.methods['/quality/request']);
 const config=readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8');
 assert.match(config,/POLL_INTERVAL_MS:\s*60000/);
+const messenger=readFileSync(new URL('../assets/messenger.js',import.meta.url),'utf8');
+assert.match(messenger,/indexedDB\.open\(CACHE_DB,2\)/, 'messenger cache schema must include persistent idempotency attempts');
+assert.match(messenger,/createObjectStore\('attempts'/, 'chat idempotency identifiers must be persisted before transport');
+assert.match(messenger,/const clientMessageId=await attempt\(s,id,signature\)/, 'text, file and poll retries must reuse clientMessageId');
+assert.match(messenger,/await finishAttempt\(s,id,signature\)/, 'confirmed sends must retire their persisted idempotency attempt');
 console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');

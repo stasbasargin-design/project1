@@ -27,13 +27,21 @@
       if(Number.isFinite(at)!==Number.isFinite(bt))return Number.isFinite(at)?-1:1;
       return a.index-b.index;
     }).map(item=>item.message);}
-    function attempt(s,id,signature){const k=key(s,id),existing=attempts[k];if(existing?.signature===signature)return existing.id;const idempotencyId=newMessageId();attempts[k]={signature,id:idempotencyId};return idempotencyId;}
-    function finishAttempt(s,id,signature){const k=key(s,id);if(attempts[k]?.signature===signature)delete attempts[k];}
+    async function attempt(s,id,signature){
+      const k=key(s,id),existing=attempts[k];
+      if(existing?.signature===signature)return existing.id;
+      const storageKey=persistentKey('attempt',k),saved=await readStore('attempts',storageKey);
+      if(saved?.owner===owner()&&saved.signature===signature&&saved.id){attempts[k]={signature,id:saved.id};return saved.id;}
+      const idempotencyId=newMessageId();attempts[k]={signature,id:idempotencyId};
+      await writeStore('attempts',{key:storageKey,owner:owner(),thread:k,signature,id:idempotencyId,updatedAt:Date.now()});
+      return idempotencyId;
+    }
+    async function finishAttempt(s,id,signature){const k=key(s,id);if(attempts[k]?.signature===signature){delete attempts[k];await deleteStore('attempts',persistentKey('attempt',k));}}
     function permitted(s){return allowed().includes(s);}
     function revokeMedia(){for(const url of blobUrls.values())URL.revokeObjectURL(url);blobUrls.clear();}
     function db(){
       if(!root.indexedDB || !owner())return Promise.resolve(null);
-      return new Promise(resolve=>{const request=root.indexedDB.open(CACHE_DB,1);request.onupgradeneeded=()=>{const database=request.result;if(!database.objectStoreNames.contains('threads'))database.createObjectStore('threads',{keyPath:'key'});if(!database.objectStoreNames.contains('media'))database.createObjectStore('media',{keyPath:'key'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>resolve(null);});
+      return new Promise(resolve=>{const request=root.indexedDB.open(CACHE_DB,2);request.onupgradeneeded=()=>{const database=request.result;if(!database.objectStoreNames.contains('threads'))database.createObjectStore('threads',{keyPath:'key'});if(!database.objectStoreNames.contains('media'))database.createObjectStore('media',{keyPath:'key'});if(!database.objectStoreNames.contains('attempts'))database.createObjectStore('attempts',{keyPath:'key'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>resolve(null);});
     }
     async function readStore(store,keyValue){const database=await db();if(!database)return null;return new Promise(resolve=>{const request=database.transaction(store,'readonly').objectStore(store).get(keyValue);request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>resolve(null);});}
     async function allStore(store){const database=await db();if(!database)return [];return new Promise(resolve=>{const request=database.transaction(store,'readonly').objectStore(store).getAll();request.onsuccess=()=>resolve(request.result||[]);request.onerror=()=>resolve([]);});}
@@ -43,7 +51,7 @@
     function cleanFile(file){const {downloadUrl,previewUrl,contentBase64,...safe}=file||{};return safe;}
     function cleanMessage(message){return {...message,attachments:(message.attachments||[]).map(cleanFile)};}
     async function trimPersistentCache(){const now=Date.now(),who=owner();const threads=(await allStore('threads')).filter(item=>item.owner===who).sort((a,b)=>b.updatedAt-a.updatedAt);for(const item of threads.slice(CACHE_THREADS))await deleteStore('threads',item.key);for(const item of threads.filter(item=>now-item.updatedAt>CACHE_TTL))await deleteStore('threads',item.key);let total=0;const media=(await allStore('media')).filter(item=>item.owner===who).sort((a,b)=>b.updatedAt-a.updatedAt);for(const item of media){if(now-item.updatedAt>CACHE_TTL || total+item.size>CACHE_MEDIA_BYTES)await deleteStore('media',item.key);else total+=item.size;}}
-    async function clearPersistentCache(){const who=owner();if(!who)return;for(const store of ['threads','media'])for(const item of await allStore(store))if(item.owner===who)await deleteStore(store,item.key);}
+    async function clearPersistentCache(){const who=owner();if(!who)return;for(const store of ['threads','media','attempts'])for(const item of await allStore(store))if(item.owner===who)await deleteStore(store,item.key);}
     async function persistThread(k){if(!owner()||!cache[k])return;await writeStore('threads',{key:persistentKey('thread',k),owner:owner(),thread:k,updatedAt:Date.now(),messages:cache[k].slice(-200).map(cleanMessage)});void trimPersistentCache();}
     async function restoreThread(k){if(restored.has(k)||!owner())return;restored.add(k);const item=await readStore('threads',persistentKey('thread',k));if(item?.owner===owner()&&Date.now()-item.updatedAt<CACHE_TTL&&Array.isArray(item.messages)){cache[k]=sortedMessages(item.messages);}}
     function messageIdentity(message,index){return String(message.id || message.messageRef || `${message.createdAt||''}:${message.author||''}:${message.text||''}:${index}`);}
@@ -208,7 +216,7 @@
       const text=drafts[k]?.trim()||'';
       if(!id||!permitted(s)||(!file&&!text)||sending[k])return;
       const signature=file?`file:${kind||''}:${file.name||''}:${file.size||0}:${file.lastModified||0}`:`text:${text}`;
-      const clientMessageId=attempt(s,id,signature);
+      const clientMessageId=await attempt(s,id,signature);
       const generation=epoch,original=drafts[k];sending[k]=file?'upload':true;errors[k]='';paint();
       try{
         const payload={...params(s,id),clientMessageId};
@@ -227,7 +235,7 @@
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
           if(!message.authorKnown)await loadMessages(s,id,{refresh:true});
         }else await loadMessages(s,id,{refresh:true});
-        finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
+        await finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
       }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}}
       finally{if(generation===epoch){sending[k]=false;paint({bottom:true});}}
     }
@@ -304,10 +312,12 @@
       if(action==='msg-poll-send'){
         const question=String(document.getElementById('msgPollQuestion')?.value||'').trim();
         if(!question)return toast('Введите вопрос для опроса',true);
-        const s=source,id=selected,k=key(s,id);sending[k]=true;paint();
+        const s=source,id=selected,k=key(s,id),signature=`poll:${question}`;sending[k]=true;paint();
         try{
-          const result=await call('/clients/polls/send',{...params('clients',id),clientMessageId:root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now()),kind:'poll',messageType:'poll',poll:{question,options:['Согласовано','Не согласовано']}},{silent:true});
+          const clientMessageId=await attempt(s,id,signature);
+          const result=await call('/clients/polls/send',{...params('clients',id),clientMessageId,kind:'poll',messageType:'poll',poll:{question,options:['Согласовано','Не согласовано']}},{silent:true});
           const data=result.data||result;if(data.message){cache[k]=mergeMessages(cache[k],[api.normalizeMessage(data.message,Date.now())]);void persistThread(k);}else await loadMessages(s,id,{refresh:true});
+          await finishAttempt(s,id,signature);
           options.closeSheet();toast('Опрос отправлен клиенту');
         }catch(e){errors[k]=e.message;toast(e.message,true);}finally{sending[k]=false;paint({bottom:true});}
       }

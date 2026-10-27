@@ -382,6 +382,14 @@
       showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', '<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>');
       return;
     }
+    if ([401, 403].includes(Number(operation.errorStatus || error.status || 0))) {
+      showSheet('Требуется авторизация', 'Пакет сохранён на устройстве. Войдите заново и повторите отправку.', '<button class="primary" data-action="retry-failed-operation">Повторить после входа</button>');
+      return;
+    }
+    if (!Number(operation.errorStatus || error.status || 0) && ['TIMEOUT', ''].includes(String(operation.errorCode || error.code || ''))) {
+      showSheet('Нет сети', 'Пакет сохранён на устройстве. Не удалось подтвердить отправку после пяти попыток.', '<button class="primary" data-action="retry-failed-operation">Повторить</button>');
+      return;
+    }
     showSheet('Не удалось подтвердить отправку', 'Пакет сохранён на устройстве. Автоматические попытки остановлены.', '<button class="primary" data-action="retry-failed-operation">Повторить</button>');
   }
 

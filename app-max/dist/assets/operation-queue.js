@@ -152,7 +152,9 @@
           operation = {
             ...operation,
             status: validation ? 'invalid' : (operation.attempts >= attemptLimit || !isRetryable(error) ? 'failed' : 'pending'),
-            error: String(error?.message || error || '')
+            error: String(error?.message || error || ''),
+            errorStatus: Number(error?.status || 0),
+            errorCode: String(error?.code || '')
           };
           await store.put(operation);
           if (validation || !isRetryable(error) || operation.attempts >= attemptLimit) {
