@@ -64,6 +64,12 @@ await messenger.handle('msg-open',{dataset:{ref:'shift'}});
 const historyCallsAfterReopen=calls.filter(x=>x.method==='/internal-chat/messages/list');
 assert.equal(historyCallsAfterReopen.length,historyCallsBeforeReopen+1);
 assert.equal(historyCallsAfterReopen.at(-1).payload.includeAttachmentContent,false);
+mock['/internal-chat/messages/list']={data:{messages:[
+  {direction:'incoming',text:'no-server-id',createdAt:'2026-10-07T10:03:00Z'},
+  {direction:'incoming',text:'no-server-id',createdAt:'2026-10-07T10:03:00Z'}
+]}};
+await messenger.handle('msg-refresh-messages',{dataset:{}});
+assert.equal((app.innerHTML.match(/no-server-id/g)||[]).length,2);
 await messenger.handle('msg-back',{dataset:{}});
 await messenger.handle('msg-new-chat',{dataset:{}});
 assert.match(app.innerHTML,/Анна/);

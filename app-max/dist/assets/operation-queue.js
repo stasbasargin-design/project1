@@ -9,6 +9,20 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const wait = ms => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 
+  function sameOperation(existing, value) {
+    return existing.method === value.method
+      && existing.kind === value.kind
+      && existing.scope === value.scope
+      && existing.documentKey === value.documentKey
+      && existing.clientEntryId === value.clientEntryId
+      && JSON.stringify(existing.body) === JSON.stringify(value.body);
+  }
+
+  function requireSameOperation(existing, value) {
+    if (sameOperation(existing, value)) return existing;
+    throw Object.assign(new Error('Сохранённый пакет отправки не совпадает с новым содержимым'), { code:'QUEUE_ID_CONFLICT' });
+  }
+
   function openDb() {
     if (!root.indexedDB) return Promise.resolve(null);
     return new Promise(resolve => {
@@ -98,33 +112,45 @@
     const owner = root.crypto?.randomUUID?.() || `queue-${Date.now()}-${Math.random()}`;
     const running = new Map();
 
-    async function prepare({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }) {
-      const existing = await store.get(id);
-      if (existing) return existing;
-      const operation = {
+    function operationFromDefinition({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }, createdAt = new Date().toISOString()) {
+      return {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt: new Date().toISOString(), error: '', leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', leaseOwner: '', leaseUntil: 0
       };
-      await store.put(operation);
-      return operation;
+    }
+
+    async function prepare(definition) {
+      return (await prepareBatch([definition]))[0];
     }
 
     async function prepareBatch(definitions) {
       const createdAt = new Date().toISOString();
-      const values = definitions.map(({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }) => ({
-        id, method, body:clone(body), clientEntryId, requestId, kind, scope, documentKey,
-        maxAttempts:operationMaxAttempts, attempts:0, status:'pending', createdAt, error:'', leaseOwner:'', leaseUntil:0
-      }));
-      const existing = await Promise.all(values.map(value => store.get(value.id)));
-      const missing = values.filter((value, index) => !existing[index]);
+      const values = definitions.map(definition => operationFromDefinition(definition, createdAt));
+      const unique = new Map();
+      for (const value of values) {
+        const previous = unique.get(value.id);
+        if (previous) requireSameOperation(previous, value);
+        else unique.set(value.id, value);
+      }
+      const uniqueValues = [...unique.values()];
+      const existing = await Promise.all(uniqueValues.map(value => store.get(value.id)));
+      existing.forEach((operation, index) => {
+        if (operation) requireSameOperation(operation, uniqueValues[index]);
+      });
+      const missing = uniqueValues.filter((value, index) => !existing[index]);
       let stored = [];
       if (missing.length) {
         stored = store.putBatch
           ? await store.putBatch(missing)
-          : await Promise.all(missing.map(value => prepare(value)));
+          : await Promise.all(missing.map(value => store.put(value).then(() => value)));
       }
       const byId = new Map(stored.map(value => [value.id, value]));
-      return values.map((value, index) => existing[index] || byId.get(value.id) || value);
+      const resolved = new Map();
+      uniqueValues.forEach((value, index) => {
+        const operation = existing[index] || byId.get(value.id) || value;
+        resolved.set(value.id, requireSameOperation(operation, value));
+      });
+      return values.map(value => resolved.get(value.id));
     }
 
     async function execute(id, { manual = false } = {}) {

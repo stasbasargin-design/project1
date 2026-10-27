@@ -21,7 +21,7 @@ function memoryStore() {
   assert.equal((await queue.list('test|user-b')).length, 1);
 }
 
-// A three-file package is prepared in full before transport starts, and each body is immutable.
+// A saved package keeps its identifiers and payload after an application restart.
 {
   const store = memoryStore(), sent = [];
   store.putBatch = async values => { for (const value of values) await store.put(value); return values; };
@@ -29,9 +29,14 @@ function memoryStore() {
   const definitions = ['one','two','three'].map(name => ({id:`entry:${name}`,scope:'test|user-a',method:'/defects/entries/add',kind:'entry',documentKey:'doc-3',clientEntryId:`client:${name}`,body:{documentRef:'doc-3',clientEntryId:`client:${name}`,entry:{clientEntryId:`client:${name}`,file:{fileName:`${name}.jpg`,contentBase64:name}}}}));
   const prepared = await queue.prepareBatch(definitions);
   assert.equal((await queue.list('test|user-a')).length, 3);
-  const replay = await queue.prepareBatch(definitions.map(item => ({...item, clientEntryId:`changed:${item.clientEntryId}`, requestId:'changed-request', body:{...item.body, entry:{...item.body.entry, file:{...item.body.entry.file, contentBase64:'changed-before-retry'}}}})));
+  const restartedQueue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0], sender:async operation => { sent.push(structuredClone(operation)); return {success:true}; }});
+  const replay = await restartedQueue.prepareBatch(definitions.map(item => ({...item, requestId:'changed-request'})));
   assert.deepEqual(replay.map(item => item.clientEntryId), prepared.map(item => item.clientEntryId));
   assert.deepEqual(replay.map(item => item.body.entry.file.contentBase64), ['one','two','three']);
+  await assert.rejects(
+    restartedQueue.prepareBatch(definitions.map(item => ({...item, body:{...item.body, entry:{...item.body.entry, file:{...item.body.entry.file, contentBase64:'changed-before-retry'}}}}))),
+    error => error?.code === 'QUEUE_ID_CONFLICT'
+  );
   definitions[0].body.entry.file.contentBase64 = 'changed-after-save';
   for (const operation of prepared) await queue.run(operation.id);
   assert.deepEqual(sent.map(item => item.body.entry.file.contentBase64), ['one','two','three']);
