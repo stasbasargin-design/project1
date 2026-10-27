@@ -15,7 +15,7 @@ function element(id) {
 const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,value:100},
  {id:'engineHours',label:'Моточасы',type:'number',required:false,value:''},
  {id:'reason',label:'Дополнения к причине обращения',type:'textarea',required:false,value:''}];
-let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdEntryResponse=false, releaseEntryResponse, notifyEntryRequest;
+let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdEntryResponse=false, releaseEntryResponse, notifyEntryRequest, holdCompletionResponse=false, releaseCompletionResponse, notifyCompletionRequest;
 const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck',plate:'A123BC'},mileage:123456};
 const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams,AbortController,crypto:webcrypto,
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
@@ -39,6 +39,10 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
   if (url.endsWith('/defects/entries/add') && holdEntryResponse) {
     notifyEntryRequest?.();
     await new Promise(resolve => { releaseEntryResponse = resolve; });
+  }
+  if (url.endsWith('/acceptance/complete') && holdCompletionResponse) {
+    notifyCompletionRequest?.();
+    await new Promise(resolve => { releaseCompletionResponse = resolve; });
   }
   return {ok,status:ok?200:500,async text(){return JSON.stringify(ok?{success:true,data}:{success:false,error:{message:'Photo rejected'}});}};
  }});
@@ -156,6 +160,18 @@ assert.equal(app.processProgress(process,'_acceptance').total,2);
 process.answers.required=false; // An explicit boolean "no" is a valid answer.
 assert.equal(app.processProgress(process,'_acceptance').done,2);
 await app.completeAcceptance();assert.equal(completions().length,2);
+await app.startAcceptance();process=app.currentOrder()._acceptance;process.answers.required='ok';
+const completionsBeforeJoin=completions().length;
+holdCompletionResponse=true;
+const completionRequestStarted=new Promise(resolve=>{notifyCompletionRequest=resolve;});
+const firstCompletion=app.completeAcceptance();
+await completionRequestStarted;
+assert.match(app.renderMpView(),/Подтверждаем отправку/);
+const secondCompletion=app.completeAcceptance();
+assert.equal(completions().length,completionsBeforeJoin+1);
+holdCompletionResponse=false;releaseCompletionResponse();notifyCompletionRequest=undefined;
+await Promise.all([firstCompletion,secondCompletion]);
+assert.equal(completions().length,completionsBeforeJoin+1);
 const search=element('orderSearch');search.value='TEST-1';search.selectionStart=6;search.selectionEnd=6;
 let orderSearchRenderWrites=0, appMarkup=element('app').innerHTML;
 Object.defineProperty(element('app'),'innerHTML',{configurable:true,get(){return appMarkup;},set(value){orderSearchRenderWrites++;appMarkup=value;}});

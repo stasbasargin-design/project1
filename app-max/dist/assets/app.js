@@ -43,10 +43,11 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false, failedOperationId: '', failedOperationReport: ''
+    search: '', pollTimer: null, initialized: false, failedOperationId: '', failedOperationReport: '', completionKey: ''
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
+  const activeCompletions = new Map();
   let mediaPicker = null;
 
   const messenger = window.ITUS_MESSENGER?.create({
@@ -585,9 +586,11 @@
     if (!process?.active) return '';
     const progress = processProgress(process, processKey);
     const hasContent = (process.form?.fields?.length || 0) + (process.survey?.questions?.length || 0) > 0;
+    const completionKey = processKey === '_acceptance' ? `acceptance:${process.documentRef || ''}` : '';
+    const completing = Boolean(completionKey) && state.completionKey === completionKey;
     const completion = processKey === '_quality'
       ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
-      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''}>${esc(completeLabel)}</button>`;
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : esc(completeLabel)}</button>`;
     return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
@@ -691,23 +694,30 @@
 
   async function completeAcceptance() {
     const order = currentOrder(), process = order?._acceptance; if (!process) return;
+    const key = `acceptance:${process.documentRef || ''}`;
+    if (activeCompletions.has(key)) return activeCompletions.get(key);
+    if (state.busy) return;
     validateProcess(process, false);
     if (process.photo?.required !== false && !acceptanceHasPhoto(order)) process.errors.add('photo');
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
-    state.busy = true; render();
-    try {
-      await waitForDocumentEntries(String(process.documentRef || ''));
-      const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
-      const scope = queueScope();
-      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
-      const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
-      const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
-      const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
-      if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
-      if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
-      if (reasonField) order.reason = String(process.values[reasonField.id] || '');
-      order._acceptance = null; await loadSingleOrder(order.orderRef); render(); toast('Приём завершён, данные сохранены в 1С');
-    } finally { state.busy = false; render(); }
+    const completion = (async () => {
+      state.busy = true; state.completionKey = key; render();
+      try {
+        await waitForDocumentEntries(String(process.documentRef || ''));
+        const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
+        const scope = queueScope();
+        await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
+        const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
+        const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
+        const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
+        if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
+        if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
+        if (reasonField) order.reason = String(process.values[reasonField.id] || '');
+        order._acceptance = null; await loadSingleOrder(order.orderRef); render(); toast('Приём завершён, данные сохранены в 1С');
+      } finally { state.busy = false; state.completionKey = ''; activeCompletions.delete(key); render(); }
+    })();
+    activeCompletions.set(key, completion);
+    return completion;
   }
 
   async function choosePost() {
@@ -1118,7 +1128,9 @@
         : file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b></span></button>` : '';
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo">Фото и видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet">Завершить дефектовку</button>`);
+    const completionKey = `defects:${sheet.documentRef || ''}`;
+    const completing = state.completionKey === completionKey;
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo">Фото и видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }
 
   async function openDefectSheet() {
@@ -1296,14 +1308,21 @@
   }
 
   async function completeDefectSheet() {
-    const sheet = currentOrder()?._defectSheet; if (!sheet || state.busy) return;
-    state.busy = true;
-    try {
-    await waitForDocumentEntries(String(sheet.documentRef || ''));
-    const scope = queueScope();
-    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' });
-    currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
-    } finally { state.busy = false; }
+    const sheet = currentOrder()?._defectSheet; if (!sheet) return;
+    const key = `defects:${sheet.documentRef || ''}`;
+    if (activeCompletions.has(key)) return activeCompletions.get(key);
+    if (state.busy) return;
+    const completion = (async () => {
+      state.busy = true; state.completionKey = key; renderDefectSheet();
+      try {
+        await waitForDocumentEntries(String(sheet.documentRef || ''));
+        const scope = queueScope();
+        await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' });
+        currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
+      } finally { state.busy = false; state.completionKey = ''; activeCompletions.delete(key); }
+    })();
+    activeCompletions.set(key, completion);
+    return completion;
   }
 
   async function loadClientTopics() {
