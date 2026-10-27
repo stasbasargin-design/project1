@@ -43,7 +43,7 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false, failedOperationId: '', failedOperationReport: '', completionKey: ''
+    search: '', pollTimer: null, initialized: false, failedOperationId: '', failedOperationReport: '', completionKey: '', completionStatus: null, queuedOperations: []
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
@@ -278,6 +278,7 @@
       } else state.views = { ...ALL_VIEWS };
       await loadOrders(false);
       await resumeSavedOperations();
+      await refreshQueuedOperations();
       state.initialized = true;
       startPolling();
       void startNativePush();
@@ -405,6 +406,26 @@
   });
   const queueScope = () => [String(CONFIG.apiBase || ''), String(CONFIG.publicBase || ''), String(state.userId || '')].join('|');
 
+  async function refreshQueuedOperations() {
+    if (!operationQueue || !state.userId) return;
+    try {
+      state.queuedOperations = (await operationQueue.list(queueScope())).map(operation => ({
+        kind:operation.kind, status:operation.status,
+        orderRef:String(operation.body?.orderRef || operation.body?.orderId || '')
+      }));
+    } catch { state.queuedOperations = []; }
+  }
+
+  function queuedOperationsStatus(order) {
+    const refs = new Set([order?.id, order?.orderRef].filter(Boolean).map(String));
+    const operations = state.queuedOperations.filter(operation => refs.has(operation.orderRef));
+    if (!operations.length) return '';
+    const rejected = operations.find(operation => operation.status === 'invalid' || operation.status === 'failed');
+    const attachments = operations.filter(operation => operation.kind === 'entry').length;
+    const detail = rejected ? 'Ошибка отправки — откройте технический отчёт' : `Ожидание подтверждения 1С: вложений ${attachments}`;
+    return `<div class="notice" role="status"><strong>Сохранённая очередь</strong><div>${esc(detail)}</div></div>`;
+  }
+
   function showQueuedOperationError(error) {
     const operation = error?.operation;
     if (!operation) throw error;
@@ -438,8 +459,10 @@
     if (!operationQueue) throw new Error('Очередь отправки недоступна');
     const operation = await operationQueue.prepare(definition);
     const restart = manual || operation.status === 'failed' || operation.status === 'invalid';
+    await refreshQueuedOperations();
     try { return await operationQueue.run(operation.id, { manual: restart }); }
     catch (error) { showQueuedOperationError(error); throw error; }
+    finally { await refreshQueuedOperations(); }
   }
 
   async function retryFailedOperation() {
@@ -505,7 +528,7 @@
       : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
     const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div></div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
   }
 
   function renderOrdersView() {
@@ -594,9 +617,15 @@
     const hasContent = (process.form?.fields?.length || 0) + (process.survey?.questions?.length || 0) > 0;
     const completionKey = processKey === '_acceptance' ? `acceptance:${process.documentRef || ''}` : '';
     const completing = Boolean(completionKey) && state.completionKey === completionKey;
+    const completionStatus = state.completionStatus?.key === completionKey ? state.completionStatus : null;
+    const completionText = completionStatus?.stage === 'sending' ? `Отправка ${completionStatus.sent}/${completionStatus.total}…`
+      : completionStatus?.stage === 'waiting' ? 'Ожидание отправки файлов…'
+      : completionStatus?.stage === 'completing' ? 'Завершение…'
+      : completionStatus?.stage === 'error' ? 'Ошибка отправки — откройте отчёт'
+      : completing ? 'Подтверждаем отправку…' : '';
     const completion = processKey === '_quality'
       ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
-      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : esc(completeLabel)}</button>`;
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''} aria-busy="${completing}">${completionText ? `${completing ? '<span class="spinner"></span> ' : ''}${esc(completionText)}` : esc(completeLabel)}</button>`;
     return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
@@ -707,9 +736,12 @@
     if (process.photo?.required !== false && !acceptanceHasPhoto(order)) process.errors.add('photo');
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
     const completion = (async () => {
-      state.busy = true; state.completionKey = key; render();
+      state.busy = true; state.completionKey = key; state.completionStatus = {key, stage:'waiting'}; render();
       try {
-        await waitForDocumentEntries(String(process.documentRef || ''));
+        await waitForDocumentEntries(String(process.documentRef || ''), progress => {
+          state.completionStatus = {key, stage:'sending', ...progress}; render();
+        });
+        state.completionStatus = {key, stage:'completing'}; render();
         const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
         const scope = queueScope();
         await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
@@ -719,8 +751,17 @@
         if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
         if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
         if (reasonField) order.reason = String(process.values[reasonField.id] || '');
-        order._acceptance = null; await loadSingleOrder(order.orderRef); render(); toast('Приём завершён, данные сохранены в 1С');
-      } finally { state.busy = false; state.completionKey = ''; activeCompletions.delete(key); render(); }
+        state.completionStatus = {key, stage:'completed'};
+        order._acceptance = null; await loadSingleOrder(order.orderRef); toast('Приём завершён, данные сохранены в 1С');
+      } catch (error) {
+        state.completionStatus = {key, stage:'error'};
+        if (error?.operation) return;
+        throw error;
+      } finally {
+        state.busy = false; state.completionKey = ''; activeCompletions.delete(key);
+        if (state.completionStatus?.key === key && state.completionStatus.stage === 'completed') state.completionStatus = null;
+        render();
+      }
     })();
     activeCompletions.set(key, completion);
     return completion;
@@ -1070,16 +1111,24 @@
     return entry;
   }
 
-  async function runPreparedOperations(operations) {
+  async function runPreparedOperations(operations, {stopOnError = false, onProgress} = {}) {
+    let sent = 0;
     for (const operation of operations) {
-      try { await operationQueue.run(operation.id); }
-      catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
+      onProgress?.({sent, total:operations.length});
+      try {
+        await operationQueue.run(operation.id);
+        sent++;
+        onProgress?.({sent, total:operations.length});
+      } catch (error) {
+        if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error);
+        if (stopOnError) throw error;
+      } finally { await refreshQueuedOperations(); }
     }
   }
 
-  async function waitForDocumentEntries(documentKey) {
+  async function waitForDocumentEntries(documentKey, onProgress) {
     const pending = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
-    if (pending.length) await runPreparedOperations(pending);
+    if (pending.length) await runPreparedOperations(pending, {stopOnError:true, onProgress});
     const remaining = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
     if (remaining.length) throw new Error('Завершение недоступно: не все записи и вложения подтверждены 1С');
   }
@@ -1249,6 +1298,7 @@
       return { id:`${scope}:entry:${attemptKey}`, scope, method:'/defects/entries/add', documentKey, clientEntryId, body, requestId:requestId(), kind:'entry' };
     });
     const operations = await operationQueue.prepareBatch(definitions);
+    await refreshQueuedOperations();
     process.entries = Array.isArray(process.entries) ? process.entries : [];
     for (const [index, operation] of operations.entries()) {
       if (!process.entries.some(entry => entry.id === operation.clientEntryId)) {
@@ -1257,7 +1307,7 @@
       }
     }
     // The picker may now close; transport no longer references its File objects or DOM.
-    void runPreparedOperations(operations);
+    void runPreparedOperations(operations).then(() => render());
     return operations;
   }
 

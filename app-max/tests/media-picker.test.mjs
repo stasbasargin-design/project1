@@ -86,6 +86,7 @@ input.listeners.change();
 batchPicker.handle('media-send');
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(batchPicker.dismiss(), false, 'manual close is blocked until the complete batch is locally committed');
+assert.match(lastSheet, /spinner/, 'local queue save has a visible in-progress state');
 assert.deepEqual(Array.from(committed, item => item[0]), ['one.jpg','two.jpg','three.jpg']);
 assert.equal(new Set(committed.map(item => item[1])).size, 3);
 releaseCommit();

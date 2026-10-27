@@ -32,7 +32,7 @@
       const pending = files.filter(item => item.status !== 'success').length;
       const failed = files.filter(item => item.status === 'failed').length;
       showSheet('Фото и видео', session.hint || 'Выберите файлы, проверьте список и отправьте одним действием',
-        `<div class="media-picker-actions"><button class="primary" data-action="media-gallery">Галерея</button><button data-action="media-camera-photo">Камера</button><button data-action="media-camera-video">Видео</button></div><p class="tiny">Можно выбрать несколько фото и видео. Файлы будут прикреплены к текущему документу или чату.</p><div class="media-picker-grid">${cards || '<div class="empty">Файлы ещё не выбраны</div>'}</div><div class="media-picker-footer"><span>${files.length ? `Выбрано: ${files.length}${failed ? ` · ошибки: ${failed}` : ''}` : 'Выберите фото или видео'}</span><button class="primary" data-action="media-send" ${pending && !session.sending ? '' : 'disabled'}>${session.sending ? `Отправка ${session.sent + 1}/${session.total}` : (failed ? 'Повторить ошибки' : 'Отправить')}</button></div>`);
+        `<div class="media-picker-actions"><button class="primary" data-action="media-gallery">Галерея</button><button data-action="media-camera-photo">Камера</button><button data-action="media-camera-video">Видео</button></div><p class="tiny">Можно выбрать несколько фото и видео. Файлы будут прикреплены к текущему документу или чату.</p><div class="media-picker-grid">${cards || '<div class="empty">Файлы ещё не выбраны</div>'}</div><div class="media-picker-footer"><span>${files.length ? `Выбрано: ${files.length}${failed ? ` · ошибки: ${failed}` : ''}` : 'Выберите фото или видео'}</span><button class="primary" data-action="media-send" ${pending && !session.sending ? '' : 'disabled'}>${session.sending ? (session.phase === 'saving' ? '<span class="spinner"></span> Сохранение…' : `Отправка ${session.sent + 1}/${session.total}`) : (failed ? 'Повторить ошибки' : 'Отправить')}</button></div>`);
     }
     function openInput(mode) {
       if (!session || session.sending) return;
@@ -75,17 +75,17 @@
         render(); toast(failed ? `Загружено: ${activeSession.files.length - failed}, ошибки: ${failed}` : 'Фото и видео отправлены', Boolean(failed));
         return;
       }
-      queue.forEach(item => { item.status = 'saving'; item.error = ''; }); render();
+      activeSession.phase = 'saving'; queue.forEach(item => { item.status = 'saving'; item.error = ''; }); render();
       try {
         await activeSession.onCommit(snapshot);
         queue.forEach(item => { item.status = 'success'; });
         activeSession.sent = queue.length;
-        activeSession.sending = false;
+        activeSession.sending = false; activeSession.phase = '';
         if (session === activeSession) close();
         toast('Файлы сохранены на устройстве и будут отправлены в фоне');
       } catch (error) {
         queue.forEach(item => { item.status = 'failed'; item.error = error.message || 'Не удалось сохранить файл'; });
-        activeSession.sending = false; render();
+        activeSession.sending = false; activeSession.phase = ''; render();
         toast(error.message || 'Не удалось сохранить все файлы', true);
       }
     }
@@ -104,7 +104,7 @@
       return true;
     }
     return {
-      open({hint, onCommit, onSend}) { revoke(); session = {hint, onCommit, onSend, files:[], sending:false, sent:0, total:0}; render(); },
+      open({hint, onCommit, onSend}) { revoke(); session = {hint, onCommit, onSend, files:[], sending:false, sent:0, total:0, phase:''}; render(); },
       handle,
       close,
       dismiss
