@@ -43,7 +43,7 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false, failedOperationId: ''
+    search: '', pollTimer: null, initialized: false, failedOperationId: '', busyAction: ''
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
@@ -70,6 +70,19 @@
     element.classList.remove('hidden');
     clearTimeout(toast.timer);
     toast.timer = setTimeout(() => element.classList.add('hidden'), 3200);
+  }
+
+  function setActionBusy(button, label) {
+    if (!button || button.disabled || button.dataset.busy === 'true') return null;
+    const original = button.innerHTML;
+    button.dataset.busy = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); setActionBusyLabel(button, label);
+    return () => {
+      if (button.dataset.busy !== 'true') return;
+      delete button.dataset.busy; button.disabled = false; button.removeAttribute('aria-busy'); button.innerHTML = original;
+    };
+  }
+  function setActionBusyLabel(button, label) {
+    if (button?.dataset.busy === 'true') button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span><span>${esc(label)}</span>`;
   }
 
   function showSheet(title, hint, html) {
@@ -530,9 +543,11 @@
     if (!process?.active) return '';
     const progress = processProgress(process, processKey);
     const hasContent = (process.form?.fields?.length || 0) + (process.survey?.questions?.length || 0) > 0;
+    const completing = state.busyAction === completeAction;
+    const waitingForFiles = state.busyAction === `waiting:${completeAction}`;
     const completion = processKey === '_quality'
       ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
-      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''}>${esc(completeLabel)}</button>`;
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''} ${completing || waitingForFiles ? 'aria-busy="true"' : ''}>${completing || waitingForFiles ? `<span class="button-spinner" aria-hidden="true"></span><span>${waitingForFiles ? 'Ожидаем отправку файлов…' : 'Завершаем…'}</span>` : esc(completeLabel)}</button>`;
     return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
@@ -634,17 +649,19 @@
     } finally { state.busy = false; render(); }
   }
 
-  async function completeAcceptance() {
+  async function completeAcceptance(button) {
     const order = currentOrder(), process = order?._acceptance; if (!process) return;
     validateProcess(process, false);
     if (process.photo?.required !== false && !acceptanceHasPhoto(order)) process.errors.add('photo');
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
-    state.busy = true; render();
+    const restoreButton = setActionBusy(button, 'Завершаем…');
+    state.busyAction = 'complete-acceptance'; state.busy = true; render();
     try {
-      await waitForDocumentEntries(String(process.documentRef || ''));
       const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
       const scope = queueScope();
-      await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
+      const completion = { id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' };
+      await queueCompletion(completion, () => { state.busyAction = 'waiting:complete-acceptance'; render(); });
+      state.busyAction = 'complete-acceptance'; render();
       const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
       const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
       const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
@@ -652,7 +669,7 @@
       if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
       if (reasonField) order.reason = String(process.values[reasonField.id] || '');
       order._acceptance = null; await loadSingleOrder(order.orderRef); render(); toast('Приём завершён, данные сохранены в 1С');
-    } finally { state.busy = false; render(); }
+    } finally { state.busy = false; state.busyAction = ''; restoreButton?.(); render(); }
   }
 
   async function choosePost() {
@@ -944,7 +961,7 @@
 
   const pendingDefectSheets = new Map();
   const pendingDefectEntries = new Map();
-  const activeEntrySubmissions = new Set();
+  const activeEntrySubmissions = new Map();
 
   function defectEntryKey(order, documentRef, kind, value) {
     const identity = typeof value === 'string'
@@ -968,9 +985,8 @@
   async function sendQueuedEntry(attemptKey, method, body) {
     const scope = queueScope();
     const queueId = `${scope}:entry:${attemptKey}`;
-    if (activeEntrySubmissions.has(queueId)) throw Object.assign(new Error('Эта операция уже отправляется'), {code:'QUEUE_BUSY'});
-    activeEntrySubmissions.add(queueId);
-    try {
+    if (activeEntrySubmissions.has(queueId)) return activeEntrySubmissions.get(queueId);
+    const submission = (async () => {
       const proposedId = defectEntryId(attemptKey);
       const operation = await operationQueue.prepare({
         id: queueId, scope, method, clientEntryId: proposedId,
@@ -986,7 +1002,18 @@
         showQueuedOperationError(error);
         throw error;
       }
-    } finally { activeEntrySubmissions.delete(queueId); }
+    })();
+    activeEntrySubmissions.set(queueId, submission);
+    try { return await submission; }
+    finally { activeEntrySubmissions.delete(queueId); }
+  }
+
+  function appendQueuedEntry(process, response, operation, fallback) {
+    const raw = response.entry || response.data?.entry || { ...fallback, id: operation.clientEntryId };
+    const entry = API.normalizeProcess({ entries:[raw] }, 'x').entries[0];
+    process.entries = Array.isArray(process.entries) ? process.entries : [];
+    if (!process.entries.some(item => String(item.id || '') === String(entry.id || operation.clientEntryId))) process.entries.push(entry);
+    return entry;
   }
 
   async function runPreparedOperations(operations) {
@@ -1001,6 +1028,13 @@
     if (pending.length) await runPreparedOperations(pending);
     const remaining = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
     if (remaining.length) throw new Error('Завершение недоступно: не все записи и вложения подтверждены 1С');
+  }
+  async function queueCompletion(definition, onPendingEntries) {
+    await operationQueue.prepare(definition);
+    const pending = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === definition.documentKey);
+    if (pending.length) onPendingEntries?.();
+    await waitForDocumentEntries(definition.documentKey);
+    return sendQueuedOperation(definition);
   }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
@@ -1108,21 +1142,21 @@
       if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
-    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
-    process.entries = Array.isArray(process.entries) ? process.entries : [];
-    process.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
+    appendQueuedEntry(process, response, operation, { type:kind, file:operation.body.entry.file, createdAt:nowIso(), author:state.user?.name || '' });
     render(); toast('Файл добавлен в акт приёма');
   }
 
-  async function sendDefectText() {
+  async function sendDefectText(button) {
     const text = String($('defectText')?.value || '').trim();
     if (!text) return toast('Введите описание дефекта', true);
-    const sheet = await ensureDefectSheet();
-    const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
-    const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, entry: { type: 'text', text } }));
-    const entry = response.entry || response.data?.entry || { id: operation.clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
-    sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
-    renderDefectSheet(); toast('Запись добавлена в дефектовку');
+    const restoreButton = setActionBusy(button, 'Сохраняем…');
+    try {
+      const sheet = await ensureDefectSheet();
+      const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
+      const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, entry: { type: 'text', text } }));
+      appendQueuedEntry(sheet, response, operation, { type:'text', text, createdAt:nowIso(), author:state.user?.name || '' });
+      renderDefectSheet(); toast('Запись добавлена в дефектовку');
+    } finally { restoreButton?.(); }
   }
 
   function choosePhoto(target) {
@@ -1229,20 +1263,21 @@
     const payload = await fileToPayload(file, kind);
     const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
     const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, entry: { type: kind, file: payload } });
-    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
-    sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
+    appendQueuedEntry(sheet, response, operation, { type:kind, file:operation.body.entry.file, createdAt:nowIso(), author:state.user?.name || '' });
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
   }
 
-  async function completeDefectSheet() {
+  async function completeDefectSheet(button) {
     const sheet = currentOrder()?._defectSheet; if (!sheet || state.busy) return;
-    state.busy = true;
+    const restoreButton = setActionBusy(button, 'Завершаем…');
+    state.busyAction = 'complete-defect-sheet'; state.busy = true;
     try {
-    await waitForDocumentEntries(String(sheet.documentRef || ''));
     const scope = queueScope();
-    await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' });
+    const completion = { id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' };
+    await queueCompletion(completion, () => { state.busyAction = 'waiting:complete-defect-sheet'; setActionBusyLabel(button, 'Ожидаем отправку файлов…'); });
+    state.busyAction = 'complete-defect-sheet'; setActionBusyLabel(button, 'Завершаем…');
     currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
-    } finally { state.busy = false; }
+    } finally { state.busy = false; state.busyAction = ''; restoreButton?.(); }
   }
 
   async function loadClientTopics() {
@@ -1715,7 +1750,7 @@
       if (action === 'submit-order-qr') { const value = String($('orderQr')?.value || '').trim(); closeSheet(); if (!value) return toast('Введите значение QR', true); const response = await call1C('/orders/search', { search: value }); const items = API.extractOrders(response).map(API.mapOrder); if (!items.length) return toast('Заказ-наряд не найден', true); items.forEach(mergeOrder); state.selectedOrderId = items[0].id; return render(); }
       if (action === 'answer-option') { const process = currentOrder()?.[button.dataset.process]; if (!process) return; const id = button.dataset.question, value = button.dataset.value; if (button.dataset.type === 'multi') { const values = Array.isArray(process.answers[id]) ? process.answers[id] : []; process.answers[id] = values.includes(value) ? values.filter(item => item !== value) : values.concat(value); } else process.answers[id] = value; process.errors?.delete(`question:${id}`); return render(); }
       if (action === 'start-acceptance') return startAcceptance();
-      if (action === 'complete-acceptance') return completeAcceptance();
+      if (action === 'complete-acceptance') return completeAcceptance(button);
       if (action === 'choose-post') return choosePost();
       if (action === 'set-post') return setPost(button.dataset.ref, button.dataset.name);
       if (action === 'assign-executor') return assignExecutor(false);
@@ -1741,9 +1776,9 @@
       if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
       if (action === 'acceptance-photo' || action === 'acceptance-video') return openMediaPicker({ type:'acceptance' });
       if (action === 'defect-photo' || action === 'defect-video') return openMediaPicker({ type:'defect' });
-      if (action === 'send-defect-text') return sendDefectText();
+      if (action === 'send-defect-text') return sendDefectText(button);
       if (action === 'defect-media') return openDefectMedia(Number(button.dataset.index));
-      if (action === 'complete-defect-sheet') return completeDefectSheet();
+      if (action === 'complete-defect-sheet') return completeDefectSheet(button);
       if (action === 'load-client-topics') return loadClientTopics();
       if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return render(); }
       if (action === 'refresh-client-messages') { await loadClientMessages(state.selectedClientTopic); return render(); }

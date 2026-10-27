@@ -115,8 +115,16 @@
         id, method, body:clone(body), clientEntryId, requestId, kind, scope, documentKey,
         maxAttempts:operationMaxAttempts, attempts:0, status:'pending', createdAt, error:'', leaseOwner:'', leaseUntil:0
       }));
-      if (store.putBatch) return store.putBatch(values);
-      return Promise.all(definitions.map(definition => prepare(definition)));
+      const existing = await Promise.all(values.map(value => store.get(value.id)));
+      const missing = values.filter((value, index) => !existing[index]);
+      let stored = [];
+      if (missing.length) {
+        stored = store.putBatch
+          ? await store.putBatch(missing)
+          : await Promise.all(missing.map(value => prepare(value)));
+      }
+      const byId = new Map(stored.map(value => [value.id, value]));
+      return values.map((value, index) => existing[index] || byId.get(value.id) || value);
     }
 
     async function execute(id, { manual = false } = {}) {

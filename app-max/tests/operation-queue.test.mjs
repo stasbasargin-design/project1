@@ -29,6 +29,9 @@ function memoryStore() {
   const definitions = ['one','two','three'].map(name => ({id:`entry:${name}`,scope:'test|user-a',method:'/defects/entries/add',kind:'entry',documentKey:'doc-3',clientEntryId:`client:${name}`,body:{documentRef:'doc-3',clientEntryId:`client:${name}`,entry:{clientEntryId:`client:${name}`,file:{fileName:`${name}.jpg`,contentBase64:name}}}}));
   const prepared = await queue.prepareBatch(definitions);
   assert.equal((await queue.list('test|user-a')).length, 3);
+  const replay = await queue.prepareBatch(definitions.map(item => ({...item, clientEntryId:`changed:${item.clientEntryId}`, requestId:'changed-request', body:{...item.body, entry:{...item.body.entry, file:{...item.body.entry.file, contentBase64:'changed-before-retry'}}}})));
+  assert.deepEqual(replay.map(item => item.clientEntryId), prepared.map(item => item.clientEntryId));
+  assert.deepEqual(replay.map(item => item.body.entry.file.contentBase64), ['one','two','three']);
   definitions[0].body.entry.file.contentBase64 = 'changed-after-save';
   for (const operation of prepared) await queue.run(operation.id);
   assert.deepEqual(sent.map(item => item.body.entry.file.contentBase64), ['one','two','three']);

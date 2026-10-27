@@ -15,7 +15,7 @@ function element(id) {
 const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,value:100},
  {id:'engineHours',label:'Моточасы',type:'number',required:false,value:''},
  {id:'reason',label:'Дополнения к причине обращения',type:'textarea',required:false,value:''}];
-let failPhoto=true, photoRequired=true, acceptanceUpload404=false;
+let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdDefectResponse=false, releaseDefectResponse, notifyDefectRequest;
 const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck',plate:'A123BC'},mileage:123456};
 const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams,AbortController,crypto:webcrypto,
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
@@ -36,6 +36,10 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
   if(url.endsWith('/orders/get'))data={order};
   if(url.endsWith('/defects/start'))data={documentRef:'def-1',entries:[]};
   if(url.endsWith('/defects/entries/add')){ok=!(body.entry.type==='photo'&&failPhoto);data={entry:{...body.entry,entryRef:'entry-1'}};}
+  if (url.endsWith('/defects/entries/add') && holdDefectResponse) {
+    notifyDefectRequest?.();
+    await new Promise(resolve => { releaseDefectResponse = resolve; });
+  }
   return {ok,status:ok?200:500,async text(){return JSON.stringify(ok?{success:true,data}:{success:false,error:{message:'Photo rejected'}});}};
  }});
 context.window=context;
@@ -46,13 +50,14 @@ const queueRecords = new Map();
 const queueStore = {
   async get(id){ return queueRecords.get(id); },
   async put(value){ queueRecords.set(value.id, structuredClone(value)); },
-  async delete(id){ queueRecords.delete(id); }
+  async delete(id){ queueRecords.delete(id); },
+  async list(scope){ return [...queueRecords.values()].filter(item => item.scope === scope); }
 };
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, queueCompletion, renderAcceptancePhoto, ensureDefectSheet, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, queueCompletion, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -121,6 +126,34 @@ assert.equal(completions().length,1);
 assert.deepEqual(completions()[0].body.formValues,{mileage:100,engineHours:'',reason:''});
 assert.equal(completions()[0].body.answers.required,'ok');assert.equal(completions()[0].body.userId,'123');
 assert.equal(app.currentOrder()._acceptance,null);
+
+// Two quick clicks on one entry must share a single queued request and idempotency key.
+const duplicateStart=calls.filter(c=>c.url.endsWith('/defects/entries/add')).length;
+holdDefectResponse=true;
+const defectRequestStarted=new Promise(resolve=>{notifyDefectRequest=resolve;});
+const duplicateBody={orderRef:'test-order',orderId:'test-order',documentRef:'duplicate-doc',entry:{type:'text',text:'one logical record'}};
+const duplicateFirst=app.sendQueuedEntry('duplicate-entry','/defects/entries/add',duplicateBody);
+await defectRequestStarted;
+const duplicateSecond=app.sendQueuedEntry('duplicate-entry','/defects/entries/add',duplicateBody);
+assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length,duplicateStart+1);
+holdDefectResponse=false;releaseDefectResponse();
+notifyDefectRequest=undefined;
+const [duplicateA,duplicateB]=await Promise.all([duplicateFirst,duplicateSecond]);
+assert.equal(duplicateA.operation.clientEntryId,duplicateB.operation.clientEntryId);
+
+// Completion intent is persisted before a pending entry is confirmed and runs last.
+const completionStart=calls.length;
+holdDefectResponse=true;
+const intentEntryStarted=new Promise(resolve=>{notifyDefectRequest=resolve;});
+const intentEntry=app.sendQueuedEntry('completion-intent-entry','/defects/entries/add',{orderRef:'test-order',orderId:'test-order',documentRef:'completion-intent-doc',entry:{type:'text',text:'before completion'}});
+await intentEntryStarted;
+const intentCompletion={id:'/api/1c||123:complete:defects:completion-intent-doc',scope:'/api/1c||123',method:'/defects/complete',kind:'complete',requestId:'completion-intent-request',documentKey:'completion-intent-doc',body:{documentRef:'completion-intent-doc'}};
+const pendingCompletion=app.queueCompletion(intentCompletion);
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(queueRecords.get(intentCompletion.id)?.requestId,'completion-intent-request');
+holdDefectResponse=false;releaseDefectResponse();notifyDefectRequest=undefined;
+await Promise.all([intentEntry,pendingCompletion]);
+assert.deepEqual(calls.slice(completionStart).map(call=>call.url.replace('/api/1c','')),['/defects/entries/add','/defects/complete']);
 
 // MP photo payload uses the shared defects endpoint but keeps the acceptance document reference.
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
