@@ -55,8 +55,7 @@ const queueStore = {
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, ensureDefectSheet, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -68,6 +67,9 @@ app.state.views={orders:'Orders',mp:'MP',executor:'Executor',tech:'Tech',clients
 const photoPayload=await app.fileToPayload({name:'camera.heic',type:'image/jpeg',size:10},'photo');
 assert.equal(photoPayload.fileName,'camera.jpg');assert.equal(photoPayload.mimeType,'image/jpeg');
 app.state.user={name:'Viewer'};
+const safeReport=app.diagnosticReport(app.errorDiagnostic({status:422,code:'VALIDATION',message:'secret attachment content'}, {route:'/defects/entries/add',requestId:'request-1',clientEntryId:'entry-1',attempt:2}));
+assert.match(safeReport,/HTTP status: 422/);assert.match(safeReport,/Маршрут: \/defects\/entries\/add/);assert.match(safeReport,/requestId: request-1/);assert.match(safeReport,/clientEntryId: entry-1/);assert.match(safeReport,/Попытка: 2/);assert.match(safeReport,/Код: VALIDATION/);
+assert.doesNotMatch(safeReport,/secret attachment content/);
 const externalAuthorHtml=app.renderMessages([{side:'mine',author:'Actual sender',createdAt:'',text:'Test'}]);
 assert.match(externalAuthorHtml,/Actual sender/);
 assert.doesNotMatch(externalAuthorHtml,/Viewer/);

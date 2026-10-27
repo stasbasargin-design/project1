@@ -43,7 +43,7 @@
     user: null, userId: '', authMode: '', serviceBotId: '', clientBotId: '', loading: false, error: '', busy: false,
     unreadMessages:null, unreadRevision:0, lastUnreadMessages:null, seenEvents:new Set(), polling:false, notifications: [], notificationCursor: '', clientTopics: [], selectedClientTopic: '',
     clientMessages: {}, chatGroups: [], selectedChatGroup: '', chatMessages: {},
-    search: '', pollTimer: null, initialized: false, failedOperationId: ''
+    search: '', pollTimer: null, initialized: false, failedOperationId: '', failedOperationReport: ''
   };
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
@@ -157,6 +157,43 @@
     return '';
   }
 
+  function diagnosticToken(value) {
+    return String(value || '').trim().replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 160);
+  }
+
+  function safeDiagnosticMessage(error, status) {
+    if (status === 422) return '1С отклонила данные операции.';
+    if (status) return `1С вернула HTTP ${status}.`;
+    if (error?.code === 'TIMEOUT') return 'Истекло время ожидания ответа 1С.';
+    return 'Не удалось подтвердить результат операции.';
+  }
+
+  function errorDiagnostic(error, {route = '', requestId: request = '', clientEntryId = '', attempt = 0} = {}) {
+    const inherited = error?.diagnostic || {};
+    const status = Number(inherited.status || error?.status || 0);
+    const code = diagnosticToken(inherited.code || error?.code || 'ONE_C_ERROR') || 'ONE_C_ERROR';
+    return {
+      status, route: String(inherited.route || route || '').startsWith('/') ? String(inherited.route || route) : '',
+      requestId: diagnosticToken(inherited.requestId || request), clientEntryId: diagnosticToken(clientEntryId),
+      time: String(inherited.time || nowIso()), attempt: Number(attempt || 0), code,
+      message: safeDiagnosticMessage(error, status)
+    };
+  }
+
+  function diagnosticReport(diagnostic) {
+    return [
+      'I-MAX: отчёт об ошибке отправки',
+      `HTTP status: ${diagnostic.status || 'нет ответа'}`,
+      `Маршрут: ${diagnostic.route || 'не определён'}`,
+      `requestId: ${diagnostic.requestId || 'не определён'}`,
+      `clientEntryId: ${diagnostic.clientEntryId || 'не определён'}`,
+      `Время: ${diagnostic.time}`,
+      `Попытка: ${diagnostic.attempt || 'не определена'}`,
+      `Код: ${diagnostic.code}`,
+      `Сообщение: ${diagnostic.message}`
+    ].join('\n');
+  }
+
   async function call1C(method, payload = {}, options = {}) {
     window.ITUS_WORKTIME?.validateRequest(method, payload);
     const base = String(CONFIG.apiBase || '').replace(/\/+$/, '');
@@ -187,6 +224,7 @@
       return data;
     } catch (error) {
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
+      error.diagnostic = errorDiagnostic(error, { route:method, requestId:headers['X-ITUS-Request-Id'] });
       connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
       if (!options.silent) toast(`1С: ${error.message}`, true);
       throw error;
@@ -365,11 +403,28 @@
     const operation = error?.operation;
     if (!operation) throw error;
     state.failedOperationId = operation.id;
+    state.failedOperationReport = diagnosticReport(errorDiagnostic(error, {
+      route:operation.method, requestId:operation.requestId, clientEntryId:operation.clientEntryId, attempt:operation.attempts
+    }));
+    const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
     if (error.queueStatus === 'invalid') {
-      showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', '<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>');
+      showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', `${report}<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>`);
       return;
     }
-    showSheet('Не удалось подтвердить отправку', 'Пакет сохранён на устройстве. Автоматические попытки остановлены.', '<button class="primary" data-action="retry-failed-operation">Повторить</button>');
+    showSheet('Не удалось подтвердить отправку', 'Пакет сохранён на устройстве. Автоматические попытки остановлены.', `${report}<button class="primary" data-action="retry-failed-operation">Повторить</button>`);
+  }
+
+  async function copyOperationReport() {
+    if (!state.failedOperationReport) return toast('Отчёт об ошибке не найден', true);
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(state.failedOperationReport);
+      else {
+        const area = document.createElement('textarea'); area.value = state.failedOperationReport;
+        area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0'; document.body.append(area);
+        area.select(); document.execCommand('copy'); area.remove();
+      }
+      toast('Отчёт скопирован');
+    } catch { toast('Не удалось скопировать отчёт', true); }
   }
 
   async function sendQueuedOperation(definition, { manual = false } = {}) {
@@ -385,7 +440,7 @@
     if (!id || !operationQueue) return toast('Сохранённый пакет не найден', true);
     try {
       await operationQueue.run(id, { manual: true });
-      state.failedOperationId = '';
+      state.failedOperationId = ''; state.failedOperationReport = '';
       closeSheet();
       const order = currentOrder();
       if (order) await loadSingleOrder(order.orderRef || order.id);
@@ -1711,6 +1766,7 @@
       if (action === 'test-1c') return test1C();
       if (action === 'retry-init') { closeSheet(); return initialize(); }
       if (action === 'retry-failed-operation') return retryFailedOperation();
+      if (action === 'copy-operation-report') return copyOperationReport();
       if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
       if (action === 'close-sheet') return closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return render(); }
