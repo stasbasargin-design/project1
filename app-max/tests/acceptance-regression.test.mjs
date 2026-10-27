@@ -15,7 +15,7 @@ function element(id) {
 const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,value:100},
  {id:'engineHours',label:'Моточасы',type:'number',required:false,value:''},
  {id:'reason',label:'Дополнения к причине обращения',type:'textarea',required:false,value:''}];
-let failPhoto=true, photoRequired=true, acceptanceUpload404=false;
+let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdEntryResponse=false, releaseEntryResponse, notifyEntryRequest;
 const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck',plate:'A123BC'},mileage:123456};
 const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams,AbortController,crypto:webcrypto,
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
@@ -35,7 +35,11 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
   }
   if(url.endsWith('/orders/get'))data={order};
   if(url.endsWith('/defects/start'))data={documentRef:'def-1',entries:[]};
-  if(url.endsWith('/defects/entries/add')){ok=!(body.entry.type==='photo'&&failPhoto);data={entry:{...body.entry,entryRef:'entry-1'}};}
+  if(url.endsWith('/defects/entries/add')){ok=!(body.entry.type==='photo'&&failPhoto);data={entry:{...body.entry,entryRef:body.clientEntryId || 'entry-1'}};}
+  if (url.endsWith('/defects/entries/add') && holdEntryResponse) {
+    notifyEntryRequest?.();
+    await new Promise(resolve => { releaseEntryResponse = resolve; });
+  }
   return {ok,status:ok?200:500,async text(){return JSON.stringify(ok?{success:true,data}:{success:false,error:{message:'Photo rejected'}});}};
  }});
 context.window=context;
@@ -51,8 +55,8 @@ const queueStore = {
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, ensureDefectSheet, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, ensureDefectSheet, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -104,6 +108,18 @@ assert.equal(app.processProgress(process,'_acceptance').done,2);
 failPhoto=false;await app.uploadDefectFile(file,'photo');
 const retryCalls=calls.filter(c=>c.url.endsWith('/defects/entries/add')).slice(retryStart);
 assert.equal(retryCalls.length,6);assert.ok(retryCalls.every(call=>call.body.clientEntryId===retryCalls[0].body.clientEntryId));
+const duplicateFile={name:'duplicate.png',type:'image/png',size:11};
+const entryCount=app.currentOrder()._defectSheet.entries.length;
+const duplicateStart=calls.filter(c=>c.url.endsWith('/defects/entries/add')).length;
+holdEntryResponse=true;
+const entryRequestStarted=new Promise(resolve=>{notifyEntryRequest=resolve;});
+const duplicateFirst=app.uploadDefectFile(duplicateFile,'photo');
+await entryRequestStarted;
+const duplicateSecond=app.uploadDefectFile(duplicateFile,'photo');
+assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length,duplicateStart+1);
+holdEntryResponse=false;releaseEntryResponse();notifyEntryRequest=undefined;
+await Promise.all([duplicateFirst,duplicateSecond]);
+assert.equal(app.currentOrder()._defectSheet.entries.length,entryCount+1);
 app.renderDefectSheet();assert.match(element('sheetBody').innerHTML,/class="defect-photo-preview"/);assert.doesNotMatch(element('sheetBody').innerHTML,/Открыть вложение/);
 assert.equal(app.acceptanceHasPhoto(),false);
 assert.equal(app.processProgress(process,'_acceptance').done,2);

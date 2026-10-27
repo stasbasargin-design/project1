@@ -944,7 +944,7 @@
 
   const pendingDefectSheets = new Map();
   const pendingDefectEntries = new Map();
-  const activeEntrySubmissions = new Set();
+  const activeEntrySubmissions = new Map();
 
   function defectEntryKey(order, documentRef, kind, value) {
     const identity = typeof value === 'string'
@@ -968,9 +968,8 @@
   async function sendQueuedEntry(attemptKey, method, body) {
     const scope = queueScope();
     const queueId = `${scope}:entry:${attemptKey}`;
-    if (activeEntrySubmissions.has(queueId)) throw Object.assign(new Error('Эта операция уже отправляется'), {code:'QUEUE_BUSY'});
-    activeEntrySubmissions.add(queueId);
-    try {
+    if (activeEntrySubmissions.has(queueId)) return activeEntrySubmissions.get(queueId);
+    const submission = (async () => {
       const proposedId = defectEntryId(attemptKey);
       const operation = await operationQueue.prepare({
         id: queueId, scope, method, clientEntryId: proposedId,
@@ -986,7 +985,18 @@
         showQueuedOperationError(error);
         throw error;
       }
-    } finally { activeEntrySubmissions.delete(queueId); }
+    })();
+    activeEntrySubmissions.set(queueId, submission);
+    try { return await submission; }
+    finally { activeEntrySubmissions.delete(queueId); }
+  }
+
+  function appendQueuedEntry(process, response, operation, fallback) {
+    const raw = response.entry || response.data?.entry || { ...fallback, id: operation.clientEntryId };
+    const entry = API.normalizeProcess({ entries:[raw] }, 'x').entries[0];
+    process.entries = Array.isArray(process.entries) ? process.entries : [];
+    if (!process.entries.some(item => String(item.id || '') === String(entry.id || operation.clientEntryId))) process.entries.push(entry);
+    return entry;
   }
 
   async function runPreparedOperations(operations) {
@@ -1108,9 +1118,7 @@
       if (error.status === 404) throw new Error('Фото получено, но метод /defects/entries/add отсутствует в 1С. Попросите администратора 1С добавить метод; файл не сохранён.');
       throw error;
     }
-    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
-    process.entries = Array.isArray(process.entries) ? process.entries : [];
-    process.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
+    appendQueuedEntry(process, response, operation, { type:kind, file:operation.body.entry.file, createdAt:nowIso(), author:state.user?.name || '' });
     render(); toast('Файл добавлен в акт приёма');
   }
 
@@ -1120,8 +1128,7 @@
     const sheet = await ensureDefectSheet();
     const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
     const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, entry: { type: 'text', text } }));
-    const entry = response.entry || response.data?.entry || { id: operation.clientEntryId, type: 'text', text, createdAt: nowIso(), author: state.user?.name || '' };
-    sheet.entries.push(API.normalizeProcess({ entries: [entry] }, 'x').entries[0]);
+    appendQueuedEntry(sheet, response, operation, { type:'text', text, createdAt:nowIso(), author:state.user?.name || '' });
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
   }
 
@@ -1229,8 +1236,7 @@
     const payload = await fileToPayload(file, kind);
     const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
     const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, entry: { type: kind, file: payload } });
-    const raw = response.entry || response.data?.entry || { id: operation.clientEntryId, type: kind, file: payload, createdAt: nowIso(), author: state.user?.name || '' };
-    sheet.entries.push(API.normalizeProcess({ entries: [raw] }, 'x').entries[0]);
+    appendQueuedEntry(sheet, response, operation, { type:kind, file:operation.body.entry.file, createdAt:nowIso(), author:state.user?.name || '' });
     render(); if (!$('overlay').classList.contains('hidden')) renderDefectSheet(); toast('Файл добавлен в дефектовку');
   }
 
