@@ -48,6 +48,17 @@
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
   const activeCompletions = new Map();
+  const pendingActionButtons = new WeakSet();
+  const longRunningActions = new Set([
+    'login', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation',
+    'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
+    'start-acceptance', 'complete-acceptance', 'choose-post', 'set-post', 'assign-executor', 'assign-other-executor', 'set-executor',
+    'start-executor-work', 'complete-checklist', 'package-create', 'package-select', 'worktime-submit', 'package-start', 'package-pause', 'package-close',
+    'start-quality', 'request-quality', 'complete-quality', 'service-history', 'open-defect-chat', 'send-defect-text', 'complete-defect-sheet',
+    'load-client-topics', 'select-client-topic', 'refresh-client-messages', 'send-client-message',
+    'load-chat-groups', 'select-chat-topic', 'refresh-chat-messages', 'send-chat-message',
+    'msg-new-chat', 'msg-source', 'msg-section', 'msg-open', 'msg-refresh', 'msg-refresh-messages', 'msg-send', 'msg-media', 'msg-poll-send', 'msg-poll-vote'
+  ]);
   let mediaPicker = null;
 
   const messenger = window.ITUS_MESSENGER?.create({
@@ -1806,6 +1817,14 @@
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
+    const tracksPendingState = longRunningActions.has(action);
+    if (button.disabled || (tracksPendingState && pendingActionButtons.has(button))) return;
+    if (tracksPendingState) {
+      pendingActionButtons.add(button);
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      button.classList.add('is-pending');
+    }
     try {
       if (mediaPicker?.handle(action, button)) return;
       if (action.startsWith('msg-')) return messenger?.handle(action,button);
@@ -1896,6 +1915,14 @@
       if (action === 'open-notification') return openNotification(button.dataset.event);
       if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return renderNotifications(); }
     } catch (error) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); }
+    finally {
+      if (tracksPendingState && button.isConnected) {
+        pendingActionButtons.delete(button);
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.classList.remove('is-pending');
+      }
+    }
   });
 
   $('closeSheetButton').addEventListener('click', closeSheet);
