@@ -21,7 +21,7 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
  location:{search:'',href:'http://test.local/'},navigator:{},
  localStorage:{getItem(){return '';},setItem(){},removeItem(){}},
- document:{getElementById:element,querySelector(){return null;},addEventListener(name,fn){handlers[name]=fn;}},
+  document:{activeElement:null,getElementById:element,querySelector(){return null;},addEventListener(name,fn){handlers[name]=fn;}},
  FileReader:class{readAsDataURL(){this.result='data:image/png;base64,AA==';this.onload();}},
  async fetch(url,options){
   const body=JSON.parse(options.body); calls.push({url,body});let data={};let ok=true;
@@ -64,6 +64,8 @@ vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
 const retainedOrders=app.state.orders;
+let blurCount=0;context.document.activeElement={matches:selector=>selector.includes('textarea'),blur(){blurCount++;}};
+app.state.view='tech';context.ITUS_BACK();assert.equal(blurCount,1);assert.equal(app.state.view,'tech');context.document.activeElement=null;
 app.state.view='tech';context.ITUS_BACK();assert.equal(app.state.view,'orders');assert.equal(app.state.orders,retainedOrders);
 context.ITUS_BACK();assert.equal(app.state.view,'orders');
 app.state.views={mp:'MP',orders:'Orders'};app.state.view='orders';context.ITUS_BACK();assert.equal(app.state.view,'mp');
