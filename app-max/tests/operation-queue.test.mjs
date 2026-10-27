@@ -117,6 +117,8 @@ function memoryStore() {
   const invalid = await store.get('entry:3');
   assert.equal(invalid.status, 'invalid');
   assert.deepEqual(invalid.diagnostic, {status:422,route:'/defects/entries/add',requestId:'',time:'2026-10-27T10:00:00.000Z',code:'VALIDATION',message:'safe'});
+  await assert.rejects(queue.run('entry:3'), error => error?.queueStatus === 'invalid');
+  assert.deepEqual(methods, ['/defects/entries/add']);
   assert.ok(!methods.includes('/acceptance/complete'));
 }
 

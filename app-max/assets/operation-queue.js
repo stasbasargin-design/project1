@@ -162,6 +162,16 @@
     async function execute(id, { manual = false } = {}) {
       let operation = await store.get(id);
       if (!operation) throw new Error('Сохранённый пакет отправки не найден');
+      if (!manual && ['invalid', 'failed'].includes(operation.status)) {
+        const error = Object.assign(new Error('Сохранённый пакет требует ручной проверки перед повтором'), {
+          code: operation.error || 'SEND_FAILED',
+          status: Number(operation.diagnostic?.status || 0),
+          diagnostic: operation.diagnostic || undefined,
+          operation,
+          queueStatus: operation.status
+        });
+        throw error;
+      }
       if (manual) {
         operation = { ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null };
         await store.put(operation);
