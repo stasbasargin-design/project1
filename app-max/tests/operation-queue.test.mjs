@@ -110,11 +110,13 @@ function memoryStore() {
 
 {
   const store = memoryStore(), methods = [];
-  const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0,0,0,0,0], sender:async operation => {methods.push(operation.method); throw Object.assign(new Error('check data'), {status:422});}});
+  const queue = context.ITUS_OPERATION_QUEUE.create({store, delays:[0,0,0,0,0], sender:async operation => {methods.push(operation.method); throw Object.assign(new Error('check data'), {status:422, diagnostic:{status:422,route:operation.method,requestId:operation.requestId,time:'2026-10-27T10:00:00.000Z',code:'VALIDATION',message:'safe'}});}});
   await queue.prepare({id:'entry:3', method:'/defects/entries/add', clientEntryId:'invalid', body:{entry:{text:''}}});
   await assert.rejects(queue.run('entry:3'), /check data/);
   assert.deepEqual(methods, ['/defects/entries/add']);
-  assert.equal((await store.get('entry:3')).status, 'invalid');
+  const invalid = await store.get('entry:3');
+  assert.equal(invalid.status, 'invalid');
+  assert.deepEqual(invalid.diagnostic, {status:422,route:'/defects/entries/add',requestId:'',time:'2026-10-27T10:00:00.000Z',code:'VALIDATION',message:'safe'});
   assert.ok(!methods.includes('/acceptance/complete'));
 }
 

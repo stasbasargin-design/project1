@@ -121,7 +121,7 @@
     function operationFromDefinition({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }, createdAt = new Date().toISOString()) {
       return {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
       };
     }
 
@@ -163,7 +163,7 @@
       let operation = await store.get(id);
       if (!operation) throw new Error('Сохранённый пакет отправки не найден');
       if (manual) {
-        operation = { ...operation, attempts: 0, status: 'pending', error: '' };
+        operation = { ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null };
         await store.put(operation);
       }
       const attemptLimit = Number(operation.maxAttempts || maxAttempts);
@@ -184,7 +184,8 @@
           operation = {
             ...operation,
             status: validation ? 'invalid' : (operation.attempts >= attemptLimit || !isRetryable(error) ? 'failed' : 'pending'),
-            error: String(error?.message || error || '')
+            error: String(error?.code || (validation ? 'HTTP_422' : 'SEND_FAILED')),
+            diagnostic: error?.diagnostic && typeof error.diagnostic === 'object' ? clone(error.diagnostic) : null
           };
           await store.put(operation);
           if (validation || !isRetryable(error) || operation.attempts >= attemptLimit) {

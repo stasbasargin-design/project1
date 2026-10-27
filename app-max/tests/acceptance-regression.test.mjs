@@ -74,6 +74,7 @@ app.state.user={name:'Viewer'};
 const safeReport=app.diagnosticReport(app.errorDiagnostic({status:422,code:'VALIDATION',message:'secret attachment content'}, {route:'/defects/entries/add',requestId:'request-1',clientEntryId:'entry-1',attempt:2}));
 assert.match(safeReport,/HTTP status: 422/);assert.match(safeReport,/Маршрут: \/defects\/entries\/add/);assert.match(safeReport,/requestId: request-1/);assert.match(safeReport,/clientEntryId: entry-1/);assert.match(safeReport,/Попытка: 2/);assert.match(safeReport,/Код: VALIDATION/);
 assert.doesNotMatch(safeReport,/secret attachment content/);
+assert.match(safeReport,/Результат в 1С: не подтверждён клиентом/);
 const externalAuthorHtml=app.renderMessages([{side:'mine',author:'Actual sender',createdAt:'',text:'Test'}]);
 assert.match(externalAuthorHtml,/Actual sender/);
 assert.doesNotMatch(externalAuthorHtml,/Viewer/);

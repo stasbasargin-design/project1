@@ -169,7 +169,7 @@
     return 'Не удалось подтвердить результат операции.';
   }
 
-  function errorDiagnostic(error, {route = '', requestId: request = '', clientEntryId = '', attempt = 0} = {}) {
+  function errorDiagnostic(error, {route = '', requestId: request = '', clientEntryId = '', attempt = 0, operationKind = '', attachmentType = ''} = {}) {
     const inherited = error?.diagnostic || {};
     const status = Number(inherited.status || error?.status || 0);
     const code = diagnosticToken(inherited.code || error?.code || 'ONE_C_ERROR') || 'ONE_C_ERROR';
@@ -177,6 +177,8 @@
       status, route: String(inherited.route || route || '').startsWith('/') ? String(inherited.route || route) : '',
       requestId: diagnosticToken(inherited.requestId || request), clientEntryId: diagnosticToken(clientEntryId),
       time: String(inherited.time || nowIso()), attempt: Number(attempt || 0), code,
+      operationKind: diagnosticToken(inherited.operationKind || operationKind),
+      attachmentType: diagnosticToken(inherited.attachmentType || attachmentType),
       message: safeDiagnosticMessage(error, status)
     };
   }
@@ -191,6 +193,9 @@
       `Время: ${diagnostic.time}`,
       `Попытка: ${diagnostic.attempt || 'не определена'}`,
       `Код: ${diagnostic.code}`,
+      `Операция: ${diagnostic.operationKind || 'не определена'}`,
+      `Тип вложения: ${diagnostic.attachmentType || 'нет'}`,
+      `Результат в 1С: не подтверждён клиентом; требуется сверка по requestId`,
       `Сообщение: ${diagnostic.message}`
     ].join('\n');
   }
@@ -405,7 +410,8 @@
     if (!operation) throw error;
     state.failedOperationId = operation.id;
     state.failedOperationReport = diagnosticReport(errorDiagnostic(error, {
-      route:operation.method, requestId:operation.requestId, clientEntryId:operation.clientEntryId, attempt:operation.attempts
+      route:operation.method, requestId:operation.requestId, clientEntryId:operation.clientEntryId, attempt:operation.attempts,
+      operationKind:operation.kind, attachmentType:operation.body?.entry?.type
     }));
     const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
     if (error.queueStatus === 'invalid') {
