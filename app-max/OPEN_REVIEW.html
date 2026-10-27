@@ -957,8 +957,8 @@ window.ITUS_CONFIG = {
     function initials(name){return String(name || '?').split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase();}
     function time(value){if(!value)return '';const d=new Date(value);return Number.isFinite(+d)?new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',...(root.ITUS_CONFIG?.DISPLAY_TIME_ZONE?{timeZone:root.ITUS_CONFIG.DISPLAY_TIME_ZONE}:{})}).format(d):'';}
     function day(value){if(!value)return '';return root.ITUS_FEATURES.dateTime(value).split(',')[0];}
-    function resize(){if(!visible)return;const frame=document.querySelector('.messenger');if(frame)frame.style.height=Math.max(300,(root.visualViewport?.height || root.innerHeight)-frame.getBoundingClientRect().top-10)+'px';}
-    root.addEventListener('resize',resize);root.visualViewport?.addEventListener('resize',resize);
+    function resize(){if(!visible)return;const frame=document.querySelector('.messenger');if(!frame)return;const viewport=root.visualViewport;const bottom=Number(viewport?.height || root.innerHeight)+Number(viewport?.offsetTop || 0);const height=Math.max(0,bottom-frame.getBoundingClientRect().top-10);frame.style.height=height+'px';frame.style.minHeight=Math.min(300,height)+'px';}
+    root.addEventListener('resize',resize);root.addEventListener('orientationchange',resize);root.visualViewport?.addEventListener('resize',resize);root.visualViewport?.addEventListener('scroll',resize);
     function listHtml(){
       const q=query.toLocaleLowerCase('ru-RU');
       let items=(section==='contacts'&&source==='staff'?contacts:records[source]).filter(x=>[x.title,x.subtitle,x.lastMessage].join(' ').toLocaleLowerCase('ru-RU').includes(q));
@@ -3619,8 +3619,17 @@ window.ITUS_CONFIG = {
     }
   });
 
+  function closeFocusedEditor() {
+    const active = document.activeElement;
+    if (!active || !(active.isContentEditable || active.matches?.('input, textarea, select, [contenteditable="true"]'))) return false;
+    active.blur?.();
+    return true;
+  }
+
   window.ITUS_BACK = () => {
+    if (closeFocusedEditor()) return true;
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
+    if (messenger?.back?.()) return true;
     const view = firstMainView();
     if (state.view !== view) void setView(view);
     return true;

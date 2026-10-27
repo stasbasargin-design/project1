@@ -1908,8 +1908,17 @@
     }
   });
 
+  function closeFocusedEditor() {
+    const active = document.activeElement;
+    if (!active || !(active.isContentEditable || active.matches?.('input, textarea, select, [contenteditable="true"]'))) return false;
+    active.blur?.();
+    return true;
+  }
+
   window.ITUS_BACK = () => {
+    if (closeFocusedEditor()) return true;
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
+    if (messenger?.back?.()) return true;
     const view = firstMainView();
     if (state.view !== view) void setView(view);
     return true;
