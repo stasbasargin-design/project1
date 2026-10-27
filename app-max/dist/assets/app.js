@@ -636,7 +636,7 @@
       : completing ? 'Подтверждаем отправку…' : '';
     const completion = processKey === '_quality'
       ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
-      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy ? 'disabled' : ''} aria-busy="${completing}">${completionText ? `${completing ? '<span class="spinner"></span> ' : ''}${esc(completionText)}` : esc(completeLabel)}</button>`;
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy || completionStatus ? 'disabled' : ''} aria-busy="${Boolean(completionStatus) || completing}">${completionText ? `${completionStatus || completing ? '<span class="spinner"></span> ' : ''}${esc(completionText)}` : esc(completeLabel)}</button>`;
     return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
@@ -741,41 +741,20 @@
   async function completeAcceptance() {
     const order = currentOrder(), process = order?._acceptance; if (!process) return;
     const key = `acceptance:${process.documentRef || ''}`;
-    if (activeCompletions.has(key)) return activeCompletions.get(key);
+    if (activeCompletions.has(key) || state.completionStatus?.key === key) return;
     if (state.busy) return;
     validateProcess(process, false);
     if (process.photo?.required !== false && !acceptanceHasPhoto(order)) process.errors.add('photo');
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
-    const completion = (async () => {
-      state.busy = true; state.completionKey = key; state.completionStatus = {key, stage:'waiting'}; render();
-      try {
-        await waitForDocumentEntries(String(process.documentRef || ''), progress => {
-          state.completionStatus = {key, stage:'sending', ...progress}; render();
-        });
-        state.completionStatus = {key, stage:'completing'}; render();
-        const body = orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers });
-        const scope = queueScope();
-        await sendQueuedOperation({ id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete', body, documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete' });
-        const mileageField = process.form.fields.find(f => /mileage|пробег/i.test(f.id));
-        const hoursField = process.form.fields.find(f => /engineHours|hours|моточас/i.test(f.id));
-        const reasonField = process.form.fields.find(f => /reason|appeal|причин/i.test(f.id));
-        if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
-        if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
-        if (reasonField) order.reason = String(process.values[reasonField.id] || '');
-        state.completionStatus = {key, stage:'completed'};
-        order._acceptance = null; await loadSingleOrder(order.orderRef); toast('Приём завершён, данные сохранены в 1С');
-      } catch (error) {
-        state.completionStatus = {key, stage:'error'};
-        if (error?.operation) return;
-        throw error;
-      } finally {
-        state.busy = false; state.completionKey = ''; activeCompletions.delete(key);
-        if (state.completionStatus?.key === key && state.completionStatus.stage === 'completed') state.completionStatus = null;
-        render();
-      }
-    })();
-    activeCompletions.set(key, completion);
-    return completion;
+    const scope = queueScope();
+    const queuedCompletion = await operationQueue.prepare({
+      id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete',
+      body:orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers }),
+      documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete'
+    });
+    state.completionKey = key; state.completionStatus = {key, stage:'waiting'};
+    await refreshQueuedOperations(); render();
+    return runQueuedAcceptanceCompletion(String(process.documentRef || ''), queuedCompletion);
   }
 
   async function choosePost() {
@@ -1143,6 +1122,52 @@
     const remaining = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
     if (remaining.length) throw new Error('Завершение недоступно: не все записи и вложения подтверждены 1С');
   }
+
+  function acceptanceForDocument(documentKey) {
+    const order = state.orders.find(item => String(item._acceptance?.documentRef || '') === String(documentKey));
+    return order ? {order, process:order._acceptance} : {order:null, process:null};
+  }
+
+  async function runQueuedAcceptanceCompletion(documentKey, queuedCompletion = null) {
+    const {order, process} = acceptanceForDocument(documentKey);
+    const key = `acceptance:${documentKey}`;
+    if (!order || !process || activeCompletions.has(key)) return activeCompletions.get(key);
+    const operations = await operationQueue.list(queueScope());
+    const pendingEntries = operations.filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    if (pendingEntries.length) {
+      const failed = pendingEntries.some(item => item.status === 'invalid' || item.status === 'failed');
+      state.completionKey = key;
+      state.completionStatus = {key, stage:failed ? 'error' : 'waiting'};
+      render();
+      return;
+    }
+    const operation = queuedCompletion || operations.find(item => item.kind === 'complete' && item.documentKey === documentKey && item.method === '/acceptance/complete');
+    if (!operation) return;
+    const completion = (async () => {
+      state.busy = true; state.completionKey = key; state.completionStatus = {key, stage:'completing'}; render();
+      try {
+        await operationQueue.run(operation.id);
+        const mileageField = process.form.fields.find(field => /mileage|пробег/i.test(field.id));
+        const hoursField = process.form.fields.find(field => /engineHours|hours|моточас/i.test(field.id));
+        const reasonField = process.form.fields.find(field => /reason|appeal|причин/i.test(field.id));
+        if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
+        if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
+        if (reasonField) order.reason = String(process.values[reasonField.id] || '');
+        state.completionStatus = {key, stage:'completed'};
+        order._acceptance = null; await loadSingleOrder(order.orderRef); toast('Приём завершён, данные сохранены в 1С');
+      } catch (error) {
+        state.completionStatus = {key, stage:'error'};
+        showQueuedOperationError(error);
+      } finally {
+        state.busy = false; state.completionKey = ''; activeCompletions.delete(key);
+        await refreshQueuedOperations();
+        if (state.completionStatus?.key === key && state.completionStatus.stage === 'completed') state.completionStatus = null;
+        render();
+      }
+    })();
+    activeCompletions.set(key, completion);
+    return completion;
+  }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
@@ -1318,7 +1343,10 @@
       }
     }
     // The picker may now close; transport no longer references its File objects or DOM.
-    void runPreparedOperations(operations).then(() => render());
+    void runPreparedOperations(operations).then(async () => {
+      if (type === 'acceptance') await runQueuedAcceptanceCompletion(documentKey);
+      render();
+    });
     return operations;
   }
 

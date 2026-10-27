@@ -54,12 +54,13 @@ const queueRecords = new Map();
 const queueStore = {
   async get(id){ return queueRecords.get(id); },
   async put(value){ queueRecords.set(value.id, structuredClone(value)); },
-  async delete(id){ queueRecords.delete(id); }
+  async delete(id){ queueRecords.delete(id); },
+  async list(scope){ return [...queueRecords.values()].filter(item => !scope || item.scope === scope).map(item => structuredClone(item)); }
 };
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, commitMediaBatch, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -160,6 +161,7 @@ const defectCallsBeforeAcceptanceFallback = calls.filter(c=>c.url.endsWith('/def
 acceptanceUpload404=true;await assert.rejects(app.uploadAcceptanceFile(file,'photo'), /defects\/entries\/add|не сохранён/i);
 assert.equal(calls.filter(c=>c.url.endsWith('/defects/entries/add')).length, defectCallsBeforeAcceptanceFallback + 1);
 acceptanceUpload404=false;
+queueRecords.clear();
 
 photoRequired=false;app.currentOrder()._defectSheet=null;await app.startAcceptance();process=app.currentOrder()._acceptance;
 assert.equal(app.processProgress(process,'_acceptance').total,2);
@@ -178,6 +180,21 @@ assert.equal(completions().length,completionsBeforeJoin+1);
 holdCompletionResponse=false;releaseCompletionResponse();notifyCompletionRequest=undefined;
 await Promise.all([firstCompletion,secondCompletion]);
 assert.equal(completions().length,completionsBeforeJoin+1);
+// Completion queues itself while a batch is sending and only starts after the batch succeeds.
+await app.startAcceptance();process=app.currentOrder()._acceptance;process.answers.required='ok';
+holdEntryResponse=true;
+const queuedEntryStarted=new Promise(resolve=>{notifyEntryRequest=resolve;});
+const queuedCompletionBefore=completions().length;
+const queuedEntryCallsBefore=calls.filter(call=>call.url.endsWith('/defects/entries/add')).length;
+await app.commitMediaBatch('acceptance',[{file:{name:'queued.png',type:'image/png',size:12},kind:'photo',uploadId:'queued-photo'}]);
+await queuedEntryStarted;
+await app.completeAcceptance();
+assert.equal(completions().length,queuedCompletionBefore,'completion must wait for the file batch');
+assert.equal(calls.filter(call=>call.url.endsWith('/defects/entries/add')).length,queuedEntryCallsBefore+1,'completion must not issue a second entry request');
+assert.match(app.renderMpView(),/Ожидание отправки файлов/);
+holdEntryResponse=false;releaseEntryResponse();notifyEntryRequest=undefined;
+await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+assert.equal(completions().length,queuedCompletionBefore+1,'queued completion must run after the file batch succeeds');
 const search=element('orderSearch');search.value='TEST-1';search.selectionStart=6;search.selectionEnd=6;
 let orderSearchRenderWrites=0, appMarkup=element('app').innerHTML;
 Object.defineProperty(element('app'),'innerHTML',{configurable:true,get(){return appMarkup;},set(value){orderSearchRenderWrites++;appMarkup=value;}});
