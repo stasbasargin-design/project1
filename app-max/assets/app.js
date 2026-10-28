@@ -967,8 +967,12 @@
     try {
       const response = await call1C('/worktime/production', { employeeRef: state.user?.employeeRef || '', period: 'today' });
       const data = response.production || response.data?.production || response.data || response;
-      const items = API.extractItems(response, ['items','packages']);
-      $('sheetBody').innerHTML = `<div class="summary"><div class="stat"><span class="tiny">Закрыто часов</span><br><b>${esc(data.closedHours ?? data.hours ?? 0)}</b></div><div class="stat"><span class="tiny">Пакетов</span><br><b>${esc(data.closedPackages ?? items.length)}</b></div></div>${items.length ? `<h3>Закрытые пакеты</h3>${items.map(item => `<div class="entry"><b>${esc(item.orderNumber || item.packageNumber || item.name || '')}</b><br><span class="tiny">${esc(item.hours ?? item.closedHours ?? '')} ч · ${esc(item.closedAt || item.date || '')}</span></div>`).join('')}` : ''}<button class="primary" data-action="close-sheet">Закрыть</button>`;
+      const grades = Array.isArray(data.grades) ? data.grades : [];
+      const total = grades.reduce((sum, item) => sum + (Number.isFinite(Number(item.closedHours)) ? Number(item.closedHours) : 0), 0);
+      const rows = grades.length
+        ? grades.map(item => `<tr><td>${esc(item.grade)}</td><td>${esc(item.closedHours)}</td></tr>`).join('')
+        : '<tr><td colspan="2">Нет закрытых н/ч</td></tr>';
+      $('sheetBody').innerHTML = `<div class="table-wrap"><table class="production-table"><thead><tr><th>Разряд</th><th>Количество закрытых н/ч</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th><th>${esc(total)}</th></tr></tfoot></table></div><button class="primary" data-action="close-sheet">Закрыть</button>`;
     } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
   }
 

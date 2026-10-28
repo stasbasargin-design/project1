@@ -12,6 +12,7 @@ assert.ok(contract.methods['/defects/entries/add'].request.documentRef);
 assert.ok(!contract.methods['/acceptance/entries/add'], 'acceptance attachments use /defects/entries/add');
 for (const route of ['/clients/messages/read','/internal-chat/messages/read','/internal-chat/contacts/list','/internal-chat/direct/open','/auth/qr/start','/auth/qr/confirm','/auth/qr/status']) assert.ok(contract.methods[route]);
 assert.ok(contract.methods['/quality/request']);
+assert.deepEqual(contract.methods['/worktime/production'].responseData.production.grades[0], {grade:'3 разряд',closedHours:3.2});
 const config=readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8');
 assert.match(config,/POLL_INTERVAL_MS:\s*60000/);
 assert.match(config,/MAX_VIDEO_UPLOAD_BYTES:\s*15728640/, '20 MiB video must not be enabled by default before 1C confirmation');
