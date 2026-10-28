@@ -46,6 +46,42 @@ const page = `<!doctype html><meta charset="utf-8"><img src="/wait" hidden><pre 
     expect(left[0].clientEntryId === right[0].clientEntryId, 'concurrent enqueue returned different packages');
     const savedOperations = await make().list('browser');
     expect(savedOperations.length === 2, 'concurrent enqueue created more than one saved package');
+    const leased = {id:'leased-entry',scope:'browser',method:'/defects/entries/add',kind:'entry',documentKey:'doc',clientEntryId:'entry-3',requestId:'request-4',body:{documentRef:'doc',clientEntryId:'entry-3',entry:{clientEntryId:'entry-3',file:{fileName:'three.jpg',contentBase64:'third'}}}};
+    let releaseFirstSender, firstSenderStarted;
+    const firstSenderStartedPromise = new Promise(resolve => { firstSenderStarted = resolve; });
+    const firstSenderReleased = new Promise(resolve => { releaseFirstSender = resolve; });
+    let firstSenderCalls = 0, secondSenderCalls = 0;
+    const firstTab = ITUS_OPERATION_QUEUE.create({delays:[0], sender:async () => { firstSenderCalls++; firstSenderStarted(); await firstSenderReleased; return {success:true}; }});
+    const secondTab = ITUS_OPERATION_QUEUE.create({delays:[0], sender:async () => { secondSenderCalls++; return {success:true}; }});
+    await firstTab.prepare(leased);
+    const firstRun = firstTab.run(leased.id);
+    await firstSenderStartedPromise;
+    const heldOperation = await firstTab.get(leased.id);
+    expect(Boolean(heldOperation.leaseOwner) && Number(heldOperation.leaseUntil) > Date.now(), 'active sender did not keep its IndexedDB lease');
+    let secondWasBusy = false;
+    try { await secondTab.run(leased.id); } catch (error) { secondWasBusy = error && error.code === 'QUEUE_BUSY'; }
+    expect(secondWasBusy, 'second queue did not observe the active lease');
+    expect(firstSenderCalls === 1 && secondSenderCalls === 0, 'second queue called sender while first sender was held');
+    releaseFirstSender();
+    await firstRun;
+    const staleLease = {...leased, id:'expired-lease-entry', clientEntryId:'entry-4', requestId:'request-5', body:{...leased.body, clientEntryId:'entry-4', entry:{...leased.body.entry, clientEntryId:'entry-4'}}};
+    await firstTab.prepare(staleLease);
+    const storeA = ITUS_OPERATION_QUEUE.indexedDbStore();
+    const storeB = ITUS_OPERATION_QUEUE.indexedDbStore();
+    const staleOperation = await storeA.get(staleLease.id);
+    await storeA.put({...staleOperation, leaseOwner:'closed-tab', leaseUntil:Date.now() - 1});
+    let recoveredSenderCalls = 0;
+    const recoveredTab = ITUS_OPERATION_QUEUE.create({delays:[0], sender:async () => { recoveredSenderCalls++; return {success:true}; }});
+    await recoveredTab.run(staleLease.id);
+    expect(recoveredSenderCalls === 1, 'expired lease did not recover after tab close');
+    const releaseCheck = {...leased, id:'owner-release-entry', clientEntryId:'entry-5', requestId:'request-6', body:{...leased.body, clientEntryId:'entry-5', entry:{...leased.body.entry, clientEntryId:'entry-5'}}};
+    await firstTab.prepare(releaseCheck);
+    await storeA.claim(releaseCheck.id, 'old-owner', 1);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await storeB.claim(releaseCheck.id, 'new-owner', 60000);
+    await storeA.release(releaseCheck.id, 'old-owner');
+    const protectedLease = await storeB.get(releaseCheck.id);
+    expect(protectedLease.leaseOwner === 'new-owner', 'stale owner released another tab lease');
     result.textContent = 'OK';
   } catch (error) { result.textContent = 'ERROR: ' + (error && error.message || error); }
   await fetch('/complete?result=' + encodeURIComponent(result.textContent));
@@ -79,4 +115,4 @@ const output = await new Promise((resolve, reject) => {
 });
 await new Promise(resolve => server.close(resolve));
 assert.match(output, /<pre id="result">OK<\/pre>/);
-console.log('Operation queue IndexedDB: restart identity, concurrent enqueue and content conflict OK.');
+console.log('Operation queue IndexedDB: restart identity, enqueue, lease ownership and recovery OK.');

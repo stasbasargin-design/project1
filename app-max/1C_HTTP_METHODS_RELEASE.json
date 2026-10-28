@@ -595,17 +595,17 @@
       },
       "responseData": {
         "production": {
-          "closedHours": 5.4,
-          "closedPackages": 2
-        },
-        "items": [
-          {
-            "packageNumber": "УРВ-1",
-            "orderNumber": "РИЦ-З22752",
-            "hours": 3.2,
-            "closedAt": "2026-07-20T12:00:00+05:00"
-          }
-        ]
+          "grades": [
+            {
+              "grade": "3 разряд",
+              "closedHours": 3.2
+            },
+            {
+              "grade": "4 разряд",
+              "closedHours": 2.2
+            }
+          ]
+        }
       }
     },
     "/quality/start": {

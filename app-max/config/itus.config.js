@@ -53,6 +53,12 @@ window.ITUS_CONFIG = {
   WEB_PUSH_VAPID_PUBLIC_KEY: "",
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
+  // Separate raw-file limits. Keep video at the confirmed 15 MiB production value.
+  // The proposed 20 MiB limit requires the coordinated server/1C checks documented in docs/VIDEO_LIMIT_20MB_ROLLOUT.md.
+  MAX_PHOTO_UPLOAD_BYTES: 15728640,
+  MAX_VIDEO_UPLOAD_BYTES: 15728640,
+  MAX_DOCUMENT_UPLOAD_BYTES: 15728640,
+  // Compatibility for older clients; new code uses the type-specific values above.
   MAX_UPLOAD_BYTES: 15728640,
 
   // Пока 1С возвращает только ["orders"], приложение сохраняет все рабочие

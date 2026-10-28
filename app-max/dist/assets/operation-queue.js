@@ -4,6 +4,7 @@
   const DB_NAME = 'itus-operation-queue';
   const STORE_NAME = 'operations';
   const MAX_ATTEMPTS = 5;
+  const LEASE_MS = 600000;
   const RETRY_DELAYS_MS = [0, 1000, 3000, 7000, 15000];
 
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -61,23 +62,73 @@
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
         const request = store.get(id);
-        let acquired = false;
+        let claimed = null;
         request.onsuccess = () => {
           const value = request.result;
           if (!value) return;
-          const activeOtherLease = value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > Date.now();
+          const now = Date.now();
+          const activeOtherLease = value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > now;
           if (activeOtherLease) return;
-          store.put({ ...value, leaseOwner: owner, leaseUntil: Date.now() + leaseMs });
-          acquired = true;
+          claimed = { ...value, leaseOwner: owner, leaseUntil: now + leaseMs };
+          store.put(claimed);
         };
-        tx.oncomplete = () => resolve(acquired);
+        tx.oncomplete = () => resolve(claimed && clone(claimed));
         tx.onerror = () => reject(tx.error || new Error('Ошибка блокировки IndexedDB'));
       });
     };
+    const writeOwned = async (id, owner, value) => {
+      const db = await openDb();
+      if (!db) throw new Error('IndexedDB недоступна');
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get(id);
+        let saved = null;
+        request.onsuccess = () => {
+          const current = request.result;
+          if (!current || current.leaseOwner !== owner || Number(current.leaseUntil || 0) <= Date.now()) return;
+          saved = { ...clone(value), id: current.id, leaseOwner: current.leaseOwner, leaseUntil: current.leaseUntil };
+          store.put(saved);
+        };
+        tx.oncomplete = () => resolve(saved && clone(saved));
+        tx.onerror = () => reject(tx.error || new Error('Не удалось сохранить операцию с блокировкой'));
+      });
+    };
+    const removeOwned = async (id, owner) => {
+      const db = await openDb();
+      if (!db) throw new Error('IndexedDB недоступна');
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get(id);
+        let removed = false;
+        request.onsuccess = () => {
+          const current = request.result;
+          if (!current || current.leaseOwner !== owner || Number(current.leaseUntil || 0) <= Date.now()) return;
+          store.delete(id);
+          removed = true;
+        };
+        tx.oncomplete = () => resolve(removed);
+        tx.onerror = () => reject(tx.error || new Error('Не удалось удалить операцию с блокировкой'));
+      });
+    };
     const release = async (id, owner) => {
-      const value = await transact('readonly', store => store.get(id));
-      if (!value || value.leaseOwner !== owner) return;
-      await transact('readwrite', store => store.put({ ...value, leaseOwner: '', leaseUntil: 0 }));
+      const db = await openDb();
+      if (!db) return false;
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get(id);
+        let released = false;
+        request.onsuccess = () => {
+          const current = request.result;
+          if (!current || current.leaseOwner !== owner) return;
+          store.put({ ...current, leaseOwner: '', leaseUntil: 0 });
+          released = true;
+        };
+        tx.oncomplete = () => resolve(released);
+        tx.onerror = () => reject(tx.error || new Error('Не удалось освободить блокировку операции'));
+      });
     };
     const putBatch = async values => {
       const db = await openDb();
@@ -103,7 +154,7 @@
       put: value => transact('readwrite', store => store.put(clone(value))),
       delete: id => transact('readwrite', store => store.delete(id)),
       list: async scope => (await transact('readonly', store => store.getAll()) || []).filter(item => item.scope === scope),
-      claim, release, putBatch
+      claim, writeOwned, removeOwned, release, putBatch
     };
   }
 
@@ -121,7 +172,7 @@
     function operationFromDefinition({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }, createdAt = new Date().toISOString()) {
       return {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
       };
     }
 
@@ -162,31 +213,54 @@
     async function execute(id, { manual = false } = {}) {
       let operation = await store.get(id);
       if (!operation) throw new Error('Сохранённый пакет отправки не найден');
-      if (manual) {
-        operation = { ...operation, attempts: 0, status: 'pending', error: '' };
-        await store.put(operation);
+      if (!manual && ['invalid', 'failed'].includes(operation.status)) {
+        const error = Object.assign(new Error('Сохранённый пакет требует ручной проверки перед повтором'), {
+          code: operation.error || 'SEND_FAILED',
+          status: Number(operation.diagnostic?.status || 0),
+          diagnostic: operation.diagnostic || undefined,
+          operation,
+          queueStatus: operation.status
+        });
+        throw error;
       }
       const attemptLimit = Number(operation.maxAttempts || maxAttempts);
-      const acquired = store.claim ? await store.claim(id, owner, 600000) : true;
+      const claimed = store.claim ? await store.claim(id, owner, LEASE_MS) : true;
+      const acquired = Boolean(claimed);
       if (!acquired) throw Object.assign(new Error('Операция уже отправляется в другой вкладке'), {code:'QUEUE_BUSY'});
+      operation = claimed === true ? await store.get(id) : claimed;
+      if (!operation) throw Object.assign(new Error('Блокировка операции потеряна'), {code:'QUEUE_BUSY'});
+      const leaseLost = () => Object.assign(new Error('Блокировка операции потеряна; перед повтором сверьте результат отправки'), {code:'QUEUE_BUSY', leaseLost:true});
+      const persistOwned = async value => {
+        const saved = store.writeOwned
+          ? await store.writeOwned(id, owner, value)
+          : (await store.put(value), value);
+        if (!saved) throw leaseLost();
+        operation = saved;
+        return saved;
+      };
       try {
+      if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {
         const delay = Number(delays[operation.attempts] || 0);
         if (delay) await wait(delay);
-        operation = { ...operation, attempts: operation.attempts + 1, status: 'sending' };
-        await store.put(operation); // Persist before transport so a lost response still consumes the attempt.
+        await persistOwned({ ...operation, attempts: operation.attempts + 1, status: 'sending' }); // Persist before transport so a lost response still consumes the attempt.
         try {
           const response = await sender(operation);
-          await store.delete(id);
+          const removed = store.removeOwned
+            ? await store.removeOwned(id, owner)
+            : (await store.delete(id), true);
+          if (!removed) throw leaseLost();
           return response;
         } catch (error) {
+          if (error?.leaseLost) throw error;
           const validation = Number(error?.status || 0) === 422;
           operation = {
             ...operation,
             status: validation ? 'invalid' : (operation.attempts >= attemptLimit || !isRetryable(error) ? 'failed' : 'pending'),
-            error: String(error?.message || error || '')
+            error: String(error?.code || (validation ? 'HTTP_422' : 'SEND_FAILED')),
+            diagnostic: error?.diagnostic && typeof error.diagnostic === 'object' ? clone(error.diagnostic) : null
           };
-          await store.put(operation);
+          await persistOwned(operation);
           if (validation || !isRetryable(error) || operation.attempts >= attemptLimit) {
             error.operation = operation;
             error.queueStatus = operation.status;

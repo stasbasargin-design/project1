@@ -35,6 +35,7 @@ const c=vm.createContext({console,URL,URLSearchParams,AbortController,crypto:web
     if(url.endsWith('/orders/works'))data={workshopRef:'shop',works:[{workRef:'row',name:'Работа'},{workRef:'blocked',name:'Активный пакет',hasActivePackage:true},{workRef:'blocked2',name:'Ссылка активного пакета',activePackageRef:'active'}]};
     if(url.endsWith('/packages/list'))data={packages:[{packageRef:'open-package',packageNumber:'УРВ-7',status:'Не стартовал'},{packageRef:'closed-package',packageNumber:'УРВ-6',status:'Закрыт'}]};
     if(url.endsWith('/executors/list'))data={executors:[{employeeRef:'self',name:'Я'},{employeeRef:'colleague',name:'Коллега'}]};
+    if(url.endsWith('/worktime/production'))data={production:{grades:[{grade:'3 разряд',closedHours:2.5},{grade:'4 разряд',closedHours:1.25}]}};
     if(url.endsWith('/participation/validate'))data={valid:!rejectValidation};
     if(url.endsWith('/packages/create')){if(failCreate)throw Error('Connection lost');data=missingPackage?{}:{package:{packageRef:'created',status:'Создан'}};}
     return {ok:true,status:200,text:async()=>JSON.stringify({success:true,data})};
@@ -42,7 +43,7 @@ const c=vm.createContext({console,URL,URLSearchParams,AbortController,crypto:web
 });c.window=c;
 for(const f of ['review-features.js','api-normalizers.js','worktime.js'])vm.runInContext(fs.readFileSync(new URL('../assets/'+f,import.meta.url),'utf8'),c);
 let src=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-src=src.replace("  setAuth(readAuthFromContext(), 'max');", "  window.testApp={state,preparePackage,submitPackage,packageAction,selectPackage,usePackage,renderTabs,worktimeStep,messagesRead,pollNotifications,renderNotifications};\n  setAuth(readAuthFromContext(), 'max');");
+src=src.replace("  setAuth(readAuthFromContext(), 'max');", "  window.testApp={state,preparePackage,submitPackage,packageAction,selectPackage,usePackage,showProduction,renderTabs,worktimeStep,messagesRead,pollNotifications,renderNotifications};\n  setAuth(readAuthFromContext(), 'max');");
 vm.runInContext(src,c);
 const app=c.testApp;app.state.user={employeeRef:'self'};app.state.userId='123';app.state.orders=[{id:'order',orderRef:'order'}];app.state.selectedOrderId='order';
 await app.preparePackage();
@@ -72,6 +73,14 @@ assert.equal(creates.at(-1).body.userId,'123');assert.ok(creates.at(-1).body.max
 await app.selectPackage();assert.match(element('sheetBody').innerHTML,/УРВ-7/);assert.doesNotMatch(element('sheetBody').innerHTML,/УРВ-6/);
 app.usePackage('open-package','УРВ-7','Не стартовал');assert.equal(app.state.orders[0].packageRef,'open-package');
 await app.packageAction('start');assert.equal(calls.at(-1).body.packageRef,'open-package');
+await app.showProduction();
+assert.equal(calls.at(-1).url,'/api/1c/worktime/production');
+assert.equal(calls.at(-1).body.employeeRef,'self');assert.equal(calls.at(-1).body.period,'today');
+assert.match(element('sheetBody').innerHTML,/<table class="production-table">/);
+assert.match(element('sheetBody').innerHTML,/Разряд/);assert.match(element('sheetBody').innerHTML,/Количество закрытых н\/ч/);
+assert.match(element('sheetBody').innerHTML,/3 разряд/);assert.match(element('sheetBody').innerHTML,/4 разряд/);
+assert.match(element('sheetBody').innerHTML,/Итого/);assert.match(element('sheetBody').innerHTML,/>3\.75<\/th>/);
+assert.doesNotMatch(element('sheetBody').innerHTML,/Закрытые пакеты|Пакетов/);
 await app.preparePackage();await app.worktimeStep('worktime-works-next');await app.worktimeStep('worktime-self');
 assert.match(element('sheetBody').innerHTML,/Подтверждение пакета/);assert.doesNotMatch(element('sheetBody').innerHTML,/data-worktime-percent/);
 await app.submitPackage();assert.deepEqual(calls.filter(x=>x.url.endsWith('/packages/create')).at(-1).body.participants,[{employeeRef:'self',percent:100}]);
