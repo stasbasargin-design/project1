@@ -1,0 +1,89 @@
+name: Package I-MAX Test Kit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/package-i-max-test-kit.yml'
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact application commit to package
+        required: true
+        default: '04757539e94335f51a382231cde9a8d0e9a850ba'
+      apk_run_id:
+        description: Successful APK build run for that commit
+        required: true
+        default: '40488242658'
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_COMMIT: ${{ inputs.source_commit || '04757539e94335f51a382231cde9a8d0e9a850ba' }}
+  APK_RUN_ID: ${{ inputs.apk_run_id || '40488242658' }}
+
+jobs:
+  package:
+    name: Package exact test candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+
+      - name: Verify source commit
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+
+      - name: Download matching APK
+        uses: actions/download-artifact@v4
+        with:
+          name: I-MAX-2.7.9
+          path: source-apk
+          repository: ${{ github.repository }}
+          run-id: ${{ env.APK_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Assemble test kit and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p kit
+          apk="$(find source-apk -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" "kit/I-MAX-2.7.9-${SOURCE_COMMIT}.apk"
+          git archive --format=zip --prefix=app-max/ -o "kit/I-MAX-web-${SOURCE_COMMIT}.zip" "${SOURCE_COMMIT}:app-max/dist"
+          (
+            cd kit
+            sha256sum *.apk *.zip > SHA256SUMS.txt
+          )
+          cat > kit/TEST_INSTRUCTIONS.md <<EOF
+          # I-MAX test kit
+
+          - Application commit: ${SOURCE_COMMIT}
+          - Base commit: 43924a1ffaa796723a25b4a63d7575a7fec9a584
+          - APK source run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${APK_RUN_ID}
+          - Contents and SHA-256: SHA256SUMS.txt
+
+          ## max-test: HTTP 422 only
+
+          1. Back up the current static files and record the currently deployed commit.
+          2. Install only the web ZIP on https://max-test.ea-itus.ru/ using the existing test-contour procedure. Do not run the production deployment process.
+          3. The web build calls the relative API path /api/1c; on this host it resolves to https://max-test.ea-itus.ru/api/1c. Confirm the active commit and that the configured test server is not a mock before the agreed single scenario.
+          4. Run one agreed test document with the 1C specialist. On HTTP 422, copy the safe in-app report and provide its time and requestId/clientEntryId to 1C. Do not repeat the operation until 1C confirms the route, reason, partial-write status and safe retry.
+
+          ## Xiaomi: Back, chat layout and button states only
+
+          1. Download the APK to Downloads and verify its SHA-256 against SHA256SUMS.txt.
+          2. The Capacitor Android bundle uses the production API https://ea-itus.ru/p/max-service/api/1c; it does not use max-test. Do not send files or perform the 422 scenario from this APK.
+          3. After download, inspect assets/public/config/itus.config.js inside the APK and confirm this exact API. Verify the signing certificate is compatible with the installed I-MAX before updating it (for example, compare apksigner --print-certs output with the known installed APK).
+          4. On Xiaomi 14T verify Back navigation, keyboard dismissal, internal/client chat geometry and long-action button feedback. Record Android version, APK commit and screenshots/video. No production changes are permitted.
+          EOF
+          cat kit/SHA256SUMS.txt
+          cat kit/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-test-kit-${{ env.SOURCE_COMMIT }}
+          path: kit
+          if-no-files-found: error

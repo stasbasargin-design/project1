@@ -53,6 +53,13 @@ window.ITUS_CONFIG = {
   WEB_PUSH_VAPID_PUBLIC_KEY: "",
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
+  // `0` means that the client does not reject a video by its size.  The
+  // server still enforces its independently configured transport envelope.
+  // Photos and ordinary documents retain their conservative limits.
+  MAX_PHOTO_UPLOAD_BYTES: 15728640,
+  MAX_VIDEO_UPLOAD_BYTES: 0,
+  MAX_DOCUMENT_UPLOAD_BYTES: 15728640,
+  // Compatibility for older clients; new code uses the type-specific values above.
   MAX_UPLOAD_BYTES: 15728640,
 
   // Пока 1С возвращает только ["orders"], приложение сохраняет все рабочие

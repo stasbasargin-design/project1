@@ -1,47 +1,26 @@
-# Заявка на тестовый деплой I-MAX
+# I-MAX production release 2.7.12
 
-## Релизный код
+- Repository: https://github.com/stasbasargin-design/project1
+- Branch: feature/video-unlimited-qr
+- GitHub base: 43924a1ffaa796723a25b4a63d7575a7fec9a584
+- Release commit: 4ea499e620840390755bd54498794f628ebed5fc
+- Versions: runtime i-max-2.7.12; npm 2.7.12; Android 2.7.12 / 2712.
+- APK: I-MAX-2.7.12.apk
 
-- Репозиторий: `https://github.com/stasbasargin-design/project1.git`
-- Ветка: `feature/android-back-enter`
-- Коммит кода: `9927b727b9fbbe181e4bce16119c159dcdb0f72a`
-- Базовый коммит: `869b0f38786aae5a1d05112458660e92df420716`
-- Целевой тестовый адрес: `https://max-test.ea-itus.ru/`
+## Scope
+Preserve attachment identity and IndexedDB lease; stop implicit retries after 422; safe diagnostics; action-button states; Back navigation; chat viewport; acceptance complete after confirmed uploads; no spinner on terminal error.
+Includes the published QR order scanner, native camera/gallery modes and removal of the client-side video-size rejection in acceptance, defects and chats. The release changes the proxy defaults and example env to a 100 MiB JSON envelope and a 120-second 1C wait. During deployment set those same non-secret values in `/etc/itus-max.env`; Nginx already allows 100 MiB. Dependency versions, Firebase, 1C routes, roles, image quality and Android package remain unchanged.
 
-Изменённые файлы кода:
+## Production baseline
+Observed 2026-10-28: public app.js matches 9927b727 after line-ending normalization; queue matches inherited 5ae40de; server.mjs matches current main. This is file-level evidence, not a claim of a clean deployed checkout. Commit 9927b727 is an ancestor of main and its changes are retained.
 
-- `app-max/android/app/src/main/java/ru/eazia/imax/MainActivity.java`
-- `app-max/assets/app.js`
-- `app-max/assets/messenger.js`
-- `app-max/dist/assets/app.js`
-- `app-max/dist/assets/messenger.js`
-- `app-max/tests/acceptance-regression.test.mjs`
-- `app-max/tests/messenger.test.mjs`
+## Checks and limits
+Run npm ci, npm test (including real browser IndexedDB), npm run build, git diff --check. User accepted the main three-photo test on max-test. Browser-restart/network-loss cases are not fully accepted; not every server-side 422 has been diagnosed.
 
-## Состав изменений
+## Release
+Use the repository PR process and the standard Deploy MAX Service workflow for the approved SHA. No manual production file replacement. Existing deploy script backs up the application and deploy script, builds the stage, switches directories and rolls back on failed health checks.
+Preserve all server env/secrets and client IndexedDB. Change only the two non-secret transport settings in `/etc/itus-max.env`: `MAX_REQUEST_BYTES=104857600` and `PROXY_TIMEOUT_MS=120000`; then restart only `itus-max`. Do not change test service. Verify production health, app/queue hashes, manifest, service worker, public Web Push configuration and service state. No business writes/push sends without agreed test recipients.
 
-1. Системный Back на Android сначала сохраняет прежнее закрытие модального слоя, затем переводит приложение на первую фактически доступную вкладку главного меню. В текущей навигации это `Заказ-наряды`. При повторном Back на этой вкладке приложение не сворачивается. Черновики мессенджера и сохранённая очередь отправки не очищаются.
-2. В поле сообщения открытого внутреннего или клиентского чата обычный `Enter` отправляет сообщение тем же обработчиком, что и кнопка отправки. Сочетания с модификаторами, удержание клавиши и IME-композиция не отправляют сообщение.
-3. Ранее проверенное автообновление видимого открытого внутреннего чата по Push сохранено. Контракт события: `{ type: "internal_chat_message", topicRef, eventId }`.
-
-Зависимости, серверный API, конфигурация 1С, секреты и настройки GitHub не изменены. Требований к 1С для этих двух изменений нет.
-
-## Результаты проверок
-
-- `npm test` — успешно.
-- `node scripts/build-static.mjs` — успешно; собранные ресурсы в `app-max/dist` соответствуют исходникам.
-- Локальная сборка test APK не завершена: Android Gradle Plugin требует JDK 17+, а доступен только JDK 11. После публикации ветки workflow `build-android.yml` должен собрать debug APK с Java 21.
-- На реальном Android не проверены: системный Back/жест, закрытие IME, сохранение черновика и очереди, отправка Enter, Push.
-- Не проверен настоящий Web Push на тестовом контуре.
-
-## Порядок тестового деплоя
-
-1. Использовать только штатный процесс тестового контура для точного коммита `9927b727b9fbbe181e4bce16119c159dcdb0f72a`; в репозитории этот процесс не описан.
-2. Не запускать `Deploy MAX Service`: `deploy-max.yml` предназначен для production и вызывает `/usr/local/bin/deploy-max.sh`.
-3. До переключения сделать резервную копию текущей тестовой версии и зафиксировать её commit/hash.
-4. После выкладки проверить загрузку `https://max-test.ea-itus.ru/`, вход, оба вида чатов, отправку пустого и непустого сообщения, вложения кнопкой, Enter, повторное удержание Enter и кнопку отправки.
-5. На Android проверить Back из чата и иных разделов, повторный Back на первом разделе, сначала закрытие клавиатуры, сохранность черновика/очереди и Push открытого внутреннего чата.
-6. Проверить Web Push для открытого чата A, другого чата B, списка чатов и свёрнутого приложения.
-7. При ошибке откатить тестовый контур на сохранённый commit/hash и повторить health-check; production не затрагивать.
-
-> Проверь указанный коммит и сравни его с фактически работающей версией на Timeweb. Если между ними есть другие изменения — перечисли их отдельно и не включай автоматически в выпуск. Выполни проверки на тестовом контуре, включая реальные Android Push и Web Push. Перед production-деплоем покажи точный состав выпуска, результаты проверок и план отката; запроси подтверждение владельца. После подтверждения используй штатный процесс выпуска с резервной копией и проверкой результата.
+## Signing
+Use existing certificate 906BA322884FCA8C92C2D884CDEBB8EC8F4EB3D527BAF7D06929970BA77BCB47, matching I-MAX-2.7.7-production.apk. No new signing key. USB inspection was declined: compatibility with the current phone certificate is unverified. Never uninstall or clear app data to work around a signing mismatch.
+No store upload or AAB is requested.

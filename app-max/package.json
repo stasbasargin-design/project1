@@ -1,6 +1,6 @@
 {
   "name": "itus-service-release-1c-max",
-  "version": "2.7.0",
+  "version": "2.7.12",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "build": "node scripts/build-static.mjs && node scripts/build-review.mjs",
     "test:review": "node tests/review-features.test.mjs",
     "preview": "node server.mjs",
-    "test": "node tests/operation-queue.test.mjs && node tests/web-push.test.mjs && node tests/api-normalizers.test.mjs && node tests/push-format.test.mjs && node tests/push-android-contract.test.mjs && node tests/native-push.test.mjs && node tests/push-navigation-contract.test.mjs && node tests/internal-chat-push-refresh.test.mjs && node tests/acceptance-regression.test.mjs && node tests/messenger.test.mjs && node tests/media-picker.test.mjs && node tests/attachment-message-link.test.mjs && node tests/static-path.test.mjs && node tests/source-contract.test.mjs && node tests/subpath.test.mjs && node tests/worktime.test.mjs && node tests/worktime-proxy.test.mjs",
+    "test": "node tests/operation-queue.test.mjs && node tests/operation-queue-indexeddb.test.mjs && node tests/web-push.test.mjs && node tests/api-normalizers.test.mjs && node tests/push-format.test.mjs && node tests/push-android-contract.test.mjs && node tests/native-push.test.mjs && node tests/push-navigation-contract.test.mjs && node tests/internal-chat-push-refresh.test.mjs && node tests/acceptance-regression.test.mjs && node tests/messenger.test.mjs && node tests/media-picker.test.mjs && node tests/order-qr.test.mjs && node tests/upload-envelope-size.test.mjs && node tests/attachment-message-link.test.mjs && node tests/button-state-contract.test.mjs && node tests/static-path.test.mjs && node tests/source-contract.test.mjs && node tests/subpath.test.mjs && node tests/worktime.test.mjs && node tests/worktime-proxy.test.mjs",
     "check:api": "node scripts/check-api.mjs"
   },
   "dependencies": {
@@ -18,6 +18,7 @@
     "@capacitor/core": "^8.5.1",
     "@capacitor/push-notifications": "^8.1.3",
     "firebase-admin": "^13.0.0",
+    "jsqr": "^1.4.0",
     "parse5": "^8.0.0",
     "web-push": "^3.6.7"
   },
