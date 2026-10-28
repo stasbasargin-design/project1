@@ -33,6 +33,7 @@ input,textarea,select{width:100%;margin:4px 0 8px;padding:12px 13px;border:1px s
 /* Responsive layout additions. These rules only change presentation. */
 .phone,.card,.sheet,.question,.entry,.stat{min-width:0}
 img,video,canvas,svg{max-width:100%}
+.order-qr-video{display:block;width:100%;min-height:240px;max-height:58dvh;border-radius:17px;background:#000;object-fit:cover}.order-qr-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.order-qr-choice{display:block;width:100%;margin-bottom:8px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--text);text-align:left}.order-qr-choice b,.order-qr-choice span{display:block}.order-qr-choice span{margin-top:3px;color:var(--muted);font-size:12px}
 .table-wrap,.table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .table-wrap>table,.table-scroll>table{min-width:max-content}
 @media (min-width:391px) and (max-width:599px){.grid.three{grid-template-columns:repeat(2,minmax(0,1fr))}.notice-actions{flex-wrap:wrap}.notice-actions button{flex:1 1 140px}.sheet{max-height:calc(100dvh - 24px)}}

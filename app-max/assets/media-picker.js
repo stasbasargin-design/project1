@@ -4,7 +4,7 @@
   const mediaKind = file => /^video\//.test(file.type || '') ? 'video' : 'photo';
   const isMedia = file => /^(image|video)\//.test(file.type || '');
 
-  function create({showSheet, closeSheet, toast, maxBytes}) {
+  function create({showSheet, closeSheet, toast, limits = {}}) {
     let session = null;
     const urls = new Map();
     const picker = document.createElement('input');
@@ -32,7 +32,7 @@
       const pending = files.filter(item => item.status !== 'success').length;
       const failed = files.filter(item => item.status === 'failed').length;
       showSheet('Фото и видео', session.hint || 'Выберите файлы, проверьте список и отправьте одним действием',
-        `<div class="media-picker-actions"><button class="primary" data-action="media-gallery">Галерея</button><button data-action="media-camera-photo">Камера</button><button data-action="media-camera-video">Видео</button></div><p class="tiny">Можно выбрать несколько фото и видео. Файлы будут прикреплены к текущему документу или чату.</p><div class="media-picker-grid">${cards || '<div class="empty">Файлы ещё не выбраны</div>'}</div><div class="media-picker-footer"><span>${files.length ? `Выбрано: ${files.length}${failed ? ` · ошибки: ${failed}` : ''}` : 'Выберите фото или видео'}</span><button class="primary" data-action="media-send" ${pending && !session.sending ? '' : 'disabled'}>${session.sending ? (session.phase === 'saving' ? '<span class="spinner"></span> Сохранение…' : `Отправка ${session.sent + 1}/${session.total}`) : (failed ? 'Повторить ошибки' : 'Отправить')}</button></div>`);
+        `<div class="media-picker-actions"><button data-action="media-camera-photo">Фото</button><button data-action="media-camera-video">Видео</button><button class="primary" data-action="media-gallery">Галерея</button></div><p class="tiny">Фото и видео открывают штатную камеру устройства. Галерея выбирает существующие файлы. Выбор привязан к текущему документу или чату.</p><div class="media-picker-grid">${cards || '<div class="empty">Файлы ещё не выбраны</div>'}</div><div class="media-picker-footer"><span>${files.length ? `Выбрано: ${files.length}${failed ? ` · ошибки: ${failed}` : ''}` : 'Выберите фото или видео'}</span><button class="primary" data-action="media-send" ${pending && !session.sending ? '' : 'disabled'}>${session.sending ? (session.phase === 'saving' ? '<span class="spinner"></span> Сохранение…' : `Отправка ${session.sent + 1}/${session.total}`) : (failed ? 'Повторить ошибки' : 'Отправить')}</button></div>`);
     }
     function openInput(mode) {
       if (!session || session.sending) return;
@@ -46,13 +46,20 @@
     function add(files) {
       if (!session) return;
       const existing = new Set(session.files.map(item => item.key));
-      let rejected = 0;
+      const rejected = [];
       for (const file of files) {
-        if (!isMedia(file) || file.size > maxBytes || existing.has(`${file.name}:${file.size}:${file.lastModified}`)) { rejected++; continue; }
+        const kind = mediaKind(file);
+        const limit = Number(limits[kind] || 0);
+        if (!isMedia(file)) { rejected.push(`${file.name || 'Файл'}: неподдерживаемый формат`); continue; }
+        if (limit && file.size > limit) {
+          rejected.push(`${file.name || 'Файл'}: ${(file.size / 1024 / 1024).toFixed(1)} МБ, предел ${(limit / 1024 / 1024).toFixed(0)} МБ`);
+          continue;
+        }
+        if (existing.has(`${file.name}:${file.size}:${file.lastModified}`)) { rejected.push(`${file.name || 'Файл'}: уже выбран`); continue; }
         const key = `${file.name}:${file.size}:${file.lastModified}`;
         existing.add(key); session.files.push({ file, key, uploadId: root.crypto?.randomUUID ? root.crypto.randomUUID() : `media-${Date.now()}-${Math.random()}`, status:'pending', error:'' });
       }
-      if (rejected) toast(`Не добавлены неподдерживаемые, повторные или слишком большие файлы (лимит ${Math.round(maxBytes / 1024 / 1024)} МБ)`, true);
+      if (rejected.length) toast(`Не добавлено: ${rejected.join('; ')}`, true);
       render();
     }
     picker.addEventListener('change', () => add(Array.from(picker.files || [])));

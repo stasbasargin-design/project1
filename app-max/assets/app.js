@@ -18,7 +18,9 @@
     timeoutMs: Number(window.ITUS_CONFIG?.REQUEST_TIMEOUT_MS || 35000),
     pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
     webPushPublicKey: String(window.ITUS_CONFIG?.WEB_PUSH_VAPID_PUBLIC_KEY || '').trim(),
-    maxUploadBytes: Number(window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxPhotoBytes: Number(window.ITUS_CONFIG?.MAX_PHOTO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxVideoBytes: Number(window.ITUS_CONFIG?.MAX_VIDEO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
     version: 'i-max-2.7.10'
@@ -49,6 +51,9 @@
   const handledPushTargets = new Set();
   const activeCompletions = new Map();
   const pendingActionButtons = new WeakSet();
+  let orderQrScanner = null;
+  let activeOrderQrSearch = null;
+  let lastOrderQrValue = '';
   const longRunningActions = new Set([
     'login', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation',
     'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
@@ -93,6 +98,8 @@
 
   function closeSheet() {
     if (mediaPicker?.dismiss?.() === false) return false;
+    orderQrScanner?.stop?.();
+    orderQrScanner = null;
     state.cameraStream?.getTracks().forEach(track => track.stop());
     state.cameraStream = null;
     $('overlay').classList.add('hidden');
@@ -1034,6 +1041,67 @@
     items.forEach(mergeOrder); state.selectedOrderId = items[0].id; state.view = viewForCurrentUser(); render();
   }
 
+  function showOrderQrManual(message = '') {
+    orderQrScanner?.stop?.();
+    orderQrScanner = null;
+    const note = message ? `<div class="empty">${esc(message)}</div>` : '';
+    showSheet('QR-код заказ-наряда', 'Введите ровно пять символов из QR', `${note}<label for="orderQr">Последние пять символов номера ЗН</label><input id="orderQr" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false"><button class="primary" data-action="submit-order-qr">Найти в 1С</button>`);
+  }
+
+  function showOrderQrChoices(items, suffix) {
+    showSheet('Выберите заказ-наряд', `Найдено совпадений: ${items.length}`, items.map(order =>
+      `<button class="order-qr-choice" data-action="select-order-qr" data-ref="${escAttr(order.orderRef || order.id)}"><b>ЗН ${esc(order.num)}</b><span>${esc(order.car)} · ${esc(order.plate)}</span></button>`
+    ).join('') + `<button class="secondary" data-action="manual-order-qr">Искать другой код</button><p class="tiny">Совпадение по последним пяти символам: ${esc(suffix)}</p>`);
+  }
+
+  async function searchOrderQr(rawValue) {
+    let suffix;
+    try { suffix = window.ITUS_ORDER_QR.normalize(rawValue); }
+    catch (error) { showOrderQrManual(error.message); return; }
+    if (activeOrderQrSearch?.suffix === suffix) return activeOrderQrSearch.promise;
+    lastOrderQrValue = suffix;
+    showSheet('Поиск заказ-наряда', `Код: ${suffix}`, '<div class="loading"><span class="spinner"></span>Поиск в 1С…</div>');
+    const promise = (async () => {
+      try {
+        // /orders/search is queried explicitly: QR search must not be limited to the locally loaded order list.
+        // The server must search order numbers available to the authenticated user; the client enforces exact suffix matching.
+        const response = await call1C('/orders/search', { search: suffix, searchBy: ['orderNumber'] });
+        const items = window.ITUS_ORDER_QR.filterMatches(API.extractOrders(response).map(API.mapOrder), suffix);
+        items.forEach(mergeOrder);
+        if (!items.length) {
+          showOrderQrManual(`Заказ-наряд, номер которого оканчивается на «${suffix}», не найден. Проверьте код или используйте ручной поиск.`);
+          return;
+        }
+        if (items.length > 1) { showOrderQrChoices(items, suffix); return; }
+        state.selectedOrderId = items[0].id;
+        state.view = viewForCurrentUser();
+        closeSheet();
+        render();
+      } catch (error) {
+        showOrderQrManual(error.message || 'Не удалось выполнить поиск в 1С');
+      }
+    })().finally(() => {
+      if (activeOrderQrSearch?.promise === promise) activeOrderQrSearch = null;
+    });
+    activeOrderQrSearch = { suffix, promise };
+    return promise;
+  }
+
+  function openOrderQrScanner() {
+    orderQrScanner?.stop?.();
+    showSheet('Сканирование QR заказ-наряда', 'Наведите заднюю камеру на QR-код из пяти символов', '<video id="orderQrVideo" class="order-qr-video" autoplay muted playsinline></video><div class="order-qr-actions"><button class="secondary" data-action="manual-order-qr">Ввести вручную</button><button class="secondary" data-action="close-sheet">Отмена</button></div>');
+    const video = $('orderQrVideo');
+    orderQrScanner = window.ITUS_ORDER_QR.createScanner({
+      onStream(stream) { state.cameraStream = stream; },
+      onResult(value) {
+        if (value === lastOrderQrValue && activeOrderQrSearch) return activeOrderQrSearch.promise;
+        return searchOrderQr(value);
+      },
+      onFailure(error) { showOrderQrManual(`Не удалось открыть камеру: ${error.message || 'доступ запрещён'}. Доступен ручной ввод.`); }
+    });
+    void orderQrScanner.start(video);
+  }
+
   function downloadFile(file) {
     if (file.downloadUrl) {
       const link = document.createElement('a'); link.href = file.downloadUrl; link.target = '_blank'; link.rel = 'noopener'; link.download = file.fileName || ''; link.click(); return;
@@ -1297,7 +1365,7 @@
 
   function openMediaPicker(target) {
     if (!mediaPicker && window.ITUS_MEDIA_PICKER?.create) {
-      mediaPicker = window.ITUS_MEDIA_PICKER.create({ showSheet, closeSheet, toast, maxBytes: CONFIG.maxUploadBytes });
+      mediaPicker = window.ITUS_MEDIA_PICKER.create({ showSheet, closeSheet, toast, limits: { photo:CONFIG.maxPhotoBytes, video:CONFIG.maxVideoBytes } });
     }
     if (!mediaPicker) return configureFilePicker(target, 'image/*,video/*', null, true);
     const labels = { acceptance: 'акт приёма', defect: 'дефектовку', client: 'чат с клиентом', chat: 'внутренний чат', messenger: 'чат' };
@@ -1361,7 +1429,12 @@
   async function fileToPayload(file, kind) {
     let blob = file;
     if (kind === 'photo' && /^image\//.test(file.type)) blob = await compressImage(file);
-    if (blob.size > CONFIG.maxUploadBytes) throw new Error(`Файл превышает лимит ${Math.round(CONFIG.maxUploadBytes / 1024 / 1024)} МБ`);
+    const limit = kind === 'photo' ? CONFIG.maxPhotoBytes : (kind === 'video' ? CONFIG.maxVideoBytes : CONFIG.maxDocumentBytes);
+    if (blob.size > limit) {
+      const actualMb = (blob.size / 1024 / 1024).toFixed(1);
+      const limitMb = (limit / 1024 / 1024).toFixed(0);
+      throw new Error(`Размер файла ${actualMb} МБ превышает допустимый предел ${limitMb} МБ`);
+    }
     const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
     const mimeType = blob.type || file.type || 'application/octet-stream';
     const originalName = file.name || `${kind}-${Date.now()}`;
@@ -1896,8 +1969,10 @@
       if (action === 'search-orders') return searchOrders();
       if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return render(); }
       if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return toast('Карточка обновлена из 1С'); }
-      if (action === 'scan-order-qr') return showSheet('QR-код заказ-наряда', 'Введите значение, если камера недоступна', '<label for="orderQr">Номер или ссылка из QR</label><input id="orderQr"><button class="primary" data-action="submit-order-qr">Найти в 1С</button>');
-      if (action === 'submit-order-qr') { const value = String($('orderQr')?.value || '').trim(); closeSheet(); if (!value) return toast('Введите значение QR', true); const response = await call1C('/orders/search', { search: value }); const items = API.extractOrders(response).map(API.mapOrder); if (!items.length) return toast('Заказ-наряд не найден', true); items.forEach(mergeOrder); state.selectedOrderId = items[0].id; return render(); }
+      if (action === 'scan-order-qr') return openOrderQrScanner();
+      if (action === 'manual-order-qr') return showOrderQrManual();
+      if (action === 'submit-order-qr') return searchOrderQr($('orderQr')?.value);
+      if (action === 'select-order-qr') { const order = state.orders.find(item => (item.orderRef || item.id) === button.dataset.ref); if (!order) return toast('Заказ-наряд больше недоступен', true); state.selectedOrderId = order.id; state.view = viewForCurrentUser(); closeSheet(); return render(); }
       if (action === 'answer-option') { const process = currentOrder()?.[button.dataset.process]; if (!process) return; const id = button.dataset.question, value = button.dataset.value; if (button.dataset.type === 'multi') { const values = Array.isArray(process.answers[id]) ? process.answers[id] : []; process.answers[id] = values.includes(value) ? values.filter(item => item !== value) : values.concat(value); } else process.answers[id] = value; process.errors?.delete(`question:${id}`); return render(); }
       if (action === 'start-acceptance') return startAcceptance();
       if (action === 'complete-acceptance') return completeAcceptance();
