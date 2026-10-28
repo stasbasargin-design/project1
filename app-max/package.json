@@ -1,6 +1,6 @@
 {
   "name": "itus-service-release-1c-max",
-  "version": "2.7.0",
+  "version": "2.7.10",
   "private": true,
   "type": "module",
   "scripts": {
