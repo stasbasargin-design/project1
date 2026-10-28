@@ -9,19 +9,19 @@ on:
       source_commit:
         description: Exact application commit to package
         required: true
-        default: '04757539e94335f51a382231cde9a8d0e9a850ba'
+        default: '2edda96fef6b2167159dd65ec33650352da35d4c'
       apk_run_id:
         description: Successful APK build run for that commit
         required: true
-        default: '40488242658'
+        default: '40628136347'
 
 permissions:
   actions: read
   contents: read
 
 env:
-  SOURCE_COMMIT: ${{ inputs.source_commit || '04757539e94335f51a382231cde9a8d0e9a850ba' }}
-  APK_RUN_ID: ${{ inputs.apk_run_id || '40488242658' }}
+  SOURCE_COMMIT: ${{ inputs.source_commit || '2edda96fef6b2167159dd65ec33650352da35d4c' }}
+  APK_RUN_ID: ${{ inputs.apk_run_id || '40628136347' }}
 
 jobs:
   package:
@@ -70,7 +70,7 @@ jobs:
           1. Back up the current static files and record the currently deployed commit.
           2. Install only the web ZIP on https://max-test.ea-itus.ru/ using the existing test-contour procedure. Do not run the production deployment process.
           3. The web build calls the relative API path /api/1c; on this host it resolves to https://max-test.ea-itus.ru/api/1c. Confirm the active commit and that the configured test server is not a mock before the agreed single scenario.
-          4. Run one agreed test document with the 1C specialist. On HTTP 422, copy the safe in-app report and provide its time and requestId/clientEntryId to 1C. Do not repeat the operation until 1C confirms the route, reason, partial-write status and safe retry.
+          4. Do not clear existing queues. Run one agreed test document with three photos and the 1C specialist. On HTTP 422, copy the safe in-app report and provide its time and requestId/clientEntryId to 1C. Do not repeat the operation until 1C confirms the route, reason, partial-write status and safe retry.
 
           ## Xiaomi: Back, chat layout and button states only
 
