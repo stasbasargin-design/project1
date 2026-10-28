@@ -117,6 +117,17 @@ input.listeners.change();
 assert.match(lastSheet, /Выбрано: 2/);
 assert.match(limitMessage, /video-too-large\.mp4: 0\.0 МБ, предел 0 МБ/);
 
+let unrestrictedMessage = '';
+const unrestrictedVideoPicker = context.ITUS_MEDIA_PICKER.create({
+  showSheet(_title, _hint, html) { lastSheet = html; },
+  closeSheet() {}, toast(message) { unrestrictedMessage = message; }, limits: { photo: 100, video: 0 }
+});
+unrestrictedVideoPicker.open({hint:'unrestricted video', onSend:async()=>{}});
+input.files = [{name:'long-video.mp4',type:'video/mp4',size:200 * 1024 * 1024,lastModified:24}];
+input.listeners.change();
+assert.match(lastSheet, /Выбрано: 1/, 'a zero video limit must disable the client-side size rejection');
+assert.equal(unrestrictedMessage, '', 'unrestricted video selection must not show a size-limit error');
+
 let releaseSlowSend;
 const slowPicker = context.ITUS_MEDIA_PICKER.create({
   showSheet(_title, _hint, html) { lastSheet = html; },

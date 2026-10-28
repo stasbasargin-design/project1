@@ -36,8 +36,11 @@ const oneCTarget = String(
   process.env.ONE_C_TARGET || 'https://1c.eazia.ru/aa6_ea_test9/ru/hs/max-service'
 ).replace(/\/+$/, '');
 const oneCToken = String(process.env.ONE_C_TOKEN || '').trim();
-const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS || 35000);
-const maxRequestBytes = Number(process.env.MAX_REQUEST_BYTES || 30 * 1024 * 1024);
+const proxyTimeoutMs = Number(process.env.PROXY_TIMEOUT_MS || 120000);
+// This is a transport-envelope guard, not the client video policy.  JSON
+// Base64 expands a raw file by roughly one third, so a 100 MiB envelope is
+// deliberately coordinated with the production Nginx limit.
+const maxRequestBytes = Number(process.env.MAX_REQUEST_BYTES || 100 * 1024 * 1024);
 const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowerCase() !== 'false';
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
@@ -327,10 +330,11 @@ async function proxy1C(req, res, pathname) {
   } catch (error) {
     const timeout = error?.name === 'AbortError';
     console.error(`[Ошибка proxy 1С] POST ${suffix} ${Date.now() - startedAt}ms: ${String(error?.message || error)}${requestId ? ` requestId=${requestId}` : ''}`);
-    json(res, timeout ? 504 : 502, {
+    const requestTooLarge = /Тело запроса превышает лимит/.test(String(error?.message || ''));
+    json(res, timeout ? 504 : (requestTooLarge ? 413 : 502), {
       success: false,
       error: {
-        code: timeout ? 'ONE_C_TIMEOUT' : 'ONE_C_PROXY_ERROR',
+        code: timeout ? 'ONE_C_TIMEOUT' : (requestTooLarge ? 'REQUEST_TOO_LARGE' : 'ONE_C_PROXY_ERROR'),
         message: timeout ? 'Истекло время ожидания ответа 1С' : String(error?.message || error)
       }
     });

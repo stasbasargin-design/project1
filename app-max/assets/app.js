@@ -8,6 +8,12 @@
   const FEATURES = window.ITUS_FEATURES;
   const AUTH_STORAGE = window.ITUS_REVIEW_MODE ? 'itus.review.maxUserId' : 'itus.maxUserId';
   const $ = id => document.getElementById(id);
+  const configuredLimit = (key, fallback) => {
+    const configured = window.ITUS_CONFIG?.[key];
+    if (configured === undefined || configured === null || configured === '') return fallback;
+    const numeric = Number(configured);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
+  };
   const CONFIG = {
     apiBase: window.ITUS_CONFIG?.ONE_C_API_BASE_URL || '/api/1c',
     publicBase: window.ITUS_CONFIG?.ONE_C_PUBLIC_BASE_URL || '',
@@ -18,12 +24,15 @@
     timeoutMs: Number(window.ITUS_CONFIG?.REQUEST_TIMEOUT_MS || 35000),
     pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
     webPushPublicKey: String(window.ITUS_CONFIG?.WEB_PUSH_VAPID_PUBLIC_KEY || '').trim(),
-    maxPhotoBytes: Number(window.ITUS_CONFIG?.MAX_PHOTO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
-    maxVideoBytes: Number(window.ITUS_CONFIG?.MAX_VIDEO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
-    maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxPhotoBytes: configuredLimit('MAX_PHOTO_UPLOAD_BYTES', configuredLimit('MAX_UPLOAD_BYTES', 15 * 1024 * 1024)),
+    // A literal zero is intentional: videos are not rejected in the UI by
+    // their raw-file size.  Do not replace this with `||`, which would turn
+    // zero back into the legacy 15 MiB limit.
+    maxVideoBytes: configuredLimit('MAX_VIDEO_UPLOAD_BYTES', configuredLimit('MAX_UPLOAD_BYTES', 15 * 1024 * 1024)),
+    maxDocumentBytes: configuredLimit('MAX_DOCUMENT_UPLOAD_BYTES', configuredLimit('MAX_UPLOAD_BYTES', 15 * 1024 * 1024)),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.11'
+    version: 'i-max-2.7.12'
   };
 
   const ALL_VIEWS = {
@@ -1434,7 +1443,7 @@
     let blob = file;
     if (kind === 'photo' && /^image\//.test(file.type)) blob = await compressImage(file);
     const limit = kind === 'photo' ? CONFIG.maxPhotoBytes : (kind === 'video' ? CONFIG.maxVideoBytes : CONFIG.maxDocumentBytes);
-    if (blob.size > limit) {
+    if (limit > 0 && blob.size > limit) {
       const actualMb = (blob.size / 1024 / 1024).toFixed(1);
       const limitMb = (limit / 1024 / 1024).toFixed(0);
       throw new Error(`Размер файла ${actualMb} МБ превышает допустимый предел ${limitMb} МБ`);
