@@ -117,4 +117,19 @@ input.listeners.change();
 assert.match(lastSheet, /Выбрано: 2/);
 assert.match(limitMessage, /video-too-large\.mp4: 0\.0 МБ, предел 0 МБ/);
 
+let releaseSlowSend;
+const slowPicker = context.ITUS_MEDIA_PICKER.create({
+  showSheet(_title, _hint, html) { lastSheet = html; },
+  closeSheet() {}, toast() {}, limits: { photo: 1024, video: 2048 }
+});
+slowPicker.open({hint:'slow network', onSend: async () => new Promise(resolve => { releaseSlowSend = resolve; })});
+input.files = [{name:'slow.mp4',type:'video/mp4',size:200,lastModified:31}];
+input.listeners.change();
+slowPicker.handle('media-send');
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.match(lastSheet, /Отправка 1\/1/, 'slow transfer keeps visible progress');
+assert.equal(slowPicker.dismiss(), false, 'slow transfer keeps the editor and selected file');
+releaseSlowSend();
+await new Promise(resolve => setTimeout(resolve, 0));
+
 console.log('media picker tests passed');

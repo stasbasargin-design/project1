@@ -23,7 +23,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.10'
+    version: 'i-max-2.7.11'
   };
 
   const ALL_VIEWS = {

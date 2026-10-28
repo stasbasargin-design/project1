@@ -5,8 +5,8 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "ru.eazia.imax"
-        versionCode 2710
-        versionName "2.7.10"
+        versionCode 2711
+        versionName "2.7.11"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

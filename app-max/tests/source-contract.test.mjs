@@ -14,4 +14,5 @@ for (const route of ['/clients/messages/read','/internal-chat/messages/read','/i
 assert.ok(contract.methods['/quality/request']);
 const config=readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8');
 assert.match(config,/POLL_INTERVAL_MS:\s*60000/);
+assert.match(config,/MAX_VIDEO_UPLOAD_BYTES:\s*15728640/, '20 MiB video must not be enabled by default before 1C confirmation');
 console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');

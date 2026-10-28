@@ -38,6 +38,10 @@ const available = [
 assert.equal(qr.filterMatches(available, 'ABCDE').length, 0, 'zero-result QR is preserved');
 assert.deepEqual(Array.from(qr.filterMatches(available, '12345'), item => item.id), ['other'], 'one exact suffix is selected');
 assert.deepEqual(Array.from(qr.filterMatches(available, '00A7Z'), item => item.id), ['one','two'], 'multiple exact suffixes remain available for user choice');
+const initiallyLoaded = [{id:'local',num:'ЗН-2026-11111'}];
+const serverSearchResult = [{id:'remote',num:'ЗН-2024-00A7Z'}];
+assert.equal(qr.filterMatches(initiallyLoaded, '00A7Z').length, 0, 'the desired order is absent from the initial client list');
+assert.deepEqual(Array.from(qr.filterMatches(serverSearchResult, '00A7Z'), item => item.id), ['remote'], 'a server result outside the initial client list is accepted');
 
 const scanner = qr.createScanner({ onResult(value) { result = value; }, onFailure(error) { throw error; } });
 await scanner.start(video);

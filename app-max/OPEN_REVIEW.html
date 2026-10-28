@@ -344,10 +344,10 @@ window.ITUS_CONFIG = {
   WEB_PUSH_VAPID_PUBLIC_KEY: "",
 
   // Лимит одного вложения, передаваемого в JSON как Base64.
-  // Separate raw-file limits. Video is 20 MiB only for the coordinated candidate:
-  // its Base64 JSON body is about 26.7 MiB and requires a >=30 MiB Node limit plus 1C confirmation.
+  // Separate raw-file limits. Keep video at the confirmed 15 MiB production value.
+  // The proposed 20 MiB limit requires the coordinated server/1C checks documented in docs/VIDEO_LIMIT_20MB_ROLLOUT.md.
   MAX_PHOTO_UPLOAD_BYTES: 15728640,
-  MAX_VIDEO_UPLOAD_BYTES: 20971520,
+  MAX_VIDEO_UPLOAD_BYTES: 15728640,
   MAX_DOCUMENT_UPLOAD_BYTES: 15728640,
   // Compatibility for older clients; new code uses the type-specific values above.
   MAX_UPLOAD_BYTES: 15728640,
@@ -12013,7 +12013,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.10'
+    version: 'i-max-2.7.11'
   };
 
   const ALL_VIEWS = {
