@@ -1,8 +1,10 @@
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { writeBuildInfo } from './write-build-info.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const out=join(root,'dist');
 rmSync(out,{recursive:true,force:true});mkdirSync(out,{recursive:true});
 for(const name of ['index.html','assets','config','notification-sw.js','manifest.webmanifest']) cpSync(join(root,name),join(out,name),{recursive:true});
+writeBuildInfo(out);
 console.log('Готовая версия создана в dist; все адреса ресурсов относительные.');

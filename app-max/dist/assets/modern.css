@@ -3,7 +3,7 @@
 html{font-size:16px;background:var(--bg)}
 body{background:var(--bg);font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:16px;line-height:1.5}
 body::after{display:none}.brand-rail{width:3px;background:#ba2925}
-.phone{max-width:560px;padding-right:16px;padding-left:16px}
+.phone{width:100%;max-width:var(--app-shell-max,560px);padding-right:var(--app-shell-gutter,16px);padding-left:var(--app-shell-gutter,16px)}
 .top{gap:10px;padding:10px 0 14px;margin-bottom:10px;border-bottom:1px solid var(--line);background:#f4f5f7f5;backdrop-filter:blur(16px)}
 .logo{flex:0 0 62px;width:62px;height:62px;padding:0;border:1px solid #eee;border-radius:16px;box-shadow:none;background:#fff}
 .logo img{width:100%;height:100%;object-fit:contain;transform:scale(1.65);transform-origin:50% 53%}
@@ -57,10 +57,10 @@ input,textarea,select{background:#fff;border-color:#aeb8c5}
 
 /* v2.6.1: compact fixed application header */
 .top{position:fixed;top:0;left:50%;transform:translateX(-50%);width:min(520px,100%);padding:calc(8px + env(safe-area-inset-top)) 14px 10px;margin-bottom:0}
-.phone{padding-top:calc(var(--header-height,78px) + 12px + env(safe-area-inset-top))}
+.phone{padding-top:calc(var(--header-height,78px) + 12px)}
 .product p{display:none}
 .tabs{top:var(--header-height,78px)}
-@media(max-width:390px){.top{padding-left:11px;padding-right:11px}.phone{padding-top:calc(var(--header-height,70px) + 10px + env(safe-area-inset-top))}.tabs{top:var(--header-height,70px)}}
+@media(max-width:390px){.top{padding-left:11px;padding-right:11px}.phone{padding-top:calc(var(--header-height,70px) + 10px)}.tabs{top:var(--header-height,70px)}}
 
 /* Compact unread badge belongs to the Chats navigation button. */
 .tab{position:relative}
@@ -69,9 +69,14 @@ input,textarea,select{background:#fff;border-color:#aeb8c5}
 .tab.active .chat-unread-dot{background:#fff;color:#b92824;border-color:#fff}
 
 /* Responsive shell: existing content is reflowed, never globally scaled. */
-:root{--app-shell-max:520px}
-.top{width:min(var(--app-shell-max),100%)}
-@media (min-width:600px){:root{--app-shell-max:760px}.top{padding-left:clamp(18px,3vw,28px);padding-right:clamp(18px,3vw,28px)}.tabs{gap:8px}.tab{min-height:64px}.row>.primary,.row>.secondary,.row>.danger,.row>.success{width:auto;min-width:180px}}
-@media (min-width:1024px){:root{--app-shell-max:1100px}.top{padding-left:32px;padding-right:32px}.tabs{padding-bottom:14px}.tab{flex:0 1 128px}}
+:root{--app-shell-max:560px;--app-shell-gutter:16px;--app-safe-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));--app-safe-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px));--app-safe-left:var(--safe-area-inset-left,env(safe-area-inset-left,0px));--app-safe-right:var(--safe-area-inset-right,env(safe-area-inset-right,0px))}
+.phone{padding-left:max(var(--app-shell-gutter),var(--app-safe-left));padding-right:max(var(--app-shell-gutter),var(--app-safe-right))}
+.top{width:min(var(--app-shell-max),100%);flex-wrap:nowrap;gap:10px;padding:calc(8px + var(--app-safe-top)) max(var(--app-shell-gutter),var(--app-safe-right)) 8px max(var(--app-shell-gutter),var(--app-safe-left))}
+.top .logo{flex:0 0 44px;width:44px;height:44px;border-radius:12px}
+.top .product{flex:0 0 auto;min-width:0}.top .product h1{font-size:18px;letter-spacing:.03em}
+.top .user-panel{margin-left:auto;min-width:0;max-width:210px;padding:7px;flex:0 1 210px}.top .user-meta{min-width:0;flex:1}.top .user-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}.top .user-role{font-size:11px}
+@media (max-width:390px){:root{--app-shell-gutter:12px}.top{gap:8px}}
+@media (min-width:600px){:root{--app-shell-max:760px;--app-shell-gutter:clamp(18px,3vw,28px)}.tabs{gap:8px}.tab{min-height:56px}.row>.primary,.row>.secondary,.row>.danger,.row>.success{width:auto;min-width:180px}}
+@media (min-width:1024px){:root{--app-shell-max:1100px;--app-shell-gutter:32px}.tabs{padding-bottom:14px}.tab{flex:0 1 128px}}
 @media (max-width:599px){.overlay{padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}.sheet{width:100%;max-width:100%;max-height:calc(100dvh - 20px)}.sheet-head{overflow-wrap:anywhere}}
-@media (max-height:560px) and (orientation:landscape){.top{position:sticky;left:auto;transform:none;width:auto;padding-top:8px}.phone{padding-top:calc(8px + env(safe-area-inset-top))}.tabs{top:0}}
+@media (max-height:560px) and (orientation:landscape){.top .logo{flex-basis:36px;width:36px;height:36px}.top{padding-top:calc(4px + var(--app-safe-top));padding-bottom:4px}.phone{padding-top:calc(var(--header-height,58px) + 8px)}.tabs{top:var(--header-height,58px);padding-bottom:6px}.tab{height:46px;min-height:46px}}

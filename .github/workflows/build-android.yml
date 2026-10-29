@@ -7,12 +7,19 @@ on:
       - 'app-max/**'
       - '.github/workflows/build-android.yml'
 
+permissions:
+  contents: read
+
 jobs:
   apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: app-max
+    env:
+      IMAX_BUILD_SHA: ${{ github.sha }}
+      REQUIRE_BROWSER_TESTS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,19 +32,34 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Require a real browser for queue and layout tests
+        run: |
+          CHROME="$(command -v google-chrome || command -v chromium || true)"
+          test -n "$CHROME"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - run: npx cap sync android
-      - run: chmod +x android/gradlew && android/gradlew -p android assembleDebug
-      - name: Name APK with product and version
+      - name: Build unsigned release for local compatible signing
+        run: chmod +x android/gradlew && android/gradlew -p android assembleRelease -PimaxUnsignedBuild=true
+      - name: Verify and package exact unsigned candidate
         shell: bash
         run: |
-          VERSION="$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' android/app/build.gradle | head -n 1)"
-          test -n "$VERSION"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/I-MAX-${VERSION}.apk"
+          set -euo pipefail
+          VERSION="$(node -p 'require("./package.json").version')"
+          APK="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$APK"
+          unzip -p "$APK" assets/public/build-info.json > /tmp/imax-build-info.json
+          node --input-type=module -e 'import fs from "node:fs"; const i=JSON.parse(fs.readFileSync("/tmp/imax-build-info.json")); if(i.commit!==process.env.IMAX_BUILD_SHA||i.version!==JSON.parse(fs.readFileSync("package.json")).version)throw Error("APK build identity mismatch");'
+          mkdir -p android-artifact
+          cp "$APK" "android-artifact/I-MAX-${VERSION}-unsigned.apk"
+          cp /tmp/imax-build-info.json android-artifact/build-info.json
+          printf 'Unsigned release candidate. Do not distribute or install. Sign locally with the existing compatible key, then verify certificate and SHA-256.\n' > android-artifact/UNSIGNED-DO-NOT-INSTALL.txt
+          (cd android-artifact && sha256sum *.apk > SHA256SUMS.txt)
           echo "IMAX_VERSION=$VERSION" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: I-MAX-${{ env.IMAX_VERSION }}
-          path: app-max/android/app/build/outputs/apk/debug/I-MAX-${{ env.IMAX_VERSION }}.apk
+          name: I-MAX-${{ env.IMAX_VERSION }}-unsigned
+          path: app-max/android-artifact/
           if-no-files-found: error

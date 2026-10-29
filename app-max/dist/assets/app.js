@@ -23,8 +23,18 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.11'
+    version: 'i-max-2.7.13'
   };
+  let buildCommit = '';
+  async function loadBuildInfo() {
+    if (!document.baseURI) return;
+    try {
+      const response = await fetch(new URL('./build-info.json',document.baseURI),{cache:'no-store'});
+      if (!response.ok) return;
+      const info = await response.json();
+      if (/^[a-f0-9]{40}$/i.test(String(info.commit || ''))) buildCommit=info.commit;
+    } catch {} // Metadata must never block login or queued work.
+  }
 
   const ALL_VIEWS = {
     orders: 'ЗН', mp: 'МП', executor: 'Исп.', tech: 'ТЕХ',
@@ -51,18 +61,25 @@
   const handledPushTargets = new Set();
   const activeCompletions = new Map();
   const pendingActionButtons = new WeakSet();
+  const pendingActions = new Set();
+  const sessionRequests = new Set();
+  let sessionGeneration = 0;
+  let loggingOut = false;
+  let queueResumeTimer = null;
+  let queueResumeAt = 0;
+  let queueResumeJob = null;
   let orderQrScanner = null;
   let activeOrderQrSearch = null;
   let lastOrderQrValue = '';
   const longRunningActions = new Set([
-    'login', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation',
+    'login', 'logout', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
     'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
     'start-acceptance', 'complete-acceptance', 'choose-post', 'set-post', 'assign-executor', 'assign-other-executor', 'set-executor',
     'start-executor-work', 'complete-checklist', 'package-create', 'package-select', 'worktime-submit', 'package-start', 'package-pause', 'package-close',
     'start-quality', 'request-quality', 'complete-quality', 'service-history', 'open-defect-chat', 'send-defect-text', 'complete-defect-sheet',
     'load-client-topics', 'select-client-topic', 'refresh-client-messages', 'send-client-message',
     'load-chat-groups', 'select-chat-topic', 'refresh-chat-messages', 'send-chat-message',
-    'msg-new-chat', 'msg-source', 'msg-section', 'msg-open', 'msg-refresh', 'msg-refresh-messages', 'msg-send', 'msg-media', 'msg-poll-send', 'msg-poll-vote'
+    'msg-new-chat', 'msg-source', 'msg-section', 'msg-open', 'msg-refresh', 'msg-refresh-messages', 'msg-send', 'msg-media', 'msg-poll-send', 'msg-poll-vote', 'msg-outbox-show', 'msg-outbox-report', 'msg-outbox-retry'
   ]);
   let mediaPicker = null;
 
@@ -70,7 +87,18 @@
     api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
     toast,pickFile:configureFilePicker,photo:choosePhoto,media:openMediaPicker,filePayload:fileToPayload,
-    closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead
+    closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead,
+    outbox: {
+      scope: () => queueScope(),
+      prepareBatch: async definitions => {
+        const session = sessionSnapshot(); assertSession(session, session.scope);
+        const operations = await operationQueue.prepareBatch(definitions.map(item => ({...item,scope:session.scope,kind:'chat'})));
+        assertSession(session, session.scope); await refreshQueuedOperations(); return operations;
+      },
+      list: async () => { const session=sessionSnapshot(); const items=await operationQueue.list(session.scope); assertSession(session,session.scope); return items.filter(item=>item.kind==='chat'); },
+      run: async (id, options) => { const session=sessionSnapshot(); try { return await operationQueue.run(id,options); } finally { if(sessionCurrent(session)) await refreshQueuedOperations(); } },
+      report: openOperationReport
+    }
   });
 
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -116,6 +144,13 @@
   }
 
   function setAuth(id, mode) {
+    sessionGeneration++;
+    for (const controller of sessionRequests) controller.abort();
+    sessionRequests.clear();
+    clearTimeout(queueResumeTimer); queueResumeTimer = null; queueResumeAt = 0;
+    activeCompletions.clear();
+    state.failedOperationId = ''; state.failedOperationReport = '';
+    state.completionKey = ''; state.completionStatus = null; state.queuedOperations = [];
     state.userId = /^\d+$/.test(String(id || '').trim()) ? String(id).trim() : '';
     state.authMode = mode || 'max';
     // Bot IDs belong to the authenticated session; never carry them across logins.
@@ -123,6 +158,19 @@
     state.serviceBotId = '';
     if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
     else localStorage.removeItem(AUTH_STORAGE);
+  }
+
+  function sessionSnapshot() {
+    return { generation:sessionGeneration, userId:state.userId, scope:[String(CONFIG.apiBase || ''), String(CONFIG.publicBase || ''), String(state.userId || '')].join('|') };
+  }
+  function sessionCurrent(session) {
+    return session?.generation === sessionGeneration && session.userId === state.userId;
+  }
+  function sessionError() {
+    return Object.assign(new Error('Отправка приостановлена до входа владельца пакета'), {code:'SESSION_CHANGED', queuePaused:true});
+  }
+  function assertSession(session, scope = '') {
+    if (!sessionCurrent(session) || (scope && (loggingOut || !state.userId || scope !== session.scope))) throw sessionError();
   }
 
   function authPayload() {
@@ -204,6 +252,8 @@
   function diagnosticReport(diagnostic) {
     return [
       'I-MAX: отчёт об ошибке отправки',
+      `Версия: ${CONFIG.version}`,
+      `Сборка: ${buildCommit || 'не определена'}`,
       `HTTP status: ${diagnostic.status || 'нет ответа'}`,
       `Маршрут: ${diagnostic.route || 'не определён'}`,
       `requestId: ${diagnostic.requestId || 'не определён'}`,
@@ -219,10 +269,13 @@
   }
 
   async function call1C(method, payload = {}, options = {}) {
+    const session = options.session || sessionSnapshot();
+    assertSession(session);
     window.ITUS_WORKTIME?.validateRequest(method, payload);
     const base = String(CONFIG.apiBase || '').replace(/\/+$/, '');
     if (!base) throw new Error('Не заполнен ONE_C_API_BASE_URL');
     const controller = new AbortController();
+    sessionRequests.add(controller);
     const timer = setTimeout(() => controller.abort(), CONFIG.timeoutMs);
     const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
@@ -234,6 +287,7 @@
       window.ITUS_WORKTIME?.record(method, payload);
       const response = await fetch(base + method, { method: 'POST', headers, body: JSON.stringify(envelope), signal: controller.signal });
       const raw = (await response.text()).replace(/^\uFEFF/, '');
+      assertSession(session);
       let data;
       try { data = raw ? JSON.parse(raw) : {}; }
       catch { throw Object.assign(new Error(response.status === 404 ? `Метод ${method} не найден на сервере 1С (404). Файл не отправлен.` : '1С вернула не JSON'), { code: 'BAD_JSON', status: response.status }); }
@@ -247,6 +301,7 @@
       connectionStatus('ok', window.ITUS_REVIEW_MODE ? 'Проверочный режим · без соединения с 1С' : `1С доступна · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
       return data;
     } catch (error) {
+      if (!sessionCurrent(session)) throw sessionError();
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
       error.diagnostic = errorDiagnostic(error, { route:method, requestId:headers['X-ITUS-Request-Id'] });
       connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
@@ -254,6 +309,7 @@
       throw error;
     } finally {
       clearTimeout(timer);
+      sessionRequests.delete(controller);
     }
   }
 
@@ -270,9 +326,11 @@
 
   async function initialize() {
     if (!state.userId) return render();
+    const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
     try {
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
+      assertSession(session);
       // Альфа-Авто может вернуть data как массив блоков: [{user:[...]},{availableTabs:[...]}].
       // Сначала объединяем эти блоки, чтобы имя, роль и вкладки не терялись.
       const authData = Array.isArray(auth.data)
@@ -288,24 +346,29 @@
         .map(API.normalizeUser).find(candidate => candidate?.name);
       if (identity?.name) state.user = {...state.user, name:identity.name};
       const tabs = auth.availableTabs || authData.availableTabs || auth.data?.find?.(item => Array.isArray(item?.availableTabs))?.availableTabs;
-      const roleCode = String(state.user?.roleName || state.user?.role || '').trim().toLowerCase();
-      const isAdmin = roleCode === 'admin' || roleCode === 'administrator' || roleCode.includes('админ');
+      const roleCode = String(state.user?.roleName || '').trim().toLowerCase();
+      const roleLabel = String(state.user?.role || '').trim().toLowerCase();
+      const isAdmin = roleCode === 'admin' || roleCode === 'administrator'
+        || (!roleCode && ['admin','administrator','администратор'].includes(roleLabel));
+      // 1C explicitly grants administrators every section and may return [] for tabs.
       if (isAdmin) state.views = { ...ALL_VIEWS };
-      else if (CONFIG.enforceTabs && Array.isArray(tabs) && tabs.length) {
-        state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => tabs.includes(key)));
+      else if (CONFIG.enforceTabs) {
+        state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
+      if (!Object.keys(state.views).length) { state.initialized = true; return; }
       await loadOrders(false);
-      await resumeSavedOperations();
       await refreshQueuedOperations();
+      assertSession(session);
       state.initialized = true;
+      scheduleQueueResume();
       startPolling();
       void startNativePush();
       void syncExistingWebPush();
       await applyPendingPushTarget();
     } catch (error) {
-      state.error = `Не удалось подключиться к 1С: ${error.message}`;
+      if (sessionCurrent(session)) state.error = `Не удалось подключиться к 1С: ${error.message}`;
     } finally {
-      state.loading = false; render();
+      if (sessionCurrent(session)) { state.loading = false; render(); }
     }
   }
 
@@ -321,11 +384,11 @@
     if (notify) toast('Список заказ-нарядов обновлён');
   }
 
-  async function loadSingleOrder(orderRef) {
+  async function loadSingleOrder(orderRef, {select = true} = {}) {
     const response = await call1C('/orders/get', { orderRef, orderId: orderRef }, { silent: true });
     const raw = response.order || response.data?.order || response.data || response;
     const mapped = API.mapOrder(raw);
-    if (mapped.id) { mergeOrder(mapped); state.selectedOrderId = mapped.id; }
+    if (mapped.id) { mergeOrder(mapped); if (select) state.selectedOrderId = mapped.id; }
     return mapped;
   }
 
@@ -410,6 +473,7 @@
     renderUser(); renderTabs(); renderNotifications();
     if (state.loading) return $('app').innerHTML = '<div class="card loading"><span class="spinner"></span><div><h2>Подключение к 1С</h2><span class="tiny">Получаем пользователя и доступные заказ-наряды</span></div></div>';
     if (state.error) return $('app').innerHTML = `<div class="card"><h2>Нет подключения к 1С</h2><p class="muted">${esc(state.error)}</p><div class="grid two"><button data-action="retry-init">Повторить</button><button data-action="settings">Настройки</button></div></div>`;
+    if (!Object.keys(state.views).length) return $('app').innerHTML = '<div class="card"><h2>Нет доступных разделов</h2><p>Обратитесь к администратору 1С для назначения прав.</p><button data-action="logout">Выйти</button></div>';
     if (state.view === 'chat' && messenger) { messenger.enter(); return; }
     const renderers = { orders: renderOrdersView, mp: renderMpView, executor: renderExecutorView, tech: renderTechView, clients: renderClientsView, chat: renderChatView };
     $('app').innerHTML = (renderers[state.view] || renderOrdersView)();
@@ -420,18 +484,24 @@
   }
 
   const operationQueue = window.ITUS_OPERATION_QUEUE?.create({
-    sender: operation => call1C(operation.method, operation.body, { silent: true, requestId: operation.requestId, timestamp: operation.createdAt })
+    context: sessionSnapshot,
+    guard: (operation, session) => assertSession(session, operation.scope),
+    sender: (operation, session) => call1C(operation.method, operation.body, { silent:true, requestId:operation.requestId, timestamp:operation.createdAt, session })
   });
   const queueScope = () => [String(CONFIG.apiBase || ''), String(CONFIG.publicBase || ''), String(state.userId || '')].join('|');
 
   async function refreshQueuedOperations() {
     if (!operationQueue || !state.userId) return;
+    const session = sessionSnapshot();
     try {
-      state.queuedOperations = (await operationQueue.list(queueScope())).map(operation => ({
-        kind:operation.kind, status:operation.status,
+      const items = await operationQueue.list(session.scope);
+      assertSession(session, session.scope);
+      state.queuedOperations = items.map(operation => ({
+        id:operation.id, kind:operation.kind, status:operation.status, documentKey:operation.documentKey,
         orderRef:String(operation.body?.orderRef || operation.body?.orderId || '')
       }));
-    } catch { state.queuedOperations = []; }
+      void messenger?.refreshOutbox?.();
+    } catch { if (sessionCurrent(session)) state.queuedOperations = []; }
   }
 
   function queuedOperationsStatus(order) {
@@ -441,10 +511,27 @@
     const rejected = operations.find(operation => operation.status === 'invalid' || operation.status === 'failed');
     const attachments = operations.filter(operation => operation.kind === 'entry').length;
     const detail = rejected ? 'Ошибка отправки — откройте технический отчёт' : `Ожидание подтверждения 1С: вложений ${attachments}`;
-    return `<div class="notice" role="status"><strong>Сохранённая очередь</strong><div>${esc(detail)}</div></div>`;
+    return `<div class="notice" role="status"><strong>Сохранённая очередь</strong><div>${esc(detail)}</div><button data-action="show-operation-queue">Открыть очередь</button></div>`;
+  }
+
+  async function showOperationQueue() {
+    await refreshQueuedOperations();
+    const items = state.queuedOperations;
+    const rows = items.map(item => `<div class="entry"><strong>${item.kind==='complete' ? 'Завершение документа' : item.kind==='chat' ? 'Сообщение чата' : 'Запись или вложение'}</strong><div>${['failed','invalid'].includes(item.status) ? 'Требуется проверка' : 'Ожидает отправки'}</div>${['failed','invalid'].includes(item.status) ? `<button data-action="open-operation-report" data-operation-id="${escAttr(item.id)}">Отчёт и повтор</button>` : ''}</div>`).join('');
+    showSheet('Неотправленные операции', `Сохранено на устройстве: ${items.length}`, rows || '<p>Все операции подтверждены.</p>');
+    scheduleQueueResume();
+  }
+
+  async function openOperationReport(id) {
+    const session=sessionSnapshot(), operation=await operationQueue.get(id);
+    assertSession(session, operation?.scope);
+    if (!operation || operation.scope!==session.scope) return toast('Сохранённый пакет не найден',true);
+    showQueuedOperationError({operation,queueStatus:operation.status,code:operation.error,diagnostic:operation.diagnostic,status:operation.diagnostic?.status});
   }
 
   function showQueuedOperationError(error) {
+    if (error?.queuePaused) return;
+    if (error?.code === 'QUEUE_BUSY') { scheduleQueueResume(Math.max(1000, Number(error.leaseUntil || Date.now()+1000)-Date.now()+100)); return; }
     const operation = error?.operation;
     if (!operation) throw error;
     state.failedOperationId = operation.id;
@@ -476,22 +563,31 @@
   async function sendQueuedOperation(definition, { manual = false } = {}) {
     if (!operationQueue) throw new Error('Очередь отправки недоступна');
     const operation = await operationQueue.prepare(definition);
-    const restart = manual || operation.status === 'failed' || operation.status === 'invalid';
     await refreshQueuedOperations();
-    try { return await operationQueue.run(operation.id, { manual: restart }); }
+    try { return await operationQueue.run(operation.id, { manual }); }
     catch (error) { showQueuedOperationError(error); throw error; }
     finally { await refreshQueuedOperations(); }
   }
 
   async function retryFailedOperation() {
+    const session = sessionSnapshot();
     const id = state.failedOperationId;
     if (!id || !operationQueue) return toast('Сохранённый пакет не найден', true);
     try {
-      await operationQueue.run(id, { manual: true });
+      const operation = await operationQueue.get(id); assertSession(session,operation?.scope);
+      if (!operation || operation.scope!==session.scope) throw sessionError();
+      if (operation.kind === 'complete') {
+        if (!await runQueuedDocumentCompletion(operation.documentKey,operation,{manual:true})) return;
+      } else {
+        const response=await operationQueue.run(id, { manual:true }); assertSession(session,session.scope);
+        if(operation.kind==='chat') await messenger?.confirmedOutbox?.(operation,response);
+      }
+      assertSession(session,session.scope);
       state.failedOperationId = ''; state.failedOperationReport = '';
       closeSheet();
-      const order = currentOrder();
-      if (order) await loadSingleOrder(order.orderRef || order.id);
+      await resumeSavedOperations(); assertSession(session,session.scope);
+      const orderRef=operation.body?.orderRef || operation.body?.orderId;
+      if (orderRef) await loadSingleOrder(orderRef,{select:false});
       render(); toast('Отправка подтверждена');
     } catch (error) {
       showQueuedOperationError(error);
@@ -499,17 +595,44 @@
   }
 
   async function resumeSavedOperations() {
-    if (!operationQueue || !state.userId) return;
-    const operations = await operationQueue.list(queueScope());
-    let restored = false;
+    if (!operationQueue || !state.userId || loggingOut || navigator.onLine===false) return;
+    const session=sessionSnapshot();
+    if (queueResumeJob?.session.generation===session.generation) return queueResumeJob.promise;
+    const promise = (async () => {
+    const operations = await operationQueue.list(session.scope); assertSession(session,session.scope);
     const ordered = operations.slice().sort((a, b) => Number(a.kind === 'complete') - Number(b.kind === 'complete'));
     for (const operation of ordered) {
-      if (!['entry','complete'].includes(operation.kind) || !['pending','sending'].includes(operation.status) || operation.attempts >= operation.maxAttempts) continue;
-      if (operation.kind === 'complete' && (await operationQueue.list(queueScope())).some(item => item.kind === 'entry' && item.documentKey === operation.documentKey)) continue;
-      try { await operationQueue.run(operation.id); restored = true; }
-      catch (error) { if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error); }
+      assertSession(session,session.scope);
+      if (!['entry','complete','chat'].includes(operation.kind) || !['pending','sending'].includes(operation.status)) continue;
+      if (operation.kind === 'complete' && (await operationQueue.list(session.scope)).some(item => item.kind === 'entry' && item.documentKey === operation.documentKey)) continue;
+      try {
+        if (operation.kind==='complete') await runQueuedDocumentCompletion(operation.documentKey,operation);
+        else {
+          const response=await operationQueue.run(operation.id);
+          assertSession(session,session.scope);
+          if(operation.kind==='chat') await messenger?.confirmedOutbox?.(operation,response);
+        }
+        assertSession(session,session.scope);
+      } catch (error) { if (error.queuePaused) throw error; if(error.code!=='QUEUE_NOT_FOUND') showQueuedOperationError(error); }
     }
-    if (restored) await loadOrders(false);
+    assertSession(session,session.scope);
+    await refreshQueuedOperations();
+    })().catch(error => {
+      if(sessionCurrent(session)) {
+        if(error.queuePaused) scheduleQueueResume(250);
+        else console.warn('Queue resume:',error.code || 'QUEUE_ERROR');
+      }
+    }).finally(()=>{ if(queueResumeJob?.promise===promise) queueResumeJob=null; });
+    queueResumeJob={session,promise}; return promise;
+  }
+
+  function scheduleQueueResume(delay=0) {
+    if (!state.userId || loggingOut || navigator.onLine===false) return;
+    const at=Date.now()+Math.max(0,delay);
+    if(queueResumeTimer && queueResumeAt<=at) return;
+    clearTimeout(queueResumeTimer); queueResumeAt=at;
+    const session=sessionSnapshot();
+    queueResumeTimer=setTimeout(()=>{queueResumeTimer=null;queueResumeAt=0;if(sessionCurrent(session)) void resumeSavedOperations();},Math.max(0,delay));
   }
 
   function orderSearchText(order) {
@@ -558,6 +681,20 @@
     return acceptanceEntries.some(entry => entry.type === 'photo' && entry.file);
   }
 
+  function documentCompletionLocked(documentRef) {
+    const ref=String(documentRef || '');
+    if(!ref) return false;
+    return state.queuedOperations.some(item=>item.kind==='complete' && item.documentKey===ref)
+      || ['acceptance:'+ref,'defects:'+ref].includes(state.completionStatus?.key);
+  }
+
+  async function assertDocumentEditable(documentRef, session=sessionSnapshot()) {
+    const operations=await operationQueue.list(session.scope); assertSession(session,session.scope);
+    if(documentCompletionLocked(documentRef) || operations.some(item=>item.kind==='complete' && item.documentKey===String(documentRef))) {
+      throw Object.assign(new Error('Завершение уже сохранено. Изменение документа недоступно; статус и отчёт находятся в очереди.'),{code:'DOCUMENT_COMPLETION_PENDING'});
+    }
+  }
+
   function processProgress(process, processKey) {
     if (processKey === '_acceptance') {
       const fields = (process.form?.fields || []).filter(field => field.required && /mileage|odometer|пробег/i.test(field.id));
@@ -583,6 +720,7 @@
   }
 
     function renderField(processKey, field, process) {
+        const disabled=documentCompletionLocked(process.documentRef)?' disabled':'';
         const value = process.values?.[field.id] ?? field.value ?? '';
 
         const isEmpty =
@@ -597,11 +735,11 @@
         const label = `${esc(field.label)}${field.required ? ' <span class="required">*</span>' : ''}${field.unit ? `, ${esc(field.unit)}` : ''}`;
 
         if (field.type === 'select') {
-            return `<label>${label}</label><select class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}"><option value="">Выберите значение</option>${(field.options || []).map(option => `<option value="${escAttr(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>${error ? '<div class="error-text">Поле обязательно</div>' : ''}`;
+            return `<label>${label}</label><select class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}"${disabled}><option value="">Выберите значение</option>${(field.options || []).map(option => `<option value="${escAttr(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>${error ? '<div class="error-text">Поле обязательно</div>' : ''}`;
         }
 
         const tag = field.type === 'textarea' ? 'textarea' : 'input';
-        const type = field.type === 'textarea' ? '' : ` type="${field.type}"`;
+        const type = (field.type === 'textarea' ? '' : ` type="${field.type}"`) + disabled;
         const inputId = `field-${processKey}-${field.id}`;
         const textControl = tag === 'textarea'
             ? `<textarea id="${inputId}"${type} class="${error ? 'field-error' : ''}" data-process-input="${processKey}" data-field="${escAttr(field.id)}" placeholder="${escAttr(field.placeholder ?? '')}">${esc(String(value ?? ''))}</textarea>`
@@ -611,13 +749,14 @@
     }
 
   function renderQuestion(processKey, question, process) {
+    const disabled=documentCompletionLocked(process.documentRef)?' disabled':'';
     const value = process.answers?.[question.id];
     const done = answered(value);
     const error = process.errors?.has(`question:${question.id}`);
     const heading = `<div class="question-title">${esc(question.text)}${question.required ? ' <span class="required">*</span>' : ''}</div>${question.hint ? `<div class="tiny">${esc(question.hint)}</div>` : ''}`;
     if (['text','textarea','number'].includes(question.type)) {
       const tag = question.type === 'textarea' ? 'textarea' : 'input';
-      const type = question.type === 'textarea' ? '' : ` type="${question.type}"`;
+      const type = (question.type === 'textarea' ? '' : ` type="${question.type}"`) + disabled;
       const inputId = `question-${processKey}-${question.id}`;
       const textControl = tag === 'textarea'
         ? `<textarea id="${inputId}"${type} data-process-answer="${processKey}" data-question="${escAttr(question.id)}">${esc(value || '')}</textarea>`
@@ -625,8 +764,8 @@
       return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}${textControl}${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
     }
     const options = question.type === 'boolean' && !question.options.length ? [{value:'true',label:'Да'},{value:'false',label:'Нет'}] : question.options;
-    if (question.type === 'select') return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<select data-process-answer="${processKey}" data-question="${escAttr(question.id)}"><option value="">Выберите ответ</option>${options.map(option => `<option value="${escAttr(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
-    return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<div class="answers">${options.map(option => { const selected = Array.isArray(value) ? value.includes(option.value) : String(value ?? '') === String(option.value); return `<button class="answer ${selected ? 'selected' : ''}" data-action="answer-option" data-process="${processKey}" data-question="${escAttr(question.id)}" data-value="${escAttr(option.value)}" data-type="${question.type}">${selected ? '✓ ' : ''}${esc(option.label)}</button>`; }).join('')}</div>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
+    if (question.type === 'select') return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<select data-process-answer="${processKey}" data-question="${escAttr(question.id)}"${disabled}><option value="">Выберите ответ</option>${options.map(option => `<option value="${escAttr(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
+    return `<div class="question ${done ? 'done' : ''} ${error ? 'field-error' : ''}">${heading}<div class="answers">${options.map(option => { const selected = Array.isArray(value) ? value.includes(option.value) : String(value ?? '') === String(option.value); return `<button class="answer ${selected ? 'selected' : ''}" data-action="answer-option" data-process="${processKey}" data-question="${escAttr(question.id)}" data-value="${escAttr(option.value)}" data-type="${question.type}"${disabled}>${selected ? '✓ ' : ''}${esc(option.label)}</button>`; }).join('')}</div>${error ? '<div class="error-text">Ответ обязателен</div>' : ''}</div>`;
   }
 
   function renderProcess(processKey, process, completeAction, completeLabel) {
@@ -635,8 +774,10 @@
     const hasContent = (process.form?.fields?.length || 0) + (process.survey?.questions?.length || 0) > 0;
     const completionKey = processKey === '_acceptance' ? `acceptance:${process.documentRef || ''}` : '';
     const completing = Boolean(completionKey) && state.completionKey === completionKey;
-    const completionStatus = state.completionStatus?.key === completionKey ? state.completionStatus : null;
-    const completionText = completionStatus?.stage === 'sending' ? `Отправка ${completionStatus.sent}/${completionStatus.total}…`
+    const savedCompletion=state.queuedOperations.find(item=>item.kind==='complete' && item.documentKey===String(process.documentRef));
+    const completionStatus = state.completionStatus?.key === completionKey ? state.completionStatus : savedCompletion ? {key:completionKey,stage:['failed','invalid'].includes(savedCompletion.status)?'error':'waiting'} : null;
+    const completionText = completionStatus?.stage === 'saving' ? 'Сохраняем завершение…'
+      : completionStatus?.stage === 'sending' ? `Отправка ${completionStatus.sent}/${completionStatus.total}…`
       : completionStatus?.stage === 'waiting' ? 'Ожидание отправки файлов…'
       : completionStatus?.stage === 'completing' ? 'Завершение…'
       : completionStatus?.stage === 'error' ? 'Ошибка отправки — откройте отчёт'
@@ -644,14 +785,14 @@
     const completionBusy = Boolean(completionStatus) && completionStatus.stage !== 'error';
     const completion = processKey === '_quality'
       ? `<div class="grid two quality-decision-actions"><button class="success" data-action="complete-quality" data-result="passed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд разрешен</button><button class="danger" data-action="complete-quality" data-result="failed" ${!hasContent || state.busy ? 'disabled' : ''}>Выезд запрещен</button></div>`
-      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy || completionStatus ? 'disabled' : ''} aria-busy="${completionBusy || completing}">${completionText ? `${completionBusy || completing ? '<span class="spinner"></span> ' : ''}${esc(completionText)}` : esc(completeLabel)}</button>`;
+      : `<button class="primary" data-action="${completeAction}" ${!hasContent || state.busy || completionStatus || documentCompletionLocked(process.documentRef) ? 'disabled' : ''} aria-busy="${completionBusy || completing}">${completionText ? `${completionBusy || completing ? '<span class="spinner"></span> ' : ''}${esc(completionText)}` : esc(completeLabel)}</button>`;
     return `<div class="card" data-process-card="${processKey}"><div class="section-title"><div><h2>${esc(process.survey?.title || process.form?.title || 'Форма из 1С')}</h2><div class="tiny">Документ 1С: ${esc(process.documentRef || 'ссылка не возвращена')}</div></div><span data-process-progress class="badge ${progress.done === progress.total && progress.total ? 'ok' : 'warn'}">${progress.done}/${progress.total}</span></div>${process.form?.hint ? `<p class="muted">${esc(process.form.hint)}</p>` : ''}${process.survey?.hint ? `<p class="muted">${esc(process.survey.hint)}</p>` : ''}<div class="progress"><span data-process-bar style="width:${progress.pct}%"></span></div>${hasContent ? (process.form.fields.map(field => renderField(processKey, field, process)).join('') + process.survey.questions.map(question => renderQuestion(processKey, question, process)).join('')) : '<div class="empty">1С создала документ, но не вернула схему полей и вопросов. Продолжение заблокировано.</div>'}${processKey === '_acceptance' ? renderAcceptancePhoto(process) : ''}${completion}</div>`;
   }
 
   function renderAcceptancePhoto(process) {
     const done = acceptanceHasPhoto();
     const required = process.photo?.required !== false;
-    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Добавьте фотографию или видео.'}</p><button data-action="open-acceptance-photo">Добавить фото/видео</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
+    return `<div class="question ${done ? 'done' : ''} ${!done && process.errors?.has('photo') ? 'field-error' : ''}"><div class="question-title">Фотография автомобиля${required ? ' <span class="required">*</span>' : ''}</div><p class="tiny">${done ? 'Фотография отправлена в 1С' : 'Добавьте фотографию или видео.'}</p><button data-action="open-acceptance-photo"${documentCompletionLocked(process.documentRef)?' disabled':''}>Добавить фото/видео</button>${!done && process.errors?.has('photo') ? '<div class="error-text">Отправьте хотя бы одну фотографию</div>' : ''}</div>`;
   }
 
   function updateProcessProgress(processKey) {
@@ -671,7 +812,7 @@
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo">Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button><button data-action="request-quality">Запросить контроль качества</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo"${documentCompletionLocked(order._acceptance?.documentRef)?' disabled':''}>Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button><button data-action="request-quality">Запросить контроль качества</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
   }
 
   function renderExecutorView() {
@@ -747,19 +888,26 @@
   }
 
   async function completeAcceptance() {
+    const session = sessionSnapshot();
     const order = currentOrder(), process = order?._acceptance; if (!process) return;
     const key = `acceptance:${process.documentRef || ''}`;
-    if (activeCompletions.has(key) || state.completionStatus?.key === key) return;
+    if (activeCompletions.has(key) || documentCompletionLocked(process.documentRef)) return;
     if (state.busy) return;
     validateProcess(process, false);
     if (process.photo?.required !== false && !acceptanceHasPhoto(order)) process.errors.add('photo');
     if (process.errors.size) { render(); toast('Заполните обязательные поля, ответы и отправьте фотографию, если она обязательна', true); return; }
     const scope = queueScope();
-    const queuedCompletion = await operationQueue.prepare({
+    state.completionKey=key;state.completionStatus={key,stage:'saving'};render();
+    let queuedCompletion;
+    try { queuedCompletion = await operationQueue.prepare({
       id:`${scope}:complete:acceptance:${process.documentRef}`, scope, method:'/acceptance/complete',
       body:orderPayload({ documentRef: process.documentRef, formValues: process.values, surveyRef: process.survey.surveyRef, surveyVersion: process.survey.version, answers: process.answers }),
       documentKey:String(process.documentRef || ''), requestId:requestId(), kind:'complete'
-    });
+    }); } catch(error) {
+      if(sessionCurrent(session)) {state.completionKey='';state.completionStatus=null;render();}
+      throw error;
+    }
+    assertSession(session,scope);
     state.completionKey = key; state.completionStatus = {key, stage:'waiting'};
     await refreshQueuedOperations(); render();
     return runQueuedAcceptanceCompletion(String(process.documentRef || ''), queuedCompletion);
@@ -1141,11 +1289,13 @@
   }
 
   async function sendQueuedEntry(attemptKey, method, body) {
+    const session = sessionSnapshot();
     const scope = queueScope();
     const queueId = `${scope}:entry:${attemptKey}`;
     if (activeEntrySubmissions.has(queueId)) return activeEntrySubmissions.get(queueId);
     const submission = (async () => {
-      const proposedId = defectEntryId(attemptKey);
+      const existing = await operationQueue.get(queueId); assertSession(session,scope);
+      const proposedId = existing?.clientEntryId || defectEntryId(attemptKey);
       const operation = await operationQueue.prepare({
         id: queueId, scope, method, clientEntryId: proposedId,
         documentKey: String(body.documentRef || ''),
@@ -1153,7 +1303,8 @@
         requestId: requestId(), kind: 'entry'
       });
       try {
-        const response = await operationQueue.run(operation.id, { manual: operation.status === 'failed' || operation.status === 'invalid' });
+        assertSession(session,scope);
+        const response = await operationQueue.run(operation.id, {manual:operation.status==='failed'}); assertSession(session,scope);
         finishDefectEntry(attemptKey, operation.clientEntryId);
         return { response, operation };
       } catch (error) {
@@ -1175,24 +1326,31 @@
   }
 
   async function runPreparedOperations(operations, {stopOnError = false, onProgress} = {}) {
+    const session = sessionSnapshot();
     let sent = 0;
     for (const operation of operations) {
+      assertSession(session,operation.scope);
       onProgress?.({sent, total:operations.length});
       try {
         await operationQueue.run(operation.id);
+        assertSession(session,operation.scope);
         sent++;
         onProgress?.({sent, total:operations.length});
       } catch (error) {
-        if (error.code !== 'QUEUE_BUSY') showQueuedOperationError(error);
+        if (error.queuePaused) throw error;
+        showQueuedOperationError(error);
         if (stopOnError) throw error;
       } finally { await refreshQueuedOperations(); }
     }
   }
 
   async function waitForDocumentEntries(documentKey, onProgress) {
-    const pending = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    const session=sessionSnapshot();
+    const pending = (await operationQueue.list(session.scope)).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    assertSession(session,session.scope);
     if (pending.length) await runPreparedOperations(pending, {stopOnError:true, onProgress});
-    const remaining = (await operationQueue.list(queueScope())).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    const remaining = (await operationQueue.list(session.scope)).filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    assertSession(session,session.scope);
     if (remaining.length) throw new Error('Завершение недоступно: не все записи и вложения подтверждены 1С');
   }
 
@@ -1202,10 +1360,21 @@
   }
 
   async function runQueuedAcceptanceCompletion(documentKey, queuedCompletion = null) {
-    const {order, process} = acceptanceForDocument(documentKey);
-    const key = `acceptance:${documentKey}`;
-    if (!order || !process || activeCompletions.has(key)) return activeCompletions.get(key);
-    const operations = await operationQueue.list(queueScope());
+    return runQueuedDocumentCompletion(documentKey,queuedCompletion);
+  }
+
+  async function runQueuedDocumentCompletion(documentKey, queuedCompletion = null, {manual=false} = {}) {
+    const session=sessionSnapshot();
+    const operations = await operationQueue.list(session.scope); assertSession(session,session.scope);
+    const operation = queuedCompletion || operations.find(item => item.kind === 'complete' && item.documentKey === documentKey);
+    if (!operation) return;
+    assertSession(session,operation.scope);
+    const acceptance = operation.method === '/acceptance/complete';
+    const key = `${acceptance?'acceptance':'defects'}:${documentKey}`;
+    if (activeCompletions.has(key)) return activeCompletions.get(key);
+    const orderRef = String(operation.body?.orderRef || operation.body?.orderId || '');
+    const order = state.orders.find(item=>String(item.orderRef || item.id)===orderRef);
+    const process = order?.[acceptance?'_acceptance':'_defectSheet'];
     const pendingEntries = operations.filter(item => item.kind === 'entry' && item.documentKey === documentKey);
     if (pendingEntries.length) {
       const failed = pendingEntries.some(item => item.status === 'invalid' || item.status === 'failed');
@@ -1214,28 +1383,37 @@
       render();
       return;
     }
-    const operation = queuedCompletion || operations.find(item => item.kind === 'complete' && item.documentKey === documentKey && item.method === '/acceptance/complete');
-    if (!operation) return;
     const completion = (async () => {
-      state.busy = true; state.completionKey = key; state.completionStatus = {key, stage:'completing'}; render();
+      state.completionKey = key; state.completionStatus = {key, stage:'completing'}; render();
       try {
-        await operationQueue.run(operation.id);
-        const mileageField = process.form.fields.find(field => /mileage|пробег/i.test(field.id));
-        const hoursField = process.form.fields.find(field => /engineHours|hours|моточас/i.test(field.id));
-        const reasonField = process.form.fields.find(field => /reason|appeal|причин/i.test(field.id));
-        if (mileageField) order.mileage = String(process.values[mileageField.id] || '');
-        if (hoursField) order.engineHours = String(process.values[hoursField.id] || '');
-        if (reasonField) order.reason = String(process.values[reasonField.id] || '');
+        await operationQueue.run(operation.id,{manual});
+        assertSession(session,session.scope);
+        const fields=process?.form?.fields || [], values=operation.body?.formValues || {};
+        const mileageField = fields.find(field => /mileage|пробег/i.test(field.id));
+        const hoursField = fields.find(field => /engineHours|hours|моточас/i.test(field.id));
+        const reasonField = fields.find(field => /reason|appeal|причин/i.test(field.id));
+        if (mileageField) order.mileage = String(values[mileageField.id] || '');
+        if (hoursField) order.engineHours = String(values[hoursField.id] || '');
+        if (reasonField) order.reason = String(values[reasonField.id] || '');
         state.completionStatus = {key, stage:'completed'};
-        order._acceptance = null; await loadSingleOrder(order.orderRef); toast('Приём завершён, данные сохранены в 1С');
+        if(order) order[acceptance?'_acceptance':'_defectSheet'] = null;
+        if(orderRef) await loadSingleOrder(orderRef,{select:false});
+        assertSession(session,session.scope);
+        toast(acceptance?'Приём завершён, данные сохранены в 1С':'Дефектовка завершена');
+        return true;
       } catch (error) {
+        if(error.queuePaused) throw error;
         state.completionStatus = {key, stage:'error'};
         showQueuedOperationError(error);
+        return false;
       } finally {
-        state.busy = false; state.completionKey = ''; activeCompletions.delete(key);
-        await refreshQueuedOperations();
-        if (state.completionStatus?.key === key && state.completionStatus.stage === 'completed') state.completionStatus = null;
-        render();
+        if(activeCompletions.get(key)===completion) activeCompletions.delete(key);
+        if(sessionCurrent(session)) {
+          if(state.completionKey===key) state.completionKey = '';
+          await refreshQueuedOperations();
+          if (state.completionStatus?.key === key && state.completionStatus.stage === 'completed') state.completionStatus = null;
+          render();
+        }
       }
     })();
     activeCompletions.set(key, completion);
@@ -1294,7 +1472,8 @@
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
     const completing = state.completionKey === completionKey;
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText" placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo">Фото и видео</button><button data-action="send-defect-text">Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
+    const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }
 
   async function openDefectSheet() {
@@ -1328,6 +1507,7 @@
       toast('Сначала создайте акт приёма', true);
       return;
     }
+    if(documentCompletionLocked(process.documentRef)) return toast('Завершение уже сохранено. Статус доступен в очереди.',true);
     if (!window.ITUS_MEDIA_PICKER?.create) {
       showSheet('Приём автомобиля', `Документ 1С: ${process.documentRef || 'не указан'}`, '<div class="grid two"><button class="primary" data-action="acceptance-photo">Фото</button><button class="secondary" data-action="acceptance-video">Видео</button></div>');
       return;
@@ -1336,13 +1516,17 @@
   }
 
   async function uploadAcceptanceFile(file, kind) {
+    const session=sessionSnapshot();
     const order = currentOrder();
     const process = order?._acceptance;
     if (!process?.documentRef) throw new Error('Сначала создайте акт приёма');
+    await assertDocumentEditable(process.documentRef,session);
     toast('Подготавливаем файл для акта приёма…');
     const payload = await fileToPayload(file, kind);
+    assertSession(session,session.scope);
+    await assertDocumentEditable(process.documentRef,session);
     const attemptKey = defectEntryKey(order, process.documentRef, kind, file);
-    const requestBody = { ...orderPayload(), documentRef: process.documentRef, entry: { type: kind, file: payload } };
+    const requestBody = { ...orderPayloadFor(order), documentRef: process.documentRef, entry: { type: kind, file: payload } };
     let response, operation;
     try { ({response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', requestBody)); }
     catch (error) {
@@ -1354,11 +1538,13 @@
   }
 
   async function sendDefectText() {
+    const session=sessionSnapshot(), order=currentOrder();
     const text = String($('defectText')?.value || '').trim();
     if (!text) return toast('Введите описание дефекта', true);
-    const sheet = await ensureDefectSheet();
-    const attemptKey = defectEntryKey(currentOrder(), sheet.documentRef, 'text', text);
-    const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', orderPayload({ documentRef: sheet.documentRef, entry: { type: 'text', text } }));
+    const sheet = await ensureDefectSheet(order); assertSession(session,session.scope);
+    await assertDocumentEditable(sheet.documentRef,session);
+    const attemptKey = defectEntryKey(order, sheet.documentRef, 'text', text);
+    const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', {...orderPayloadFor(order),documentRef:sheet.documentRef,entry:{type:'text',text}});
     appendQueuedEntry(sheet, response, operation, { type:'text', text, createdAt:nowIso(), author:state.user?.name || '' });
     renderDefectSheet(); toast('Запись добавлена в дефектовку');
   }
@@ -1368,6 +1554,8 @@
   }
 
   function openMediaPicker(target) {
+    const process=target.type==='acceptance'?currentOrder()?._acceptance:target.type==='defect'?currentOrder()?._defectSheet:null;
+    if(documentCompletionLocked(process?.documentRef)) return toast('Завершение уже сохранено. Статус доступен в очереди.',true);
     if (!mediaPicker && window.ITUS_MEDIA_PICKER?.create) {
       mediaPicker = window.ITUS_MEDIA_PICKER.create({ showSheet, closeSheet, toast, limits: { photo:CONFIG.maxPhotoBytes, video:CONFIG.maxVideoBytes } });
     }
@@ -1376,7 +1564,7 @@
     const queueTarget = target.type === 'acceptance' || target.type === 'defect';
     mediaPicker.open({
       hint: `Файлы будут отправлены в ${labels[target.type] || 'текущий раздел'} по одному действию.`,
-      onCommit: queueTarget ? files => commitMediaBatch(target.type, files) : null,
+      onCommit: queueTarget ? files => commitMediaBatch(target.type, files) : target.type==='messenger' ? files => messenger.enqueueMediaBatch(files,target) : null,
       onSend: async (file, kind, uploadId) => {
         toast(`Загрузка файла «${file.name || 'вложения'}»…`);
         if (target.type === 'messenger') return messenger.upload(file, { ...target, kind });
@@ -1390,23 +1578,30 @@
   }
 
   async function commitMediaBatch(type, files) {
+    const session=sessionSnapshot();
     if (!operationQueue || !files.length) throw new Error('Очередь отправки недоступна');
     const order = currentOrder();
     if (!order) throw new Error('Сначала выберите заказ-наряд');
     const orderData = orderPayloadFor(order);
     const process = type === 'acceptance' ? order._acceptance : await ensureDefectSheet(order);
+    assertSession(session,session.scope);
     if (!process?.documentRef) throw new Error(type === 'acceptance' ? 'Сначала создайте акт приёма' : 'Не найден документ дефектовки');
     const documentKey = String(process.documentRef);
     const scope = queueScope();
+    await assertDocumentEditable(documentKey,session);
     // Finish every conversion before opening the atomic IndexedDB transaction.
-    const preparedFiles = await Promise.all(files.map(async item => ({ ...item, payload:await fileToPayload(item.file, item.kind) })));
+    const preparedFiles = [];
+    for(const item of files) { assertSession(session,scope); preparedFiles.push({...item,payload:await fileToPayload(item.file,item.kind)}); }
+    assertSession(session,scope);
     const definitions = preparedFiles.map(item => {
       const attemptKey = [orderData.orderRef, documentKey, item.kind, item.uploadId].join('|');
       const clientEntryId = item.uploadId;
       const body = { ...orderData, documentRef:documentKey, clientEntryId, entry:{ type:item.kind, file:item.payload, clientEntryId } };
       return { id:`${scope}:entry:${attemptKey}`, scope, method:'/defects/entries/add', documentKey, clientEntryId, body, requestId:requestId(), kind:'entry' };
     });
+    await assertDocumentEditable(documentKey,session);
     const operations = await operationQueue.prepareBatch(definitions);
+    assertSession(session,scope);
     await refreshQueuedOperations();
     process.entries = Array.isArray(process.entries) ? process.entries : [];
     for (const [index, operation] of operations.entries()) {
@@ -1417,9 +1612,10 @@
     }
     // The picker may now close; transport no longer references its File objects or DOM.
     void runPreparedOperations(operations).then(async () => {
-      if (type === 'acceptance') await runQueuedAcceptanceCompletion(documentKey);
+      assertSession(session,scope);
+      await runQueuedDocumentCompletion(documentKey);
       render();
-    });
+    }).catch(error=>{if(!error.queuePaused && sessionCurrent(session)) showQueuedOperationError(error);});
     return operations;
   }
 
@@ -1469,11 +1665,15 @@
   }
 
   async function uploadDefectFile(file, kind) {
+    const session=sessionSnapshot();
     const order = currentOrder();
     const targetOrder = orderPayload();
     const sheet = await ensureDefectSheet(order);
+    await assertDocumentEditable(sheet.documentRef,session);
     toast('Подготавливаем файл…');
     const payload = await fileToPayload(file, kind);
+    assertSession(session,session.scope);
+    await assertDocumentEditable(sheet.documentRef,session);
     const attemptKey = defectEntryKey(order, sheet.documentRef, kind, file);
     const {response, operation} = await sendQueuedEntry(attemptKey, '/defects/entries/add', { ...targetOrder, documentRef: sheet.documentRef, entry: { type: kind, file: payload } });
     appendQueuedEntry(sheet, response, operation, { type:kind, file:operation.body.entry.file, createdAt:nowIso(), author:state.user?.name || '' });
@@ -1481,21 +1681,16 @@
   }
 
   async function completeDefectSheet() {
-    const sheet = currentOrder()?._defectSheet; if (!sheet) return;
+    const session=sessionSnapshot(), order=currentOrder(), sheet = order?._defectSheet; if (!sheet) return;
     const key = `defects:${sheet.documentRef || ''}`;
     if (activeCompletions.has(key)) return activeCompletions.get(key);
     if (state.busy) return;
-    const completion = (async () => {
-      state.busy = true; state.completionKey = key; renderDefectSheet();
-      try {
-        await waitForDocumentEntries(String(sheet.documentRef || ''));
-        const scope = queueScope();
-        await sendQueuedOperation({ id:`${scope}:complete:defects:${sheet.documentRef}`, scope, method:'/defects/complete', body:orderPayload({ documentRef: sheet.documentRef }), documentKey:String(sheet.documentRef || ''), requestId:requestId(), kind:'complete' });
-        currentOrder()._defectSheet = null; closeSheet(); await loadSingleOrder(currentOrder().orderRef); render(); toast('Дефектовка завершена');
-      } finally { state.busy = false; state.completionKey = ''; activeCompletions.delete(key); }
-    })();
-    activeCompletions.set(key, completion);
-    return completion;
+    const scope=session.scope;
+    const completion=await operationQueue.prepare({id:`${scope}:complete:defects:${sheet.documentRef}`,scope,method:'/defects/complete',body:{...orderPayloadFor(order),documentRef:sheet.documentRef},documentKey:String(sheet.documentRef),requestId:requestId(),kind:'complete'});
+    assertSession(session,scope); state.completionKey=key;state.completionStatus={key,stage:'waiting'};
+    closeSheet(); await refreshQueuedOperations();
+    await runQueuedDocumentCompletion(String(sheet.documentRef),completion);
+    scheduleQueueResume();
   }
 
   async function loadClientTopics() {
@@ -1623,14 +1818,18 @@
     finally { try { await subscription?.unsubscribe(); } catch {} }
   }
   async function startNativePush() {
+    const session=sessionSnapshot();
     const nativePush = window.ITUS_NATIVE_PUSH;
     if (!nativePush?.supported?.() || !state.userId) return;
     try {
       return await nativePush.start({
         onToken: async token => {
-          if (!token || !state.userId) return;
-          await call1C('/notifications/push/subscribe', {platform:'android',token,userId:state.userId,
-            clientInstanceId:pushClientInstanceId()}, {silent:true});
+          if (!token) return;
+          assertSession(session,session.scope);
+          const response=await call1C('/notifications/push/subscribe', {platform:'android',token,userId:session.userId,
+            clientInstanceId:pushClientInstanceId()}, {silent:true,session});
+          if(response?.data?.registered!==true) throw new Error('1С не подтвердила регистрацию Android Push');
+          return true;
         }
       });
     } catch (error) { console.warn('Native push start:',error.message); return false; }
@@ -1807,7 +2006,20 @@
   }
 
   function showSettings() {
-    showSheet('Настройки I-MAX', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
+    showSheet('Настройки I-MAX', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
+  }
+
+  async function logout() {
+    loggingOut=true;
+    setAuth(state.userId,state.authMode); // Invalidate every running request before remote cleanup.
+    try { await Promise.allSettled([unregisterWebPush(),window.ITUS_NATIVE_PUSH?.unregister?.()]); }
+    finally {
+      messenger?.reset(); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();
+      mediaPicker?.dismiss?.({force:true});
+      setAuth('','');
+      Object.assign(state,{user:null,orders:[],selectedOrderId:'',initialized:false,loading:false,busy:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set()});
+      document.body?.classList.remove('messenger-view'); closeSheet(); loggingOut=false; render();
+    }
   }
 
   async function test1C() {
@@ -1889,7 +2101,7 @@
   }
 
   window.addEventListener('offline', () => connectionStatus('error', 'Нет подключения к интернету'));
-  window.addEventListener('online', () => connectionStatus('', 'Интернет восстановлен · ожидаем ответа 1С'));
+  window.addEventListener('online', () => { connectionStatus('', 'Интернет восстановлен · ожидаем ответа 1С'); scheduleQueueResume(); });
 
   document.addEventListener('focusin', event => {
     if (event.target.id === 'orderSearch') {
@@ -1908,8 +2120,8 @@
     }
     const processKey = event.target.dataset.processInput;
     const answerKey = event.target.dataset.processAnswer;
-    if (processKey) { const process = currentOrder()?.[processKey]; if (process) { process.values[event.target.dataset.field] = event.target.value; process.errors?.delete(`field:${event.target.dataset.field}`); updateProcessProgress(processKey); } }
-    if (answerKey) { const process = currentOrder()?.[answerKey]; if (process) { process.answers[event.target.dataset.question] = event.target.value; process.errors?.delete(`question:${event.target.dataset.question}`); updateProcessProgress(answerKey); } }
+    if (processKey) { const process = currentOrder()?.[processKey]; if (process && !documentCompletionLocked(process.documentRef)) { process.values[event.target.dataset.field] = event.target.value; process.errors?.delete(`field:${event.target.dataset.field}`); updateProcessProgress(processKey); } }
+    if (answerKey) { const process = currentOrder()?.[answerKey]; if (process && !documentCompletionLocked(process.documentRef)) { process.answers[event.target.dataset.question] = event.target.value; process.errors?.delete(`question:${event.target.dataset.question}`); updateProcessProgress(answerKey); } }
   });
 
   document.addEventListener('change', event => {
@@ -1923,24 +2135,26 @@
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
+    const session=sessionSnapshot();
+    const actionKey=[session.generation,action,button.dataset.operationId || button.dataset.operation || '',button.dataset.ref || '',currentOrder()?.id || ''].join('|');
     const tracksPendingState = longRunningActions.has(action);
-    if (button.disabled || (tracksPendingState && pendingActionButtons.has(button))) return;
+    if (button.disabled || (tracksPendingState && (pendingActionButtons.has(button) || pendingActions.has(actionKey)))) return;
     if (tracksPendingState) {
-      pendingActionButtons.add(button);
+      pendingActionButtons.add(button); pendingActions.add(actionKey);
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       button.classList.add('is-pending');
     }
     try {
-      if (mediaPicker?.handle(action, button)) return;
-      if (action.startsWith('msg-')) return messenger?.handle(action,button);
-      if (action === 'view') return setView(button.dataset.view);
-      if (action === 'login') { const id = String($('authUserId')?.value || '').trim(); if (!/^\d+$/.test(id)) return toast('ID пользователя MAX должен содержать только цифры', true); setAuth(id, 'manual'); return initialize(); }
-      if (action === 'scan-auth-qr') return scanAuthQr();
-      if (action === 'manual-auth-qr') return manualQr();
-      if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return initialize(); }
-      if (action === 'settings') return showSettings();
-      if (action === 'notification-settings') return showNotificationSettings();
+      if (await mediaPicker?.handle(action, button)) return;
+      if (action.startsWith('msg-')) return await messenger?.handle(action,button);
+      if (action === 'view') return await setView(button.dataset.view);
+      if (action === 'login') { const id = String($('authUserId')?.value || '').trim(); if (!/^\d+$/.test(id)) return await toast('ID пользователя MAX должен содержать только цифры', true); setAuth(id, 'manual'); return await initialize(); }
+      if (action === 'scan-auth-qr') return await scanAuthQr();
+      if (action === 'manual-auth-qr') return await manualQr();
+      if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return await toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return await initialize(); }
+      if (action === 'settings') return await showSettings();
+      if (action === 'notification-settings') return await showNotificationSettings();
       if (action === 'save-notifications') {
         const prefs = FEATURES.preferences(state.userId);
         document.querySelectorAll('[data-notification-pref]').forEach(input => prefs[input.dataset.notificationPref] = input.checked);
@@ -1951,78 +2165,80 @@
       if (action === 'enable-system-notifications') {
         if (nativePush()) {
           const permission = await nativePush().requestPermission();
-          if (permission !== 'granted') { showNotificationSettings(); return toast('Разрешение на уведомления не получено',true); }
-          await startNativePush(); enableSystemPreference(); return;
+          if (permission !== 'granted') { showNotificationSettings(); return await toast('Разрешение на уведомления не получено',true); }
+          await startNativePush(); if(nativePush().isRegistered?.()) enableSystemPreference(); else { showNotificationSettings(); toast('Разрешение получено. Ожидаем подтверждения регистрации в 1С'); } return;
         }
         if (nativeNotifications) { nativeNotifications.requestPermission(); return; }
-        if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext) return toast('Нужен браузер с поддержкой уведомлений и HTTPS (или localhost)', true);
+        if (!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext) return await toast('Нужен браузер с поддержкой уведомлений и HTTPS (или localhost)', true);
         const permission = await Notification.requestPermission();
         if (permission === 'granted') {await notificationRegistration();enableSystemPreference();}
         else {showNotificationSettings();toast('Разрешение не получено',true);}
         return;
       }
-      if (action === 'enable-web-push') { await registerWebPush(); return toast('Push-подписка зарегистрирована'); }
-      if (action === 'bot-messages') return setView('clients');
-      if (action === 'test-1c') return test1C();
-      if (action === 'retry-init') { closeSheet(); return initialize(); }
-      if (action === 'retry-failed-operation') return retryFailedOperation();
-      if (action === 'copy-operation-report') return copyOperationReport();
-      if (action === 'logout') { await unregisterWebPush(); await window.ITUS_NATIVE_PUSH?.unregister?.(); messenger?.reset(); document.body.classList.remove('messenger-view'); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();setAuth('', ''); Object.assign(state, { user:null,orders:[],selectedOrderId:'',initialized:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set() }); closeSheet(); return render(); }
-      if (action === 'close-sheet') return closeSheet();
-      if (action === 'refresh-orders') { await loadOrders(); return render(); }
-      if (action === 'search-orders') return searchOrders();
-      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return render(); }
-      if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return toast('Карточка обновлена из 1С'); }
-      if (action === 'scan-order-qr') return openOrderQrScanner();
-      if (action === 'manual-order-qr') return showOrderQrManual();
-      if (action === 'submit-order-qr') return searchOrderQr($('orderQr')?.value);
-      if (action === 'select-order-qr') { const order = state.orders.find(item => (item.orderRef || item.id) === button.dataset.ref); if (!order) return toast('Заказ-наряд больше недоступен', true); state.selectedOrderId = order.id; state.view = viewForCurrentUser(); closeSheet(); return render(); }
-      if (action === 'answer-option') { const process = currentOrder()?.[button.dataset.process]; if (!process) return; const id = button.dataset.question, value = button.dataset.value; if (button.dataset.type === 'multi') { const values = Array.isArray(process.answers[id]) ? process.answers[id] : []; process.answers[id] = values.includes(value) ? values.filter(item => item !== value) : values.concat(value); } else process.answers[id] = value; process.errors?.delete(`question:${id}`); return render(); }
-      if (action === 'start-acceptance') return startAcceptance();
-      if (action === 'complete-acceptance') return completeAcceptance();
-      if (action === 'choose-post') return choosePost();
-      if (action === 'set-post') return setPost(button.dataset.ref, button.dataset.name);
-      if (action === 'assign-executor') return assignExecutor(false);
-      if (action === 'assign-other-executor') return assignExecutor(true);
-      if (action === 'set-executor') return setExecutor(button.dataset.ref, button.dataset.name);
-      if (action === 'start-executor-work') return startExecutorWork();
-      if (action === 'complete-checklist') return completeChecklist();
-      if (action === 'package-create') return preparePackage();
-      if (action === 'package-select') return selectPackage();
-      if (action === 'package-use') return usePackage(button.dataset.ref, button.dataset.number, button.dataset.status);
-      if (['worktime-works-next','worktime-self','worktime-employees-next','worktime-shares-equal','worktime-shares-next','worktime-back-works','worktime-back-employees'].includes(action)) return worktimeStep(action);
-      if (action === 'worktime-submit') return submitPackage();
-      if (action === 'package-start') return packageAction('start');
-      if (action === 'package-pause') return packageAction('pause');
-      if (action === 'package-close') return packageAction('close');
-      if (action === 'production') return showProduction();
-      if (action === 'start-quality') return startQuality('manual');
-      if (action === 'request-quality') return requestQualityControl();
-      if (action === 'complete-quality') return completeQuality(button.dataset.result);
-      if (action === 'current-appeal') return showCurrentAppeal();
-      if (action === 'service-history') return openServiceHistory();
-      if (action === 'open-defect-chat') return openDefectSheet();
-      if (action === 'open-acceptance-photo') return openAcceptancePhotoSheet();
-      if (action === 'acceptance-photo' || action === 'acceptance-video') return openMediaPicker({ type:'acceptance' });
-      if (action === 'defect-photo' || action === 'defect-video') return openMediaPicker({ type:'defect' });
-      if (action === 'send-defect-text') return sendDefectText();
-      if (action === 'defect-media') return openDefectMedia(Number(button.dataset.index));
-      if (action === 'complete-defect-sheet') return completeDefectSheet();
-      if (action === 'load-client-topics') return loadClientTopics();
-      if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return render(); }
-      if (action === 'refresh-client-messages') { await loadClientMessages(state.selectedClientTopic); return render(); }
-      if (action === 'send-client-message') return sendClientMessage();
-      if (action === 'client-photo' || action === 'client-video') return openMediaPicker({type:'client'});
-      if (action === 'client-file') return configureFilePicker({type:'client',kind:'file'}, '*/*');
-      if (action === 'load-chat-groups') return loadChatGroups();
-      if (action === 'select-chat-topic') { state.selectedChatGroup = button.dataset.ref; await loadChatMessages(button.dataset.ref); return render(); }
-      if (action === 'refresh-chat-messages') { await loadChatMessages(state.selectedChatGroup); return render(); }
-      if (action === 'send-chat-message') return sendChatMessage();
-      if (action === 'chat-photo' || action === 'chat-video') return openMediaPicker({type:'chat'});
-      if (action === 'chat-file') return configureFilePicker({type:'chat',kind:'file'}, '*/*');
-      if (action === 'open-notification') return openNotification(button.dataset.event);
-      if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return renderNotifications(); }
-    } catch (error) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); }
+      if (action === 'enable-web-push') { await registerWebPush(); return await toast('Push-подписка зарегистрирована'); }
+      if (action === 'bot-messages') return await setView('clients');
+      if (action === 'test-1c') return await test1C();
+      if (action === 'retry-init') { closeSheet(); return await initialize(); }
+      if (action === 'retry-failed-operation') return await retryFailedOperation();
+      if (action === 'copy-operation-report') return await copyOperationReport();
+      if (action === 'logout') return await logout();
+      if (action === 'show-operation-queue') return await showOperationQueue();
+      if (action === 'open-operation-report') return await openOperationReport(button.dataset.operationId);
+      if (action === 'close-sheet') return await closeSheet();
+      if (action === 'refresh-orders') { await loadOrders(); return await render(); }
+      if (action === 'search-orders') return await searchOrders();
+      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return await render(); }
+      if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return await toast('Карточка обновлена из 1С'); }
+      if (action === 'scan-order-qr') return await openOrderQrScanner();
+      if (action === 'manual-order-qr') return await showOrderQrManual();
+      if (action === 'submit-order-qr') return await searchOrderQr($('orderQr')?.value);
+      if (action === 'select-order-qr') { const order = state.orders.find(item => (item.orderRef || item.id) === button.dataset.ref); if (!order) return await toast('Заказ-наряд больше недоступен', true); state.selectedOrderId = order.id; state.view = viewForCurrentUser(); closeSheet(); return await render(); }
+      if (action === 'answer-option') { const process = currentOrder()?.[button.dataset.process]; if (!process || documentCompletionLocked(process.documentRef)) return; const id = button.dataset.question, value = button.dataset.value; if (button.dataset.type === 'multi') { const values = Array.isArray(process.answers[id]) ? process.answers[id] : []; process.answers[id] = values.includes(value) ? values.filter(item => item !== value) : values.concat(value); } else process.answers[id] = value; process.errors?.delete(`question:${id}`); return await render(); }
+      if (action === 'start-acceptance') return await startAcceptance();
+      if (action === 'complete-acceptance') return await completeAcceptance();
+      if (action === 'choose-post') return await choosePost();
+      if (action === 'set-post') return await setPost(button.dataset.ref, button.dataset.name);
+      if (action === 'assign-executor') return await assignExecutor(false);
+      if (action === 'assign-other-executor') return await assignExecutor(true);
+      if (action === 'set-executor') return await setExecutor(button.dataset.ref, button.dataset.name);
+      if (action === 'start-executor-work') return await startExecutorWork();
+      if (action === 'complete-checklist') return await completeChecklist();
+      if (action === 'package-create') return await preparePackage();
+      if (action === 'package-select') return await selectPackage();
+      if (action === 'package-use') return await usePackage(button.dataset.ref, button.dataset.number, button.dataset.status);
+      if (['worktime-works-next','worktime-self','worktime-employees-next','worktime-shares-equal','worktime-shares-next','worktime-back-works','worktime-back-employees'].includes(action)) return await worktimeStep(action);
+      if (action === 'worktime-submit') return await submitPackage();
+      if (action === 'package-start') return await packageAction('start');
+      if (action === 'package-pause') return await packageAction('pause');
+      if (action === 'package-close') return await packageAction('close');
+      if (action === 'production') return await showProduction();
+      if (action === 'start-quality') return await startQuality('manual');
+      if (action === 'request-quality') return await requestQualityControl();
+      if (action === 'complete-quality') return await completeQuality(button.dataset.result);
+      if (action === 'current-appeal') return await showCurrentAppeal();
+      if (action === 'service-history') return await openServiceHistory();
+      if (action === 'open-defect-chat') return await openDefectSheet();
+      if (action === 'open-acceptance-photo') return await openAcceptancePhotoSheet();
+      if (action === 'acceptance-photo' || action === 'acceptance-video') return await openMediaPicker({ type:'acceptance' });
+      if (action === 'defect-photo' || action === 'defect-video') return await openMediaPicker({ type:'defect' });
+      if (action === 'send-defect-text') return await sendDefectText();
+      if (action === 'defect-media') return await openDefectMedia(Number(button.dataset.index));
+      if (action === 'complete-defect-sheet') return await completeDefectSheet();
+      if (action === 'load-client-topics') return await loadClientTopics();
+      if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return await render(); }
+      if (action === 'refresh-client-messages') { await loadClientMessages(state.selectedClientTopic); return await render(); }
+      if (action === 'send-client-message') return await sendClientMessage();
+      if (action === 'client-photo' || action === 'client-video') return await openMediaPicker({type:'client'});
+      if (action === 'client-file') return await configureFilePicker({type:'client',kind:'file'}, '*/*');
+      if (action === 'load-chat-groups') return await loadChatGroups();
+      if (action === 'select-chat-topic') { state.selectedChatGroup = button.dataset.ref; await loadChatMessages(button.dataset.ref); return await render(); }
+      if (action === 'refresh-chat-messages') { await loadChatMessages(state.selectedChatGroup); return await render(); }
+      if (action === 'send-chat-message') return await sendChatMessage();
+      if (action === 'chat-photo' || action === 'chat-video') return await openMediaPicker({type:'chat'});
+      if (action === 'chat-file') return await configureFilePicker({type:'chat',kind:'file'}, '*/*');
+      if (action === 'open-notification') return await openNotification(button.dataset.event);
+      if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return await renderNotifications(); }
+    } catch (error) { if(!error.queuePaused && sessionCurrent(session)) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); } }
     finally {
       if (tracksPendingState && button.isConnected) {
         pendingActionButtons.delete(button);
@@ -2077,6 +2293,7 @@
     }
   }
   setAuth(readAuthFromContext(), 'max');
+  void loadBuildInfo();
   render();
   if (state.userId) initialize();
 })();

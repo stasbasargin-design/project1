@@ -12,6 +12,7 @@
     let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={},refreshPending={};
     const blobUrls=new Map();
     const mediaMemory=new Map(), mediaLoading=new Map(), restored=new Set();
+    let outboxItems=[], outboxRunning=null, outboxRevision=0, outboxRerun=false;
     const CACHE_DB='itus-max-messenger-v1', CACHE_TTL=7*24*60*60*1000, CACHE_THREADS=40, CACHE_MEDIA_BYTES=25*1024*1024;
     let openingContact=false;
     const key=(s,id)=>s+':'+id;
@@ -21,6 +22,86 @@
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
     const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    const outbox=options.outbox;
+    const outboxScope=()=>String(outbox?.scope?.() || '');
+    const chatThread=operation=>({source:operation.method.startsWith('/clients/')?'clients':'staff',ref:String(operation.body?.topicRef||operation.body?.topicId||operation.body?.groupRef||operation.body?.groupId||'')});
+    function ensureOutboxSession(session,scope){if(session!==epoch || !owner() || scope!==outboxScope())throw Object.assign(new Error('Пользователь изменился. Файл не отправлен.'),{code:'SESSION_CHANGED'});}
+    function outboxRows(items){return items.map(operation=>{
+      const rejected=['invalid','failed'].includes(operation.status);
+      const status=operation.status==='invalid'?'Данные отклонены — нужна проверка':operation.status==='failed'?'Отправка не подтверждена':operation.status==='sending'?'Отправляется…':'Сохранено на устройстве';
+      const name=operation.body?.file?.fileName||operation.body?.text||'Сообщение';
+      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div>${status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button><button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`:''}</div>`;
+    }).join('');}
+    function threadOutboxHtml(){return outboxRows(outboxItems.filter(operation=>{const thread=chatThread(operation);return thread.source===source&&thread.ref===selected;}));}
+    function paintOutbox(){
+      if(!visible)return;
+      const panel=document.querySelector('.msg-outbox');if(panel)panel.innerHTML=threadOutboxHtml();
+      const counter=document.getElementById('msgOutboxCount');if(counter){counter.textContent=`В очереди: ${outboxItems.length}`;counter.hidden=!outboxItems.length;}
+    }
+    async function refreshOutbox(){
+      if(!outbox?.list)return [];
+      const session=epoch,scope=outboxScope(),revision=++outboxRevision;
+      let values;
+      try{values=await outbox.list();}catch(error){if(['SESSION_CHANGED','QUEUE_PAUSED'].includes(error?.code))return [];throw error;}
+      if(session!==epoch||scope!==outboxScope()||revision!==outboxRevision)return [];
+      outboxItems=values.filter(operation=>operation.kind==='chat'&&operation.scope===scope);
+      paintOutbox();return outboxItems;
+    }
+    async function confirmedOutbox(operation,response){
+      if(operation.scope!==outboxScope())return;
+      const thread=chatThread(operation),k=key(thread.source,thread.ref),data=response?.data||response||{};
+      if(data.message&&typeof data.message==='object'){
+        const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,status:data.message.status||'sent'},Date.now());
+        cache[k]=mergeMessages(cache[k],[message]);void persistThread(k);
+        const item=records[thread.source].find(item=>item.ref===thread.ref);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
+      }
+      if(isVisibleThread(thread.source,thread.ref)){
+        if(busy[k])refreshPending[k]=true;
+        else void loadMessages(thread.source,thread.ref,{refresh:true});
+      }
+      await refreshOutbox();
+    }
+    async function drainOutbox(){
+      if(!outbox?.run)return;
+      if(outboxRunning){outboxRerun=true;return outboxRunning;}
+      const session=epoch,scope=outboxScope();
+      const running=(async()=>{
+        const operations=await refreshOutbox();
+        for(const operation of operations){
+          ensureOutboxSession(session,scope);
+          if(!['pending','sending'].includes(operation.status))continue;
+          try {const response=await outbox.run(operation.id);ensureOutboxSession(session,scope);await confirmedOutbox(operation,response);}
+          catch(error){if(['SESSION_CHANGED','QUEUE_PAUSED'].includes(error?.code))return;if(!['QUEUE_BUSY','QUEUE_NOT_FOUND'].includes(error?.code)&&session===epoch)errors[key(chatThread(operation).source,chatThread(operation).ref)]=error.message;}
+          if(session===epoch&&scope===outboxScope())await refreshOutbox();
+        }
+      })();
+      outboxRunning=running;
+      try{return await running;}finally{if(outboxRunning===running){outboxRunning=null;const again=outboxRerun;outboxRerun=false;if(again&&session===epoch&&scope===outboxScope())startOutbox();}}
+    }
+    function startOutbox(){void drainOutbox().catch(error=>{if(!['SESSION_CHANGED','QUEUE_PAUSED'].includes(error?.code))toast(error.message||'Не удалось открыть очередь сообщений',true);});}
+    async function enqueueMediaBatch(files,target){
+      if(!outbox?.prepareBatch)throw new Error('Постоянная очередь чатов недоступна');
+      const s=target?.source||source,id=target?.ref||selected,session=epoch,scope=outboxScope();
+      if(!id||!permitted(s))throw new Error('Чат недоступен для отправки');
+      ensureOutboxSession(session,scope);
+      const existing=await outbox.list();ensureOutboxSession(session,scope);
+      const definitions=[];
+      // Keep the complete selection and its IDs independent of the picker DOM.
+      for(const item of files){
+        const clientMessageId=String(item.uploadId||newMessageId()),operationId=`${scope}:chat:${clientMessageId}`;
+        const saved=existing.find(operation=>operation.id===operationId);
+        if(saved){
+          if(saved.documentKey!==`chat:${s}:${id}`||saved.method!==endpoints(s)+'/files/send')throw new Error('Сохранённое вложение относится к другой переписке');
+          if(['invalid','failed'].includes(saved.status))throw new Error('Вложение уже в очереди с ошибкой. Откройте «В очереди» и проверьте отчёт перед повтором.');
+          definitions.push(saved);continue;
+        }
+        const payload=await filePayload(item.file,item.kind);ensureOutboxSession(session,scope);
+        definitions.push({id:operationId,scope,kind:'chat',documentKey:`chat:${s}:${id}`,method:endpoints(s)+'/files/send',requestId:newMessageId(),body:{...params(s,id),clientMessageId,file:payload,kind:item.kind}});
+      }
+      ensureOutboxSession(session,scope);
+      const operations=await outbox.prepareBatch(definitions);ensureOutboxSession(session,scope);
+      await refreshOutbox();startOutbox();return operations;
+    }
     function sortedMessages(messages){return messages.map((message,index)=>({message,index})).sort((a,b)=>{
       const at=Date.parse(a.message.createdAt),bt=Date.parse(b.message.createdAt);
       if(Number.isFinite(at)&&Number.isFinite(bt)&&at!==bt)return at-bt;
@@ -45,7 +126,7 @@
     async function trimPersistentCache(){const now=Date.now(),who=owner();const threads=(await allStore('threads')).filter(item=>item.owner===who).sort((a,b)=>b.updatedAt-a.updatedAt);for(const item of threads.slice(CACHE_THREADS))await deleteStore('threads',item.key);for(const item of threads.filter(item=>now-item.updatedAt>CACHE_TTL))await deleteStore('threads',item.key);let total=0;const media=(await allStore('media')).filter(item=>item.owner===who).sort((a,b)=>b.updatedAt-a.updatedAt);for(const item of media){if(now-item.updatedAt>CACHE_TTL || total+item.size>CACHE_MEDIA_BYTES)await deleteStore('media',item.key);else total+=item.size;}}
     async function clearPersistentCache(){const who=owner();if(!who)return;for(const store of ['threads','media'])for(const item of await allStore(store))if(item.owner===who)await deleteStore(store,item.key);}
     async function persistThread(k){if(!owner()||!cache[k])return;await writeStore('threads',{key:persistentKey('thread',k),owner:owner(),thread:k,updatedAt:Date.now(),messages:cache[k].slice(-200).map(cleanMessage)});void trimPersistentCache();}
-    async function restoreThread(k){if(restored.has(k)||!owner())return;restored.add(k);const item=await readStore('threads',persistentKey('thread',k));if(item?.owner===owner()&&Date.now()-item.updatedAt<CACHE_TTL&&Array.isArray(item.messages)){cache[k]=sortedMessages(item.messages);}}
+    async function restoreThread(k){if(restored.has(k)||!owner())return;const generation=epoch;restored.add(k);const item=await readStore('threads',persistentKey('thread',k));if(generation===epoch&&item?.owner===owner()&&Date.now()-item.updatedAt<CACHE_TTL&&Array.isArray(item.messages)){cache[k]=sortedMessages(item.messages);}}
     function messageIdentity(message,index){return String(message.id || message.messageRef || `${message.createdAt||''}:${message.author||''}:${message.text||''}:${index}`);}
     function mergeMessages(previous,incoming){const merged=new Map();[...(previous||[]),...(incoming||[])].forEach((message,index)=>{const id=messageIdentity(message,index),old=merged.get(id);const next=old?{...old,...message,attachments:(message.attachments?.length?message.attachments:old.attachments)||[]}:message;if(old?.authorKnown&&!message.authorKnown){next.author=old.author;next.authorKnown=true;}merged.set(id,next);});return sortedMessages([...merged.values()]);}
     function attachmentKey(s,id,messageRef,file){return file?.fileRef&&messageRef?persistentKey('media',`${s}:${id}:${messageRef}:${file.fileRef}`):'';}
@@ -53,7 +134,16 @@
     function initials(name){return String(name || '?').split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase();}
     function time(value){if(!value)return '';const d=new Date(value);return Number.isFinite(+d)?new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit',...(root.ITUS_CONFIG?.DISPLAY_TIME_ZONE?{timeZone:root.ITUS_CONFIG.DISPLAY_TIME_ZONE}:{})}).format(d):'';}
     function day(value){if(!value)return '';return root.ITUS_FEATURES.dateTime(value).split(',')[0];}
-    function resize(){if(!visible)return;const frame=document.querySelector('.messenger');if(!frame)return;const viewport=root.visualViewport;const bottom=Number(viewport?.height || root.innerHeight)+Number(viewport?.offsetTop || 0);const height=Math.max(0,bottom-frame.getBoundingClientRect().top-10);frame.style.height=height+'px';frame.style.minHeight=Math.min(300,height)+'px';}
+    function resize(){
+      if(!visible)return;
+      const shell=document.querySelector('.phone');if(!shell)return;
+      const viewport=root.visualViewport;
+      const height=Math.max(0,Number(viewport?.height || root.innerHeight));
+      // Keep the complete shell above the keyboard; flex layout allocates the remaining history height.
+      shell.style.setProperty('--messenger-viewport-height',height+'px');
+      shell.style.setProperty('--messenger-viewport-top',Math.max(0,Number(viewport?.offsetTop || 0))+'px');
+      shell.classList?.toggle('messenger-compact',height<560);
+    }
     root.addEventListener('resize',resize);root.addEventListener('orientationchange',resize);root.visualViewport?.addEventListener('resize',resize);root.visualViewport?.addEventListener('scroll',resize);
     function listHtml(){
       const q=query.toLocaleLowerCase('ru-RU');
@@ -95,7 +185,7 @@
       const item=current(),k=selectedKey();
       if(!item)return '<div class="msg-placeholder"><span>I-MAX</span><h2>Выберите переписку</h2><p>Клиенты и сотрудники в одном разделе</p></div>';
       const uploadState=sending[k]==='upload';
-      return `<header class="msg-conversation-head"><button class="msg-back" data-action="msg-back" aria-label="Назад к чатам">←</button><span class="msg-avatar">${escape(initials(item.title))}</span><div><strong>${escape(item.title)}</strong><small>${escape(item.subtitle||labels[source])}</small></div><button data-action="msg-refresh-messages" aria-label="Обновить сообщения" ${busy[k]?'disabled':''}>↻</button></header>${errors[k]?`<div class="msg-error" role="alert">${escape(errors[k])}</div>`:''}<div class="msg-history" role="log" aria-label="История переписки">${historyHtml()}</div>${uploadState?'<div class="msg-uploading" role="status"><span class="spinner"></span>Загрузка вложения в 1С…</div>':''}<div class="msg-compose"><button data-action="msg-attach" aria-label="Прикрепить файл">＋</button>${source==='clients'?'<button class="msg-poll-button" data-action="msg-poll" aria-label="Создать опрос">☑</button>':''}<textarea id="msgDraft" rows="1" aria-label="Сообщение" placeholder="Сообщение">${escape(drafts[k]||'')}</textarea><button class="msg-send" data-action="msg-send" ${sending[k]?'disabled':''} aria-label="Отправить сообщение">${sending[k]?'…':'➤'}</button></div>`;
+      return `<header class="msg-conversation-head"><button class="msg-back" data-action="msg-back" aria-label="Назад к чатам">←</button><span class="msg-avatar">${escape(initials(item.title))}</span><div><strong>${escape(item.title)}</strong><small>${escape(item.subtitle||labels[source])}</small></div><button data-action="msg-refresh-messages" aria-label="Обновить сообщения" ${busy[k]?'disabled':''}>↻</button></header>${errors[k]?`<div class="msg-error" role="alert">${escape(errors[k])}</div>`:''}<div class="msg-outbox" aria-live="polite">${threadOutboxHtml()}</div><div class="msg-history" role="log" aria-label="История переписки">${historyHtml()}</div>${uploadState?'<div class="msg-uploading" role="status"><span class="spinner"></span>Загрузка вложения в 1С…</div>':''}<div class="msg-compose"><button data-action="msg-attach" aria-label="Прикрепить файл">＋</button>${source==='clients'?'<button class="msg-poll-button" data-action="msg-poll" aria-label="Создать опрос">☑</button>':''}<textarea id="msgDraft" rows="1" aria-label="Сообщение" placeholder="Сообщение">${escape(drafts[k]||'')}</textarea><button class="msg-send" data-action="msg-send" ${sending[k]?'disabled':''} aria-label="Отправить сообщение">${sending[k]?'…':'➤'}</button></div>`;
     }
     function paint({bottom=false}={}){
       if(!visible)return;
@@ -103,7 +193,7 @@
       const app=document.getElementById('app');if(!app)return;
       const old=app.querySelector('.msg-history'),oldTop=old?.scrollTop||0;
       const nearBottom=!old || old.scrollHeight-old.scrollTop-old.clientHeight<80;
-      app.innerHTML=`<div class="messenger ${selected?'has-conversation':''}"><aside class="msg-sidebar"><div class="msg-sidebar-head"><h2>Чаты</h2><button data-action="msg-settings" aria-label="Настройки уведомлений">⚙</button><button data-action="msg-refresh" aria-label="Обновить список">↻</button></div><div class="msg-filters">${allowed().map(s=>`<button class="${source===s?'active':''}" data-action="msg-source" data-source="${s}">${labels[s]}</button>`).join('')}</div>${source==='staff'?'<button class="msg-new-chat" data-action="msg-new-chat">＋ Новый чат с сотрудником</button>':''}<div class="msg-sections"><button class="${section==='chats'?'active':''}" data-action="msg-section" data-section="chats">Переписки</button><button class="${section==='contacts'?'active':''}" data-action="msg-section" data-section="contacts">Контакты</button></div><input id="msgSearch" type="search" placeholder="Поиск" aria-label="Поиск чатов и контактов" value="${escape(query)}">${section==='contacts'?'<p class="msg-contact-note">Выберите сотрудника, который авторизовался в приложении</p>':''}<div class="msg-thread-list">${listHtml()}</div></aside><section class="msg-conversation">${conversationHtml()}</section></div>`;
+      app.innerHTML=`<div class="messenger ${selected?'has-conversation':''}"><aside class="msg-sidebar"><div class="msg-sidebar-head"><h2>Чаты</h2><button id="msgOutboxCount" data-action="msg-outbox-show" aria-label="Сохранённые неотправленные сообщения" ${outboxItems.length?'':'hidden'}>В очереди: ${outboxItems.length}</button><button data-action="msg-settings" aria-label="Настройки уведомлений">⚙</button><button data-action="msg-refresh" aria-label="Обновить список">↻</button></div><div class="msg-filters">${allowed().map(s=>`<button class="${source===s?'active':''}" data-action="msg-source" data-source="${s}">${labels[s]}</button>`).join('')}</div>${source==='staff'?'<button class="msg-new-chat" data-action="msg-new-chat">＋ Новый чат с сотрудником</button>':''}<div class="msg-sections"><button class="${section==='chats'?'active':''}" data-action="msg-section" data-section="chats">Переписки</button><button class="${section==='contacts'?'active':''}" data-action="msg-section" data-section="contacts">Контакты</button></div><input id="msgSearch" type="search" placeholder="Поиск" aria-label="Поиск чатов и контактов" value="${escape(query)}">${section==='contacts'?'<p class="msg-contact-note">Выберите сотрудника, который авторизовался в приложении</p>':''}<div class="msg-thread-list">${listHtml()}</div></aside><section class="msg-conversation">${conversationHtml()}</section></div>`;
       const history=app.querySelector('.msg-history');if(history)history.scrollTop=bottom||nearBottom?history.scrollHeight:oldTop;
       resize();
     }
@@ -206,16 +296,32 @@
     async function send(file,kind,target){
       const s=target?.source||source,id=target?.ref||selected,k=key(s,id);
       const text=drafts[k]?.trim()||'';
-      if(!id||!permitted(s)||(!file&&!text)||sending[k])return;
+      if(!id||!permitted(s)||(!file&&!text)||sending[k]){
+        if(file)throw Object.assign(new Error('Чат недоступен или другая отправка ещё сохраняется'),{code:'CHAT_NOT_READY'});
+        return;
+      }
       const signature=file?`file:${kind||''}:${file.name||''}:${file.size||0}:${file.lastModified||0}`:`text:${text}`;
       const clientMessageId=attempt(s,id,signature);
       const generation=epoch,original=drafts[k];sending[k]=file?'upload':true;errors[k]='';paint();
       try{
+        if(outbox?.prepareBatch){
+          const scope=outboxScope();ensureOutboxSession(generation,scope);
+          if(file)await enqueueMediaBatch([{file,kind,uploadId:target?.uploadId||clientMessageId}],{source:s,ref:id});
+          else {
+            await outbox.prepareBatch([{id:`${scope}:chat:${clientMessageId}`,scope,kind:'chat',documentKey:`chat:${s}:${id}`,method:endpoints(s)+'/messages/send',requestId:newMessageId(),body:{...params(s,id),clientMessageId,text}}]);
+            ensureOutboxSession(generation,scope);
+            if(drafts[k]===original)drafts[k]='';
+            await refreshOutbox();startOutbox();
+          }
+          ensureOutboxSession(generation,scope);
+          finishAttempt(s,id,signature);toast('Сохранено на устройстве. Отправка продолжится в фоне');
+          return {queued:true};
+        }
         const payload={...params(s,id),clientMessageId};
         if(file){payload.file=await filePayload(file,kind);payload.kind=kind;}else payload.text=text;
-        if(generation!==epoch)return;
+        if(generation!==epoch)throw Object.assign(new Error('Пользователь изменился'),{code:'SESSION_CHANGED'});
         const response=await call(endpoints(s)+(file?'/files/send':'/messages/send'),payload,{silent:true});
-        if(generation!==epoch)return;
+        if(generation!==epoch)throw Object.assign(new Error('Пользователь изменился'),{code:'SESSION_CHANGED'});
       if(!file&&drafts[k]===original)drafts[k]='';
         const data=response.data||response;
         if(data.message&&typeof data.message==='object'){
@@ -227,8 +333,9 @@
           const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.updatedAt=message.createdAt;}
           if(!message.authorKnown)await loadMessages(s,id,{refresh:true});
         }else await loadMessages(s,id,{refresh:true});
-        finishAttempt(s,id,signature);toast('Отправлено');if(file)closeSheet();
-      }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}}
+        finishAttempt(s,id,signature);toast('Отправлено');
+        return {sent:true};
+      }catch(e){if(generation===epoch){errors[k]=e.message;toast(e.message,true);}if(file)throw e;}
       finally{if(generation===epoch){sending[k]=false;paint({bottom:true});}}
     }
     async function legacyMedia(mi,fi){
@@ -253,39 +360,54 @@
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
     async function media(mi,fi){
-      const thread=selectedKey(),message=cache[thread]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
+      const s=source,id=selected,generation=epoch,selection=selectionEpoch,who=owner();
+      const active=()=>generation===epoch&&selection===selectionEpoch&&who===owner()&&isVisibleThread(s,id);
+      const sameOwner=()=>generation===epoch&&who===owner();
+      const thread=key(s,id),message=cache[thread]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
-      const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(source,selected,message?.messageRef,file);
+      const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(s,id,message?.messageRef,file);
       async function asUrl(record){
         if(!record?.blob)return '';
         const existing=blobUrls.get(stableKey);if(existing)return existing;
         const url=URL.createObjectURL(record.blob);blobUrls.set(stableKey,url);return url;
       }
       let record=stableKey?mediaMemory.get(stableKey):null;
-      if(!record&&stableKey){record=await readStore('media',stableKey);if(record?.owner===owner()&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
-      if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:owner(),key:stableKey};}catch{record=null;}}
+      if(!record&&stableKey){record=await readStore('media',stableKey);if(!active())return;if(record?.owner===who&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
+      if(!active())return;
+      if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:who,key:stableKey};}catch{record=null;}}
       if(!record&&file.fileRef&&!message?.hasServerMessageRef)return toast('1С не передала идентификатор сообщения для вложения',true);
       if(!record&&stableKey){
         let pending=mediaLoading.get(stableKey);
         if(!pending){pending=(async()=>{
-          const response=await call(endpoints(source)+'/messages/list',{...params(source,selected),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},{silent:true});
+          if(!active())return null;
+          const response=await call(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},{silent:true});
+          if(!sameOwner())return null;
           const fresh=api.extractItems(response,['messages']).map(api.normalizeMessage);cache[thread]=mergeMessages(cache[thread],fresh);void persistThread(thread);
           const matched=cache[thread].find(item=>item.messageRef===message.messageRef)?.attachments?.find(item=>item.fileRef===file.fileRef);
-          if(!matched.contentBase64)return null;
-          const raw=atob(matched.contentBase64.replace(/^data:[^,]*,/,''));const saved={key:stableKey,owner:owner(),blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:matched.mimeType||mime}),size:raw.length,updatedAt:Date.now()};
+          if(!matched?.contentBase64)return null;
+          const raw=atob(matched.contentBase64.replace(/^data:[^,]*,/,''));const saved={key:stableKey,owner:who,blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:matched.mimeType||mime}),size:raw.length,updatedAt:Date.now()};
           mediaMemory.set(stableKey,saved);await writeStore('media',saved);void trimPersistentCache();return saved;
         })().finally(()=>mediaLoading.delete(stableKey));mediaLoading.set(stableKey,pending);}
-        try{record=await pending;}catch(error){return toast('Не удалось загрузить вложение: '+error.message,true);}
+        try{record=await pending;}catch(error){if(active())toast('Не удалось загрузить вложение: '+error.message,true);return;}
       }
-      let url=await asUrl(record);if(!url)url=safeUrl(file.downloadUrl);
+      if(!active())return;
+      let url=await asUrl(record);if(!active())return;if(!url)url=safeUrl(file.downloadUrl);
       if(!url)return toast('1С не передала содержимое или ссылку на файл',true);
       if(/^video\//.test(mime)){const v=document.createElement('video');v.controls=true;v.playsInline=true;v.preload='none';v.src=url;slot.replaceChildren(v);}
       else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
     function back(){if(!visible||!selected)return false;selectionEpoch++;selected='';paint();return true;}
-    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);}
+    async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);if(outbox?.list){await refreshOutbox();startOutbox();}}
     async function handle(action,button){
+      if(action==='msg-outbox-show'){await refreshOutbox();options.sheet('Неотправленные сообщения','Сохранены на этом устройстве для текущего пользователя',outboxRows(outboxItems)||'<p>Все сообщения отправлены</p>');return;}
+      if(action==='msg-outbox-report'){await outbox?.report?.(button.dataset.operation);return;}
+      if(action==='msg-outbox-retry'){
+        const operation=outboxItems.find(item=>item.id===button.dataset.operation),session=epoch,scope=outboxScope();if(!operation)return;
+        try{const response=await outbox.run(operation.id,{manual:true});ensureOutboxSession(session,scope);await confirmedOutbox(operation,response);toast('Отправка подтверждена');}
+        catch(error){if(session===epoch){toast(error.message,true);await refreshOutbox();}}
+        return;
+      }
       if(action==='msg-new-chat'){if(!permitted('staff'))return;selectionEpoch++;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
       if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;selectionEpoch++;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
       if(action==='msg-section'){section=button.dataset.section;paint();if(section==='contacts'&&source==='staff')await loadContacts();}
@@ -349,10 +471,10 @@
       return true;
     }
     function refreshVisibleInternalThread(){return refreshInternalThreadFromPush(source==='staff'?selected:'');}
-    return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),
+    return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,refreshOutbox,confirmedOutbox,
       refreshInternalThreadFromPush,refreshVisibleInternalThread,
       leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
-      reset(){void clearPersistentCache();epoch++;selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
+      reset(){void clearPersistentCache();epoch++;selectionEpoch++;outboxRevision++;outboxItems=[];outboxRunning=null;outboxRerun=false;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}
     };
   }

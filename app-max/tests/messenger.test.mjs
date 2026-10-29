@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
-const frame={style:{},getBoundingClientRect(){return {top:120};}};
+const viewportStyles={};
+const shell={style:{setProperty(name,value){viewportStyles[name]=value;}}};
 const app={innerHTML:'',querySelector(){return null;},querySelectorAll(){return [];}};
 const calls=[], receipts=[], handlers={};let failRead=false,failSend=true,uuid=0;
 const viewportHandlers={};
 const scope={
   URL, location:{origin:'https://ea-itus.ru'},
   document:{baseURI:'https://ea-itus.ru/p/max-service/',body:{classList:{toggle(){},remove(){}}},
-    getElementById(id){return id==='app'?app:null;},querySelector(selector){return selector==='.messenger'?frame:null;},addEventListener(type,handler){handlers[type]=handler;}},
+    getElementById(id){return id==='app'?app:null;},querySelector(selector){return selector==='.phone'?shell:null;},addEventListener(type,handler){handlers[type]=handler;}},
   innerHeight:800,addEventListener(){},ITUS_FEATURES:{dateTime:()=>''},
   visualViewport:{height:700,offsetTop:0,addEventListener(type,handler){viewportHandlers[type]=handler;}},
   crypto:{randomUUID:()=>`uuid-${++uuid}`}
@@ -35,9 +36,12 @@ const messenger=scope.ITUS_MESSENGER.create({api:scope.ITUS_API,call:async(metho
   calls.push({method,payload});if(failRead && method.endsWith('/messages/read'))throw Error('Read rejected');if(failSend&&method.endsWith('/messages/send'))throw Error('Send rejected');if(!mock[method])throw new Error('Unexpected '+method);return mock[method];
 },onRead:receipt=>receipts.push(receipt),user:()=>({name:'Тест'}),allowed:()=>['staff','clients'],toast(){},pickFile(){},photo(){},filePayload(){},closeSheet(){},sheet(){},settings(){}});
 await messenger.enter('staff');
-assert.equal(frame.style.height,'570px');assert.equal(frame.style.minHeight,'300px');
+assert.equal(viewportStyles['--messenger-viewport-height'],'700px');
+assert.equal(viewportStyles['--messenger-viewport-top'],'0px');
 scope.visualViewport.height=240;viewportHandlers.resize();
-assert.equal(frame.style.height,'110px');assert.equal(frame.style.minHeight,'110px');
+assert.equal(viewportStyles['--messenger-viewport-height'],'240px');
+scope.visualViewport.offsetTop=35;viewportHandlers.scroll();
+assert.equal(viewportStyles['--messenger-viewport-top'],'35px');
 assert.match(app.innerHTML,/Передача смены/);
 assert.ok(app.innerHTML.indexOf('Общий цех')<app.innerHTML.indexOf('Передача смены'));assert.match(app.innerHTML,/Общий чат/);
 await messenger.handle('msg-open',{dataset:{ref:'shift'}});

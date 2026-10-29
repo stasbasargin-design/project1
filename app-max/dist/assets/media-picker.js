@@ -107,7 +107,7 @@
       else if (action === 'media-camera-photo') openInput('photo');
       else if (action === 'media-camera-video') openInput('video');
       else if (action === 'media-remove' && !session.sending) { session.files.splice(Number(button?.dataset?.index), 1); render(); }
-      else if (action === 'media-send') void send();
+      else if (action === 'media-send') return send().then(() => true);
       return true;
     }
     return {

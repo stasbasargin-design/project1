@@ -5,6 +5,10 @@ import {spawn} from 'node:child_process';
 
 const browserCandidates = [
   process.env.CHROME_PATH,
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
@@ -13,6 +17,7 @@ const browserCandidates = [
 const browser = browserCandidates.find(existsSync);
 
 if (!browser) {
+  if (process.env.REQUIRE_BROWSER_TESTS === '1' || process.env.CI === 'true') throw new Error('IndexedDB browser regression is required; configure CHROME_PATH.');
   console.log('Operation queue IndexedDB: SKIPPED (set CHROME_PATH to run the browser regression).');
   process.exit(0);
 }

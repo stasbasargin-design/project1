@@ -3,3 +3,5 @@
 **/.env.*
 **/*vapid*.env
 **/web-push.env
+app-max/dist/build-info.json
+app-max/android-artifact/

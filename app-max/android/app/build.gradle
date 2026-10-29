@@ -5,8 +5,8 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "ru.eazia.imax"
-        versionCode 2711
-        versionName "2.7.11"
+        versionCode 2713
+        versionName "2.7.13"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -34,7 +34,11 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            // CI produces an explicitly unsigned release. The established
+            // compatible private key remains on the release operator's machine.
+            if (providers.gradleProperty('imaxUnsignedBuild').getOrElse('false') != 'true') {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
