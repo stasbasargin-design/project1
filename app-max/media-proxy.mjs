@@ -8,9 +8,11 @@ import {Readable} from 'node:stream';
 export const VIDEO_CONTENT_TYPE='application/vnd.itus.video';
 export const MEDIA_ROUTES=new Set(['/defects/entries/add','/clients/files/send','/internal-chat/files/send']);
 const MAX_HEADER=256*1024, DISK_RESERVE=256*1024*1024;
+// /tmp may be a RAM-backed tmpfs on Timeweb; keep large bodies on persistent disk.
+const MEDIA_DIRECTORY=process.env.MEDIA_TEMP_DIR || (process.platform==='linux'?'/var/tmp':tmpdir());
 let active=0,reserved=0;
 const failure=(message,status=400,code='INVALID_VIDEO')=>Object.assign(new Error(message),{status,code});
-export async function cleanupStaleVideos(directory=tmpdir()){
+export async function cleanupStaleVideos(directory=MEDIA_DIRECTORY){
   for(const item of await readdir(directory,{withFileTypes:true})){
     if(!item.isDirectory() || !/^itus-video-[A-Za-z0-9]{6}$/.test(item.name))continue;
     const path=join(directory,item.name);
@@ -24,7 +26,7 @@ export async function cleanupStaleVideos(directory=tmpdir()){
 
 // Only the transport changes. 1C receives the same JSON/file/contentBase64 contract.
 // The temporary file is private, bounded by actual disk availability and always removed.
-export async function prepareVideoRequest(req,route,{directory=tmpdir(),signal}={}){
+export async function prepareVideoRequest(req,route,{directory=MEDIA_DIRECTORY,signal}={}){
   if(!MEDIA_ROUTES.has(route))throw failure('Видео нельзя отправить в этот метод');
   if(active>=2)throw failure('Сервер обрабатывает другие видео. Отправка будет повторена.',503,'MEDIA_BUSY');
   active++;
