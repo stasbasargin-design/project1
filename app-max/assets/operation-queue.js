@@ -7,7 +7,14 @@
   const LEASE_MS = 600000;
   const RETRY_DELAYS_MS = [0, 1000, 3000, 7000, 15000];
 
-  const clone = value => JSON.parse(JSON.stringify(value));
+  // IndexedDB preserves immutable Blob values without expanding large videos into Base64.
+  const clone = value => {
+    if(typeof root.structuredClone==='function')return root.structuredClone(value);
+    if(value===null || typeof value!=='object')return value;
+    if(typeof root.Blob==='function' && value instanceof root.Blob)return value.slice(0,value.size,value.type);
+    if(Array.isArray(value))return value.map(clone);
+    return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,clone(item)]));
+  };
   const wait = ms => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 
   function contentBody(value) {
@@ -32,13 +39,21 @@
 
   function openDb() {
     if (!root.indexedDB) return Promise.resolve(null);
-    return new Promise(resolve => {
-      const request = root.indexedDB.open(DB_NAME, 2);
+    return new Promise((resolve,reject) => {
+      // Version 3 prevents an old JSON-only worker from rewriting a Blob as {}.
+      // The store and every existing operation remain intact during the upgrade.
+      const request = root.indexedDB.open(DB_NAME, 3);
+      let blocked=false;
+      request.onblocked=()=>{blocked=true;reject(Object.assign(new Error('Закройте старые вкладки I-MAX и повторите сохранение. Выбранные файлы остаются в форме.'),{code:'QUEUE_UPGRADE_BLOCKED'}));};
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'id' });
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        if(blocked){request.result.close();return;}
+        request.result.onversionchange=()=>request.result.close();
+        resolve(request.result);
+      };
       request.onerror = () => resolve(null);
     });
   }
@@ -130,6 +145,15 @@
         tx.onerror = () => reject(tx.error || new Error('Не удалось освободить блокировку операции'));
       });
     };
+    const renew = async (id, owner, leaseMs) => {
+      const db=await openDb(); if(!db)return false;
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE_NAME,'readwrite'),store=tx.objectStore(STORE_NAME),request=store.get(id);
+        let renewed=false;
+        request.onsuccess=()=>{const value=request.result;if(value?.leaseOwner===owner && Number(value.leaseUntil)>Date.now()){store.put({...value,leaseUntil:Date.now()+leaseMs});renewed=true;}};
+        tx.oncomplete=()=>resolve(renewed);tx.onerror=()=>reject(tx.error || new Error('Ошибка продления блокировки'));
+      });
+    };
     const putBatch = async values => {
       const db = await openDb();
       if (!db) throw new Error('IndexedDB недоступна: пакет отправки не может быть сохранён');
@@ -154,7 +178,7 @@
       put: value => transact('readwrite', store => store.put(clone(value))),
       delete: id => transact('readwrite', store => store.delete(id)),
       list: async scope => (await transact('readonly', store => store.getAll()) || []).filter(item => item.scope === scope),
-      claim, writeOwned, removeOwned, release, putBatch
+      claim, writeOwned, removeOwned, release, renew, putBatch
     };
   }
 
@@ -233,7 +257,13 @@
       operation = claimed === true ? await store.get(id) : claimed;
       if (!operation) throw Object.assign(new Error('Блокировка операции потеряна'), {code:'QUEUE_BUSY'});
       const leaseLost = () => Object.assign(new Error('Блокировка операции потеряна; перед повтором сверьте результат отправки'), {code:'QUEUE_BUSY', leaseLost:true});
+      let lost=false, renewing=null;
+      const heartbeat=store.renew && root.setInterval?.(()=>{
+        if(renewing)return;
+        renewing=store.renew(id,owner,LEASE_MS).then(ok=>{if(!ok)lost=true;},()=>{lost=true;}).finally(()=>{renewing=null;});
+      },30000);
       const persistOwned = async value => {
+        if(lost)throw leaseLost();
         const saved = store.writeOwned
           ? await store.writeOwned(id, owner, value)
           : (await store.put(value), value);
@@ -257,6 +287,7 @@
           guard(operation, executionContext);
           const response = await sender(operation, executionContext);
           guard(operation, executionContext);
+          if(lost)throw leaseLost();
           const removed = store.removeOwned
             ? await store.removeOwned(id, owner)
             : (await store.delete(id), true);
@@ -289,6 +320,8 @@
       error.queueStatus = 'failed';
       throw error;
       } finally {
+        if(heartbeat)root.clearInterval(heartbeat);
+        if(renewing)await renewing;
         await store.release?.(id, owner);
       }
     }

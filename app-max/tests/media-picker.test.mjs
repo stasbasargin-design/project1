@@ -133,3 +133,7 @@ releaseSlowSend();
 await new Promise(resolve => setTimeout(resolve, 0));
 
 console.log('media picker tests passed');
+const unlimitedPicker=context.ITUS_MEDIA_PICKER.create({showSheet(_t,_h,html){lastSheet=html;},closeSheet(){},toast(message){throw Error(message);},limits:{photo:100,video:0}});
+unlimitedPicker.open({onCommit:async()=>{}});
+input.files=[{name:'large-video.mp4',type:'video/mp4',size:40*1024*1024+1,lastModified:40}];
+input.listeners.change();assert.match(lastSheet,/Выбрано: 1/);

@@ -8,6 +8,7 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFragment } from 'parse5';
 import { webPushConfig, deliverWebPush } from './web-push.mjs';
+import {prepareVideoRequest, VIDEO_CONTENT_TYPE, cleanupStaleVideos} from './media-proxy.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -273,11 +274,15 @@ async function proxy1C(req, res, pathname) {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), proxyTimeoutMs);
+  const binaryVideo=String(req.headers['content-type'] || '').split(';')[0]===VIDEO_CONTENT_TYPE;
+  const timeoutMs=binaryVideo ? Number(process.env.MEDIA_PROXY_TIMEOUT_MS || 20*60*1000) : proxyTimeoutMs;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   const requestId = String(req.headers['x-itus-request-id'] || '').trim();
+  let video;
   try {
-    const body = await readBody(req);
+    video=binaryVideo?await prepareVideoRequest(req,suffix,{signal:controller.signal}):null;
+    const body = video?.body || await readBody(req);
     let webPushRegistration = false;
     if (webPushRegistrationRoutes.has(suffix)) {
       try {
@@ -298,7 +303,7 @@ async function proxy1C(req, res, pathname) {
       return;
     }
     const headers = {
-      'Content-Type': req.headers['content-type'] || 'application/json',
+      'Content-Type': video ? 'application/json; charset=utf-8' : (req.headers['content-type'] || 'application/json'),
       'Accept': req.headers.accept || 'application/json'
     };
     // Keep the same integration contract in local Vite and on the production
@@ -314,6 +319,7 @@ async function proxy1C(req, res, pathname) {
     // Never trust a browser-provided context. Only the configured server contour
     // may label a Web Push registration for 1C selection.
     if (webPushRegistration) headers['X-ITUS-Push-Context'] = webPushContext;
+    if(video)headers['Content-Length']=String(video.byteLength);
 
     if (logProxyRequests) {
       console.log(`[ИТУС -> 1С] POST ${suffix}${requestId ? ` requestId=${requestId}` : ''}`);
@@ -323,11 +329,12 @@ async function proxy1C(req, res, pathname) {
       method: 'POST',
       headers,
       body,
+      ...(video?{duplex:'half'}:{}),
       signal: controller.signal
     });
     const responseBody = Buffer.from(await upstream.arrayBuffer());
     if (logProxyRequests) {
-      console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now() - startedAt}ms${requestId ? ` requestId=${requestId}` : ''} requestBytes=${body.length} responseBytes=${responseBody.length}`);
+      console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now() - startedAt}ms${requestId ? ` requestId=${requestId}` : ''} requestBytes=${video?.byteLength || body.length} responseBytes=${responseBody.length}`);
     }
     res.writeHead(upstream.status, {
       'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
@@ -339,16 +346,17 @@ async function proxy1C(req, res, pathname) {
     const timeout = error?.name === 'AbortError';
     const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
     console.error(`[Ошибка proxy 1С] POST ${suffix} ${Date.now() - startedAt}ms: ${String(error?.message || error)}${requestId ? ` requestId=${requestId}` : ''}`);
-    if (tooLarge) res.setHeader('Connection', 'close');
-    json(res, timeout ? 504 : (tooLarge ? 413 : 502), {
+    if (tooLarge || binaryVideo) res.setHeader('Connection', 'close');
+    json(res, timeout ? 504 : (tooLarge ? 413 : (error.status || 502)), {
       success: false,
       error: {
-        code: timeout ? 'ONE_C_TIMEOUT' : (tooLarge ? 'REQUEST_TOO_LARGE' : 'ONE_C_PROXY_ERROR'),
+        code: timeout ? 'ONE_C_TIMEOUT' : (error.code || 'ONE_C_PROXY_ERROR'),
         message: timeout ? 'Истекло время ожидания ответа 1С' : String(error?.message || error)
       }
     });
   } finally {
     clearTimeout(timer);
+    await video?.cleanup();
   }
 }
 
@@ -419,6 +427,9 @@ const server = http.createServer(async (req, res) => {
   catch { json(res, 400, {success: false, error: {code: 'BAD_PATH', message: 'Некорректный путь'}}); }
 });
 
+server.requestTimeout = Number(process.env.MEDIA_PROXY_TIMEOUT_MS || 20*60*1000);
+void cleanupStaleVideos().catch(()=>{});
+setInterval(()=>{void cleanupStaleVideos().catch(()=>{});},60*60*1000).unref();
 server.listen(port, listenHost, () => {
   console.log(`ИТУС запущен: http://localhost:${port}`);
   console.log(`Прокси 1С: /api/1c/* -> ${oneCTarget}/*`);

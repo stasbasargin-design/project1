@@ -33,7 +33,16 @@ const page = `<!doctype html><meta charset="utf-8"><img src="/wait" hidden><pre 
   });
   try {
     await removeDb();
+    await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('itus-operation-queue',2);
+      request.onupgradeneeded=()=>request.result.createObjectStore('operations',{keyPath:'id'});
+      request.onerror=()=>reject(request.error);
+      request.onsuccess=()=>{const db=request.result,tx=db.transaction('operations','readwrite');tx.objectStore('operations').put({id:'old-version-file',scope:'legacy',body:{entry:{file:{contentBase64:'preserved'}}}});tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};
+    });
     const make = () => ITUS_OPERATION_QUEUE.create({delays:[0], sender:async () => ({success:true})});
+    expect((await make().get('old-version-file')).body.entry.file.contentBase64==='preserved','upgrade erased an old pending file');
+    const oldVersionBlocked=await new Promise(resolve=>{const request=indexedDB.open('itus-operation-queue',2);request.onerror=()=>resolve(request.error.name==='VersionError');request.onsuccess=()=>{request.result.close();resolve(false);};});
+    expect(oldVersionBlocked,'old JSON-only worker can still open and corrupt binary operations');
     const original = {id:'restart-entry',scope:'browser',method:'/defects/entries/add',kind:'entry',documentKey:'doc',clientEntryId:'entry-1',requestId:'request-1',body:{documentRef:'doc',clientEntryId:'entry-1',entry:{clientEntryId:'entry-1',file:{fileName:'one.jpg',contentBase64:'original'}}}};
     const first = make();
     const [saved] = await first.prepareBatch([original]);
@@ -87,6 +96,15 @@ const page = `<!doctype html><meta charset="utf-8"><img src="/wait" hidden><pre 
     await storeA.release(releaseCheck.id, 'old-owner');
     const protectedLease = await storeB.get(releaseCheck.id);
     expect(protectedLease.leaseOwner === 'new-owner', 'stale owner released another tab lease');
+    expect(await storeB.renew(releaseCheck.id,'new-owner',600000), 'long video cannot renew lease');
+    expect(!await storeA.renew(releaseCheck.id,'old-owner',600000), 'old owner renewed somebody else lease');
+    const binary=new Blob([new Uint8Array(20*1024*1024),new Uint8Array([1,2,3])],{type:'video/mp4'});
+    const video={...original,id:'persistent-video',body:{entry:{file:{contentBlob:binary,sizeBytes:binary.size,mimeType:binary.type}}}};
+    await make().prepare(video);
+    const restored=await make().get(video.id);
+    expect(restored.body.entry.file.contentBlob instanceof Blob,'video Blob lost across IndexedDB restart');
+    expect(restored.body.entry.file.contentBlob.size===binary.size,'video size changed');
+    expect(JSON.stringify(Array.from(new Uint8Array(await restored.body.entry.file.contentBlob.slice(-3).arrayBuffer())))==='[1,2,3]','restored video bytes changed');
     result.textContent = 'OK';
   } catch (error) { result.textContent = 'ERROR: ' + (error && error.message || error); }
   await fetch('/complete?result=' + encodeURIComponent(result.textContent));

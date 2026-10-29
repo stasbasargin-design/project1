@@ -1,8 +1,8 @@
 (function(root) {
   'use strict';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const mediaKind = file => /^video\//.test(file.type || '') ? 'video' : 'photo';
-  const isMedia = file => /^(image|video)\//.test(file.type || '');
+  const mediaKind = file => root.ITUS_VIDEO_TRANSPORT?.isVideo(file) || /^video\//.test(file.type || '') ? 'video' : 'photo';
+  const isMedia = file => mediaKind(file)==='video' || /^image\//.test(file.type || '');
 
   function create({showSheet, closeSheet, toast, limits = {}}) {
     let session = null;

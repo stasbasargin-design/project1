@@ -80,6 +80,31 @@ try{
   await evaluate(`(()=>{const v=new EventTarget();v.height=420;v.offsetTop=24;Object.defineProperty(window,'visualViewport',{configurable:true,value:v});window.dispatchEvent(new Event('resize'));})()`);await settle();
   const keyboard=await snap();visibleNavigation(keyboard,'keyboard');assert.equal(keyboard.phone.y,24);assert.equal(keyboard.phone.height,420);assert.ok(keyboard.compose.bottom<=444-24+1,'keyboard covers composer');assert.ok(keyboard.history.height>0,'keyboard leaves no history');
   await screenshot('chat-keyboard-393');results.push({label:'keyboard',keyboard});
+  // Actual settings modal, font controls and long service-history data must never enlarge the viewport.
+  for(const width of [360,393,800]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height:852,deviceScaleFactor:1,mobile:true});
+    await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=executor`});await waitFor('#orderSearch');
+    for(const size of ['compact','normal','large','extra']){
+      await evaluate(`document.getElementById('userPanel').click()`);await waitFor('#appDisplaySize');
+      await evaluate(`(()=>{const el=document.getElementById('appDisplaySize');el.value=${JSON.stringify(size)};el.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#sheetBody details').open=true;})()`);await settle();
+      const modal=await evaluate(`(()=>{const sheet=document.querySelector('.sheet').getBoundingClientRect(),body=document.querySelector('.sheet-body');return {left:sheet.left,right:sheet.right,bottom:sheet.bottom,width:innerWidth,scrollWidth:document.documentElement.scrollWidth,bodyWidth:body.clientWidth,bodyScroll:body.scrollWidth,font:getComputedStyle(document.body).fontSize};})()`);
+      assert.ok(modal.left>=0 && modal.right<=width+1,'settings escaped viewport '+width+' '+size);
+      assert.ok(modal.scrollWidth<=width+1,'settings expanded document '+width+' '+size);
+      assert.ok(modal.bodyScroll<=modal.bodyWidth+1,'settings content overflow '+width+' '+size);
+      assert.ok(modal.bottom<=852+1,'settings below screen');
+      await screenshot('settings-'+width+'-'+size);
+      await evaluate('document.getElementById("closeSheetButton").click()');await settle();
+      const before=await snap();await evaluate('scrollTo(0,document.documentElement.scrollHeight)');await settle();
+      const after=await snap();assert.ok(Math.abs(before.nav.y-after.nav.y)<1,'tabs drift on scroll '+width+' '+size);
+      assert.ok(after.scrollWidth<=width+1,'scaled content expanded document');
+      await evaluate('scrollTo(0,0)');
+    }
+    await evaluate(`(()=>{const old=window.fetch;window.fetch=async(input,options)=>String(input).includes('/quality/service-history')?new Response(JSON.stringify({success:true,data:{visits:[{date:'2026-10-29',orderNumber:'LONG-'+ 'X'.repeat(180),reason:'Причина '.repeat(50),works:[{name:'Работа '.repeat(40)}]}]}}),{status:200,headers:{'Content-Type':'application/json'}}):old(input,options);document.querySelector('[data-view="tech"]').click();})()`);
+    await waitFor('[data-action="service-history"]');await evaluate(`document.querySelector('[data-action="service-history"]').click()`);await waitFor('.service-history');await settle();
+    assert.ok((await snap()).scrollWidth<=width+1,'service history expanded viewport');await screenshot('service-history-'+width);
+    results.push({label:'modal-scale-'+width,verified:true});
+    await evaluate(`ITUS_DISPLAY.set('normal')`);
+  }
   if(artifactDir)writeFileSync(join(artifactDir,'layout-results.json'),JSON.stringify(results,null,2));
   console.log('Layout browser: shared shell, fixed navigation, portrait/landscape, safe area and keyboard composer OK.');
   await send('Browser.close');socket.close();

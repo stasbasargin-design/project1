@@ -84,6 +84,19 @@
     };
   }
 
+  function acceptanceState(source) {
+    const x = isObject(source) ? source : {};
+    const a = isObject(x.acceptance) ? x.acceptance : (isObject(x.acceptanceAct) ? x.acceptanceAct : {});
+    const ref = text(x.acceptanceDocumentRef || x.acceptanceRef || a.documentRef || a.ref);
+    const documentRef = /^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(ref) ? '' : ref;
+    const status = text(x.acceptanceStatus || a.status?.code || a.status).toLowerCase();
+    const completedFlag = [x.acceptanceCompleted, a.completed].find(value => typeof value === 'boolean');
+    const existsFlag = [x.acceptanceExists, a.exists].find(value => typeof value === 'boolean');
+    const completed = completedFlag ?? (/^(completed|complete|closed|posted|заверш[её]н|провед[её]н)$/.test(status) ? true : null);
+    const exists = completed === true || documentRef ? true : (existsFlag ?? (/^(created|draft|in_progress)$/.test(status) ? true : null));
+    return {acceptanceDocumentRef:documentRef, acceptanceExists:exists, acceptanceCompleted:completed};
+  }
+
   function mapOrder(source) {
     const x = isObject(source) ? source : {};
     const status = isObject(x.status) ? x.status : {};
@@ -130,6 +143,7 @@
         status: text(item?.status?.title || item?.status?.name || item?.statusTitle || (typeof item?.status === 'string' ? item.status : '') || item?.status?.code, 'Не стартовал')
       })).filter(item => item.packageRef),
       defectDocumentRef: text(x.defectDocumentRef || x.defectSheetRef || x.defectSheet?.documentRef || x.defectSheet?.ref || x.defectSheet?.document?.ref),
+      ...acceptanceState(x),
       defects: normalizeDefects(x.defects || x.defectEntries),
       media: normalizeMedia(x.media || x.files || x.photos),
       clientTopicRef: text(x.clientTopicRef || x.topicRef || x.topicId),
@@ -281,6 +295,6 @@
     asArray, extractItems, extractOrders, isObject, mapOrder, normalizeFile,
     normalizeForm, normalizeMessage, normalizeOption, normalizeProcess,
     normalizeQuestion, normalizeResource, normalizeSurvey, normalizeTopic,
-    normalizeUser, text
+    normalizeUser, acceptanceState, text
   });
 })(typeof window !== 'undefined' ? window : globalThis);

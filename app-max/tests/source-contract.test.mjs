@@ -15,5 +15,5 @@ assert.ok(contract.methods['/quality/request']);
 assert.deepEqual(contract.methods['/worktime/production'].responseData.production.grades[0], {grade:'3 разряд',closedHours:3.2});
 const config=readFileSync(new URL('../config/itus.config.js',import.meta.url),'utf8');
 assert.match(config,/POLL_INTERVAL_MS:\s*60000/);
-assert.match(config,/MAX_VIDEO_UPLOAD_BYTES:\s*15728640/, '20 MiB video must not be enabled by default before 1C confirmation');
+assert.match(config,/MAX_VIDEO_UPLOAD_BYTES:\s*0/, 'Video uses binary transport without the old 15 MiB client cap');
 console.log('Original JSON contract: OK — acceptance envelope, required flags, existing-document attachment, original service path.');

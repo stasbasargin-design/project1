@@ -1,0 +1,29 @@
+/* One bounded overlay and a fixed navigation strip on every ordinary screen. */
+html{font-size:calc(16px * var(--ui-scale,1));-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{font-size:1rem}
+body:not(.messenger-view) .phone{padding-top:calc(var(--header-height,78px) + var(--tabs-height,76px) + 12px)}
+body:not(.messenger-view) #tabs{position:fixed;left:50%;transform:translateX(-50%);top:var(--header-height,78px);width:min(var(--app-shell-max,560px),100%);margin:0;padding:6px max(var(--app-shell-gutter),var(--app-safe-right)) 10px max(var(--app-shell-gutter),var(--app-safe-left));z-index:29;box-sizing:border-box;background:var(--bg);backdrop-filter:none;overscroll-behavior:contain}
+.itus-sticky-user-header{position:static!important;top:auto!important;z-index:auto!important}
+body:has(.overlay:not(.hidden)){overflow:hidden}
+.overlay{width:100%;max-width:100%;height:100dvh;min-width:0;overflow:hidden;padding:max(10px,var(--app-safe-top)) max(10px,var(--app-safe-right)) max(10px,var(--app-safe-bottom)) max(10px,var(--app-safe-left));overscroll-behavior:contain}
+.sheet{display:flex;flex-direction:column;width:100%;min-width:0;max-width:min(760px,100%);max-height:100%;padding:0;overflow:hidden}
+.sheet-head{position:static;flex:0 0 auto;min-width:0;margin:0;padding:1rem;gap:12px;overflow-wrap:anywhere}
+.sheet-head>div{min-width:0;flex:1}.sheet-head h2,.sheet-head p{overflow-wrap:anywhere}
+.sheet-head .icon-button{flex:0 0 44px}
+.sheet-body{min-width:0;min-height:0;max-width:100%;overflow:auto;overscroll-behavior:contain;padding:1rem;overflow-wrap:anywhere;-webkit-overflow-scrolling:touch}
+.sheet-body>*{min-width:0;max-width:100%}.sheet-body .grid{grid-template-columns:minmax(0,1fr)}
+.sheet-body .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.sheet-body .table-wrap{width:100%;overflow:auto}.sheet-body table{max-width:100%}
+.sheet-body pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.service-history .entry-head{flex-wrap:wrap;gap:6px 12px}
+.service-history .entry-head>b{flex:1 1 150px;min-width:0}
+.service-history .entry-head>span{flex:0 0 auto;max-width:100%;overflow-wrap:normal}
+input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
+.card{padding:1.125rem}.order{padding:.9375rem}.question{padding:.875rem}
+.button,.grid button,.primary,.secondary,.danger,.success,.question>button{padding:.75rem;min-height:44px}
+.order{position:relative;padding-right:2rem;overflow-wrap:anywhere}
+.order-act-dot{position:absolute;right:12px;bottom:12px;width:10px;height:10px;border-radius:50%;border:1px solid #0002}
+.order-act-dot.present{background:#16854c}.order-act-dot.absent{background:#c52b27}.order-act-dot.unknown{background:#89919d}
+.display-size-setting{margin:0 0 1rem;padding:1rem;border:1px solid var(--line);border-radius:12px;background:var(--soft)}
+@media(max-width:390px){.sheet-body .grid.two{grid-template-columns:minmax(0,1fr)}}
+@media(max-height:560px){.sheet-head,.sheet-body{padding:.75rem}}
