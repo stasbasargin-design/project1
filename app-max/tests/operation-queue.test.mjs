@@ -122,4 +122,25 @@ function memoryStore() {
   assert.ok(!methods.includes('/acceptance/complete'));
 }
 
-console.log('Operation queue: OK (lost response deduplication, five-attempt cap, 422 and completion gate).');
+// A second tab can receive 422 after our initial read but before our claim.
+// Recheck the claimed record inside finally-protected ownership; never reset it
+// or send automatically merely because the stale initial value was pending.
+for (const status of ['invalid','failed']) for (const claimReturnsRecord of [true,false]) {
+  const store=memoryStore();let sent=0,released=0;
+  const queue=context.ITUS_OPERATION_QUEUE.create({store,delays:[0],sender:async()=>{sent++;return {success:true};}});
+  const original=await queue.prepare({id:`claim-race:${status}:${claimReturnsRecord}`,scope:'test|a',method:'/defects/entries/add',kind:'entry',requestId:'same-request',clientEntryId:'same-entry',body:{entry:{text:'unchanged'}}});
+  store.claim=async(id,owner)=>{
+    const latest={...await store.get(id),status,attempts:1,error:status==='invalid'?'HTTP_422':'TIMEOUT',diagnostic:{status:status==='invalid'?422:0},leaseOwner:owner};
+    await store.put(latest);return claimReturnsRecord ? latest : true;
+  };
+  store.release=async()=>{released++;};
+  await assert.rejects(queue.run(original.id),error=>error.queueStatus===status);
+  assert.equal(sent,0);assert.equal(released,1,'a terminal claimed operation releases its lease');
+  const retained=await store.get(original.id);
+  assert.equal(retained.status,status);assert.equal(retained.attempts,1);
+  assert.equal(retained.requestId,original.requestId);assert.equal(JSON.stringify(retained.body),JSON.stringify(original.body));
+  await queue.run(original.id,{manual:true});
+  assert.equal(sent,1,'explicit checked retry is still available');assert.equal(released,2);
+}
+
+console.log('Operation queue: OK (lost response deduplication, five-attempt cap, 422, completion gate and post-claim rejection race).');

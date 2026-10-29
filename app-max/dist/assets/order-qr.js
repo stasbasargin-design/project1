@@ -26,8 +26,10 @@
     let canvas = null;
     let context = null;
     let scanning = false;
+    let generation = 0;
 
     function stop() {
+      generation++;
       stopped = true;
       cancelAnimationFrame(frame);
       stream?.getTracks?.().forEach(track => track.stop());
@@ -37,8 +39,14 @@
 
     async function decode(video) {
       if (detector) {
-        const codes = await detector.detect(video).catch(() => []);
-        return codes[0]?.rawValue || '';
+        try {
+          const codes = await detector.detect(video);
+          return codes[0]?.rawValue || '';
+        } catch {
+          // Some WebViews expose BarcodeDetector but cannot decode their camera
+          // frames. Continue with the bundled decoder instead of spinning forever.
+          detector = null;
+        }
       }
       if (typeof root.jsQR !== 'function' || !video.videoWidth || !video.videoHeight) return '';
       canvas ||= document.createElement('canvas');
@@ -51,25 +59,29 @@
       return root.jsQR(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' })?.data || '';
     }
 
-    async function tick(video) {
-      if (stopped) return;
+    async function tick(video, session) {
+      if (stopped || session !== generation) return;
       if (!scanning && video.readyState >= 2) {
         scanning = true;
         try {
           const value = await decode(video);
+          if (stopped || session !== generation) return;
           if (value) {
             stop();
             await onResult(value);
             return;
           }
+        } catch (error) {
+          if (session === generation) { stop(); onFailure?.(error); }
         } finally { scanning = false; }
       }
-      frame = requestAnimationFrame(() => tick(video));
+      if (!stopped && session === generation) frame = requestAnimationFrame(() => tick(video, session));
     }
 
     async function start(video) {
       stop();
       stopped = false;
+      const session = generation;
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('Камера недоступна в этом браузере');
         if (typeof root.BarcodeDetector === 'function') {
@@ -77,18 +89,18 @@
           catch { detector = null; }
         }
         if (!detector && typeof root.jsQR !== 'function') throw new Error('Распознавание QR недоступно');
-        stream = await navigator.mediaDevices.getUserMedia({
+        const acquired = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: { facingMode: { ideal: 'environment' } }
         });
-        if (stopped) { stream.getTracks().forEach(track => track.stop()); return; }
+        if (stopped || session !== generation) { acquired.getTracks().forEach(track => track.stop()); return; }
+        stream = acquired;
         onStream?.(stream);
         video.srcObject = stream;
         await video.play?.().catch(() => {});
-        frame = requestAnimationFrame(() => tick(video));
+        if (!stopped && session === generation) frame = requestAnimationFrame(() => tick(video, session));
       } catch (error) {
-        stop();
-        onFailure?.(error);
+        if (session === generation) { stop(); onFailure?.(error); }
       }
     }
 

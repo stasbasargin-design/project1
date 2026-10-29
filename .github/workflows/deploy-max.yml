@@ -15,9 +15,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app-max
+    env:
+      IMAX_BUILD_SHA: ${{ github.sha }}
+      REQUIRE_BROWSER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+      - name: Require browser regressions
+        run: |
+          CHROME="$(command -v google-chrome || command -v chromium || true)"
+          test -n "$CHROME"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:review
+      - run: npm run build
   deploy:
-    name: Deploy to Timeweb
-    runs-on: ubuntu-latest
+    name: Deploy exact commit to Timeweb
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - name: Configure SSH
@@ -35,6 +63,8 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.TIMEWEB_HOST }}
           SSH_USER: ${{ secrets.TIMEWEB_USER }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
+          [[ "$DEPLOY_SHA" =~ ^[a-f0-9]{40}$ ]]
           ssh "$SSH_USER@$SSH_HOST" \
-            "sudo /usr/local/bin/deploy-max.sh"
+            "sudo /usr/local/bin/deploy-max.sh '$DEPLOY_SHA'"

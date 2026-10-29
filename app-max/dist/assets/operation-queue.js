@@ -164,7 +164,7 @@
     return status === 0 || status >= 500 || error?.name === 'TypeError' || error?.code === 'TIMEOUT';
   }
 
-  function create({ store = indexedDbStore(), sender, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
+  function create({ store = indexedDbStore(), sender, context = () => null, guard = () => {}, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
     if (typeof sender !== 'function') throw new Error('Operation queue sender is required');
     const owner = root.crypto?.randomUUID?.() || `queue-${Date.now()}-${Math.random()}`;
     const running = new Map();
@@ -211,22 +211,25 @@
     }
 
     async function execute(id, { manual = false } = {}) {
+      const executionContext = context();
       let operation = await store.get(id);
-      if (!operation) throw new Error('Сохранённый пакет отправки не найден');
-      if (!manual && ['invalid', 'failed'].includes(operation.status)) {
-        const error = Object.assign(new Error('Сохранённый пакет требует ручной проверки перед повтором'), {
+      if (!operation) throw Object.assign(new Error('Сохранённый пакет отправки не найден'),{code:'QUEUE_NOT_FOUND'});
+      guard(operation, executionContext);
+      function assertAutomaticRetryAllowed() {
+        if (manual || !['invalid','failed'].includes(operation.status)) return;
+        throw Object.assign(new Error('Сохранённый пакет требует ручной проверки перед повтором'), {
           code: operation.error || 'SEND_FAILED',
           status: Number(operation.diagnostic?.status || 0),
           diagnostic: operation.diagnostic || undefined,
           operation,
           queueStatus: operation.status
         });
-        throw error;
       }
+      assertAutomaticRetryAllowed();
       const attemptLimit = Number(operation.maxAttempts || maxAttempts);
       const claimed = store.claim ? await store.claim(id, owner, LEASE_MS) : true;
       const acquired = Boolean(claimed);
-      if (!acquired) throw Object.assign(new Error('Операция уже отправляется в другой вкладке'), {code:'QUEUE_BUSY'});
+      if (!acquired) throw Object.assign(new Error('Операция уже отправляется в другой вкладке'), {code:'QUEUE_BUSY', leaseUntil:Number(operation.leaseUntil || 0)});
       operation = claimed === true ? await store.get(id) : claimed;
       if (!operation) throw Object.assign(new Error('Блокировка операции потеряна'), {code:'QUEUE_BUSY'});
       const leaseLost = () => Object.assign(new Error('Блокировка операции потеряна; перед повтором сверьте результат отправки'), {code:'QUEUE_BUSY', leaseLost:true});
@@ -239,13 +242,21 @@
         return saved;
       };
       try {
+      guard(operation, executionContext);
+      // Another tab may reject the operation between the first read and claim.
+      // Only the value returned by the atomic claim is authoritative now.
+      assertAutomaticRetryAllowed();
       if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {
+        guard(operation, executionContext);
         const delay = Number(delays[operation.attempts] || 0);
         if (delay) await wait(delay);
+        guard(operation, executionContext);
         await persistOwned({ ...operation, attempts: operation.attempts + 1, status: 'sending' }); // Persist before transport so a lost response still consumes the attempt.
         try {
-          const response = await sender(operation);
+          guard(operation, executionContext);
+          const response = await sender(operation, executionContext);
+          guard(operation, executionContext);
           const removed = store.removeOwned
             ? await store.removeOwned(id, owner)
             : (await store.delete(id), true);
@@ -253,6 +264,10 @@
           return response;
         } catch (error) {
           if (error?.leaseLost) throw error;
+          if (error?.queuePaused || error?.code === 'SESSION_CHANGED') {
+            await persistOwned({ ...operation, status:'pending', error:'', diagnostic:null });
+            throw error;
+          }
           const validation = Number(error?.status || 0) === 422;
           operation = {
             ...operation,
@@ -268,6 +283,7 @@
           }
         }
       }
+      await persistOwned({...operation,status:'failed',error:operation.error || 'ATTEMPTS_EXHAUSTED'});
       const error = new Error('Не удалось подтвердить отправку');
       error.operation = operation;
       error.queueStatus = 'failed';

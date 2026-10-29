@@ -2,7 +2,7 @@ import './assets/worktime.js';
 import { resolvePublicPath } from './static-path.mjs';
 import http from 'node:http';
 import dns from 'node:dns';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,12 @@ import { webPushConfig, deliverWebPush } from './web-push.mjs';
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
 const staticRoot = existsSync(join(distRoot, 'config', 'itus.config.js')) ? distRoot : root;
+const buildInfo = (() => {
+  try {
+    const info = JSON.parse(readFileSync(join(staticRoot, 'build-info.json'), 'utf8'));
+    return {version: String(info.version || ''), commit: /^[a-f0-9]{40}$/i.test(info.commit || '') ? info.commit : 'local'};
+  } catch { return {version: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version, commit: 'local'}; }
+})();
 const port = Number(process.env.PORT || 8080);
 const listenHost = String(process.env.LISTEN_HOST || '0.0.0.0').trim() || '0.0.0.0';
 const configuredBasePath = process.env.APP_BASE_PATH && String(process.env.APP_BASE_PATH).trim();
@@ -87,9 +93,14 @@ function allowCapacitorApiOrigin(req, res) {
 async function readBody(req) {
   const chunks = [];
   let total = 0;
-  for await (const chunk of req) {
+  for await (const chunk of req.iterator({destroyOnReturn: false})) {
     total += chunk.length;
-    if (total > maxRequestBytes) throw new Error(`Тело запроса превышает лимит ${Math.round(maxRequestBytes / 1024 / 1024)} МБ`);
+    if (total > maxRequestBytes) {
+      req.resume();
+      const error = new Error(`Тело запроса превышает лимит ${Math.round(maxRequestBytes / 1024 / 1024)} МБ`);
+      error.code = 'REQUEST_TOO_LARGE';
+      throw error;
+    }
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -316,7 +327,7 @@ async function proxy1C(req, res, pathname) {
     });
     const responseBody = Buffer.from(await upstream.arrayBuffer());
     if (logProxyRequests) {
-      console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now() - startedAt}ms${requestId ? ` requestId=${requestId}` : ''}`);
+      console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now() - startedAt}ms${requestId ? ` requestId=${requestId}` : ''} requestBytes=${body.length} responseBytes=${responseBody.length}`);
     }
     res.writeHead(upstream.status, {
       'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
@@ -326,11 +337,13 @@ async function proxy1C(req, res, pathname) {
     res.end(responseBody);
   } catch (error) {
     const timeout = error?.name === 'AbortError';
+    const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
     console.error(`[Ошибка proxy 1С] POST ${suffix} ${Date.now() - startedAt}ms: ${String(error?.message || error)}${requestId ? ` requestId=${requestId}` : ''}`);
-    json(res, timeout ? 504 : 502, {
+    if (tooLarge) res.setHeader('Connection', 'close');
+    json(res, timeout ? 504 : (tooLarge ? 413 : 502), {
       success: false,
       error: {
-        code: timeout ? 'ONE_C_TIMEOUT' : 'ONE_C_PROXY_ERROR',
+        code: timeout ? 'ONE_C_TIMEOUT' : (tooLarge ? 'REQUEST_TOO_LARGE' : 'ONE_C_PROXY_ERROR'),
         message: timeout ? 'Истекло время ожидания ответа 1С' : String(error?.message || error)
       }
     });
@@ -371,7 +384,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = basePath !== '/' && url.pathname.startsWith(basePath + '/')
     ? url.pathname.slice(basePath.length) : url.pathname;
   if (pathname === '/health') {
-    json(res, 200, { success: true, service: 'ITUS', oneCTargetConfigured: Boolean(oneCTarget) });
+    json(res, 200, { success: true, service: 'ITUS', version: buildInfo.version, commit: buildInfo.commit, oneCTargetConfigured: Boolean(oneCTarget) });
     return;
   }
   if (pathname === '/api/push/web/config' && req.method === 'GET') {

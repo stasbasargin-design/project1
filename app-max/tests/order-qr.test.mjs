@@ -51,6 +51,27 @@ assert.equal(stopped, 1, 'camera track is released immediately after recognition
 scanner.stop();
 assert.equal(stopped, 1, 'closing an already stopped scanner is safe');
 
+let releaseDetection, pendingFrame, cancelledResult=0;
+context.BarcodeDetector=class { detect(){return new Promise(resolve=>{releaseDetection=resolve;});} };
+context.requestAnimationFrame=callback=>{pendingFrame=callback;return 1;};
+context.cancelAnimationFrame=()=>{};
+const cancellable=qr.createScanner({onResult(){cancelledResult++;}});
+await cancellable.start(video);
+const detecting=pendingFrame();
+cancellable.stop();
+releaseDetection([{rawValue:'12345'}]);
+await detecting;
+assert.equal(cancelledResult,0,'late detection cannot navigate after the scanner is closed');
+
+let fallbackCalls=0,fallbackResult='';
+context.BarcodeDetector=class { async detect(){throw new Error('Unsupported camera frame');} };
+context.jsQR=()=>{fallbackCalls++;return {data:'00789'};};
+context.document.createElement=()=>({getContext:()=>({drawImage(){},getImageData(){return {data:new Uint8ClampedArray(4),width:1,height:1};}})});
+const fallback=qr.createScanner({onResult(value){fallbackResult=value;}});
+await fallback.start(video);await pendingFrame();
+assert.equal(fallbackCalls,1,'native decoder failure uses local jsQR');
+assert.equal(fallbackResult,'00789');
+
 const appSource = fs.readFileSync(new URL('../assets/app.js', import.meta.url), 'utf8');
 const androidManifest = fs.readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
 const qrHandler = appSource.slice(appSource.indexOf('function showOrderQrManual'), appSource.indexOf('function downloadFile'));
