@@ -19,11 +19,11 @@
     pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
     webPushPublicKey: String(window.ITUS_CONFIG?.WEB_PUSH_VAPID_PUBLIC_KEY || '').trim(),
     maxPhotoBytes: Number(window.ITUS_CONFIG?.MAX_PHOTO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
-    maxVideoBytes: Number(window.ITUS_CONFIG?.MAX_VIDEO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxVideoBytes: 0, // No fixed video-size cap; transport uses a Blob instead of a Base64 string.
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.7.13'
+    version: 'i-max-2.8.0'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -276,7 +276,7 @@
     if (!base) throw new Error('Не заполнен ONE_C_API_BASE_URL');
     const controller = new AbortController();
     sessionRequests.add(controller);
-    const timer = setTimeout(() => controller.abort(), CONFIG.timeoutMs);
+    let timer;
     const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
     const envelope = {
@@ -285,7 +285,11 @@
     };
     try {
       window.ITUS_WORKTIME?.record(method, payload);
-      const response = await fetch(base + method, { method: 'POST', headers, body: JSON.stringify(envelope), signal: controller.signal });
+      const video=window.ITUS_VIDEO_TRANSPORT?.encode(method,{...envelope,clientBotId:state.clientBotId,serviceBotId:state.serviceBotId});
+      if((envelope.file?.contentBlob || envelope.entry?.file?.contentBlob) && !video)throw Object.assign(new Error('Обновите приложение: транспорт видео ещё не загружен'),{code:'VIDEO_TRANSPORT_UNAVAILABLE',status:400});
+      timer=setTimeout(()=>controller.abort(),video?20*60*1000:CONFIG.timeoutMs);
+      if(video)headers['Content-Type']=video.contentType;
+      const response = await fetch(base + method, { method: 'POST', headers, body: video?.body || JSON.stringify(envelope), signal: controller.signal });
       const raw = (await response.text()).replace(/^\uFEFF/, '');
       assertSession(session);
       let data;
@@ -480,7 +484,30 @@
   }
 
   function orderCard(order) {
-    return `<button class="order ${state.selectedOrderId === order.id ? 'active' : ''}" data-action="select-order" data-ref="${escAttr(order.orderRef || order.id)}"><div class="row"><b>ЗН ${esc(order.num)} · ${esc(order.plate)}</b><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><div class="tiny">${esc(order.car)} · ${esc(order.client)}</div><div class="tiny">Исполнитель: ${esc(order.executor)} · дефекты: ${Number(order.counters?.defects || order.defects?.length || 0)}</div></button>`;
+    const act = knownAcceptance(order);
+    const indicator = act.exists === true ? 'present' : act.exists === false ? 'absent' : 'unknown';
+    const label = act.exists === true ? (act.completed ? 'Акт приёма: завершён' : 'Акт приёма: создан') : act.exists === false ? 'Акт приёма: не создан' : 'Акт приёма: статус не передан 1С';
+    return `<button class="order ${state.selectedOrderId === order.id ? 'active' : ''}" data-action="select-order" data-ref="${escAttr(order.orderRef || order.id)}"><div class="row"><b>ЗН ${esc(order.num)} · ${esc(order.plate)}</b><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><div class="tiny">${esc(order.car)} · ${esc(order.client)}</div><div class="tiny">Исполнитель: ${esc(order.executor)} · дефекты: ${Number(order.counters?.defects || order.defects?.length || 0)}</div><div class="tiny">${label}</div><span class="order-act-dot ${indicator}" title="${label}" aria-label="${label}"></span></button>`;
+  }
+
+  function acceptanceEvidenceKey(order) {
+    return ['itus.acceptance.v1',CONFIG.apiBase,state.userId,order?.orderRef || order?.id || ''].join('|');
+  }
+  function knownAcceptance(order) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(acceptanceEvidenceKey(order)) || '{}'); } catch {}
+    const completed = typeof order?.acceptanceCompleted === 'boolean' ? order.acceptanceCompleted : (order?.acceptanceExists===false ? false : saved.completed === true);
+    const documentRef = order?.acceptanceDocumentRef || order?._acceptance?.documentRef || (order?.acceptanceExists===false ? '' : saved.documentRef) || '';
+    const exists = completed || documentRef ? true : (typeof order?.acceptanceExists === 'boolean' ? order.acceptanceExists : (saved.exists === true ? true : null));
+    return {exists,completed,documentRef};
+  }
+  function rememberAcceptance(order, patch) {
+    if (!order) return;
+    const evidence = {...knownAcceptance(order),...patch};
+    if(typeof evidence.exists==='boolean') order.acceptanceExists=evidence.exists;
+    if(typeof evidence.completed==='boolean') order.acceptanceCompleted=evidence.completed;
+    if(evidence.documentRef) order.acceptanceDocumentRef=evidence.documentRef;
+    try { localStorage.setItem(acceptanceEvidenceKey(order),JSON.stringify(evidence)); } catch {}
   }
 
   const operationQueue = window.ITUS_OPERATION_QUEUE?.create({
@@ -812,7 +839,8 @@
   function renderMpView() {
     const order = currentOrder();
     if (!order) return renderSelectedCard();
-    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance">Приём автомобиля</button><button data-action="open-acceptance-photo"${documentCompletionLocked(order._acceptance?.documentRef)?' disabled':''}>Добавить фото/видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button><button data-action="request-quality">Запросить контроль качества</button></div></div>` + renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём');
+    const act=knownAcceptance(order), locked=documentCompletionLocked(order._acceptance?.documentRef || act.documentRef);
+    return renderSelectedCard() + `<div class="card"><h2>Действия МП</h2><div class="grid two"><button data-action="start-acceptance"${act.completed || locked ? ' disabled' : ''}>${act.completed ? 'Приём завершён' : locked ? 'Завершение приёма…' : 'Приём автомобиля'}</button><button data-action="open-defect-chat">Добавить дефект / фото / видео</button><button data-action="choose-post">Выбрать пост</button><button data-action="assign-executor">Назначить исполнителя</button><button data-action="request-quality">Запросить контроль качества</button></div></div>` + (act.completed ? '' : renderProcess('_acceptance', order._acceptance, 'complete-acceptance', 'Завершить приём'));
   }
 
   function renderExecutorView() {
@@ -874,16 +902,31 @@
 
   async function startAcceptance() {
     const order = currentOrder(); if (!order || state.busy) return;
+    const session=sessionSnapshot();
+    const act=knownAcceptance(order);
+    if (act.completed || documentCompletionLocked(order._acceptance?.documentRef || act.documentRef)) return render();
     if (order._acceptance?.active) return render();
     state.busy = true; toast('Создаём акт приёма в 1С…');
     try {
-      const response = await call1C('/acceptance/start', orderPayload());
+      const response = await call1C('/acceptance/start', orderPayloadFor(order), {silent:true});
+      assertSession(session);
       order._acceptance = API.normalizeProcess(response, 'acceptance');
+      const completed=/^(completed|complete|closed|posted|заверш[её]н|провед[её]н)$/i.test(order._acceptance.status);
+      rememberAcceptance(order,{exists:true,completed,documentRef:order._acceptance.documentRef});
+      if(completed){order._acceptance=null;render();return;}
       // Use values already displayed from the 1C form in both validation and submission.
       for (const field of order._acceptance.form.fields) {
         if (order._acceptance.values[field.id] === undefined) order._acceptance.values[field.id] = field.value;
       }
       render(); toast('Акт приёма создан, анкета загружена из 1С');
+    } catch(error) {
+      if(sessionCurrent(session) && (error.code==='ACCEPTANCE_ALREADY_COMPLETED' || /^При[её]м автомобиля заверш[её]н[.!]?$/i.test(String(error.message).trim()))) {
+        rememberAcceptance(order,{exists:true,completed:true}); order._acceptance=null;
+        connectionStatus('ok','1С доступна · приём уже завершён');
+        toast('Приём уже завершён. Повторное создание отключено.');
+        return;
+      }
+      throw error;
     } finally { state.busy = false; render(); }
   }
 
@@ -1396,6 +1439,7 @@
         if (hoursField) order.engineHours = String(values[hoursField.id] || '');
         if (reasonField) order.reason = String(values[reasonField.id] || '');
         state.completionStatus = {key, stage:'completed'};
+        if(acceptance && order) rememberAcceptance(order,{exists:true,completed:true,documentRef:documentKey});
         if(order) order[acceptance?'_acceptance':'_defectSheet'] = null;
         if(orderRef) await loadSingleOrder(orderRef,{select:false});
         assertSession(session,session.scope);
@@ -1627,13 +1671,18 @@
   }
 
   async function fileToPayload(file, kind) {
+    if(window.ITUS_VIDEO_TRANSPORT?.isVideo(file) || /^video\//i.test(file.type || ''))kind='video';
     let blob = file;
     if (kind === 'photo' && /^image\//.test(file.type)) blob = await compressImage(file);
     const limit = kind === 'photo' ? CONFIG.maxPhotoBytes : (kind === 'video' ? CONFIG.maxVideoBytes : CONFIG.maxDocumentBytes);
-    if (blob.size > limit) {
+    if (limit > 0 && blob.size > limit) {
       const actualMb = (blob.size / 1024 / 1024).toFixed(1);
       const limitMb = (limit / 1024 / 1024).toFixed(0);
       throw new Error(`Размер файла ${actualMb} МБ превышает допустимый предел ${limitMb} МБ`);
+    }
+    if(kind==='video') {
+      if(!blob.size)throw new Error('Видеофайл пуст');
+      return {fileName:file.name || `video-${Date.now()}.mp4`,mimeType:window.ITUS_VIDEO_TRANSPORT?.mime(file) || blob.type || 'video/mp4',sizeBytes:blob.size,contentBlob:blob,clientFileId:requestId()};
     }
     const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
     const mimeType = blob.type || file.type || 'application/octet-stream';
@@ -2006,7 +2055,9 @@
   }
 
   function showSettings() {
-    showSheet('Настройки I-MAX', 'Параметры релизной версии', `<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Локальный маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><p class="tiny">Адрес 1С задаётся в config/itus.config.js или переменной ONE_C_TARGET на сервере приложения. Секреты в браузерном файле не хранятся.</p>`);
+    const display=window.ITUS_DISPLAY;
+    const size=display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '';
+    showSheet('Настройки I-MAX', 'Параметры приложения', `${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
   }
 
   async function logout() {
@@ -2067,6 +2118,7 @@
   async function handleFilePicked(event) {
     const file = event.target.files?.[0], target = state.fileTarget; state.fileTarget = null;
     if (!file || !target) return;
+    if(window.ITUS_VIDEO_TRANSPORT?.isVideo(file))target.kind='video';
     try {
       if (target.type === 'messenger') { await messenger.upload(file,target); return; }
       toast(`Загрузка файла «${file.name || 'вложения'}»…`);
@@ -2098,6 +2150,8 @@
   if (typeof ResizeObserver !== 'undefined') {
     const header = document.querySelector('.top');
     if (header) new ResizeObserver(() => document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`)).observe(header);
+    const tabs=$('tabs');
+    if (tabs) new ResizeObserver(() => document.documentElement.style.setProperty('--tabs-height',`${tabs.offsetHeight}px`)).observe(tabs);
   }
 
   window.addEventListener('offline', () => connectionStatus('error', 'Нет подключения к интернету'));

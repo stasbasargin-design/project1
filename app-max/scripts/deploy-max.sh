@@ -31,7 +31,7 @@ node --check assets/messenger.js
 test -f dist/build-info.json && test -f dist/notification-sw.js && test -f assets/worktime.js
 install -d -m 0750 "$STAGE"
 cp -a dist assets "$STAGE/"
-cp -f server.mjs static-path.mjs web-push.mjs package.json package-lock.json "$STAGE/"
+cp -f server.mjs static-path.mjs web-push.mjs media-proxy.mjs package.json package-lock.json "$STAGE/"
 printf '%s\n' "$SHA" > "$STAGE/RELEASE_COMMIT"
 cd "$STAGE"
 npm ci --omit=dev --ignore-scripts
@@ -41,11 +41,16 @@ chown -R itus:itus "$STAGE"
 install -d -m 0750 -o root -g root "$BACKUP"
 cp -a "$PROD" "$BACKUP/application"
 cp -a /usr/local/bin/deploy-max.sh "$BACKUP/deploy-max.sh"
+cp -a /etc/nginx/snippets/itus-max.conf "$BACKUP/itus-max.conf"
 git -C "$REPO" fetch origin main
 test "$(git -C "$REPO" rev-parse origin/main)" = "$SHA" || { echo 'Main advanced during preparation; production unchanged' >&2; exit 2; }
 rollback() {
   trap - ERR HUP INT TERM
   set +e
+  if test -f "$BACKUP/itus-max.conf"; then
+    cp -a "$BACKUP/itus-max.conf" /etc/nginx/snippets/itus-max.conf
+    nginx -t && systemctl reload nginx
+  fi
   systemctl stop "$SERVICE"
   if test -d "$PREVIOUS"; then
     if test -d "$PROD" && ! mv -T "$PROD" "$FAILED"; then
@@ -70,6 +75,7 @@ rollback() {
   exit 1
 }
 trap rollback ERR HUP INT TERM
+bash "$APP/scripts/configure-media-nginx.sh"
 systemctl stop "$SERVICE"
 mv -T "$PROD" "$PREVIOUS"
 mv -T "$STAGE" "$PROD"
