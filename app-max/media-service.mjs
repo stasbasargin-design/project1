@@ -12,6 +12,7 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
   const enabled=env.MEDIA_BUFFER_ENABLED==='true';
   let store,jobs,downloads,ledger,ready=false,initializing,timer,cleanupTimer;
   const pairingAttempts=new Map();
+  const sessionAttempts=new Map();let sessionChecks=0;
   const target=String(env.ONE_C_TARGET||'').replace(/\/+$/,'');
   const scope=digest([env.MEDIA_CONTEXT||'',target].join('|')).slice(0,24);
   async function read(route,envelope){
@@ -55,13 +56,36 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
     return initializing;
   }
   const token=req=>String(req.headers['x-itus-device']||'');
+  async function automaticSession(req){
+    const envelope=await limitedJson(req,32*1024),userId=String(envelope.userId||'');
+    if(!/^\d{1,30}$/.test(userId))throw mediaError('Требуется вход в приложение',401,'MEDIA_AUTH_REQUIRED');
+    assertMediaIdentity(userId,envelope);
+    const row=sessionAttempts.get(userId)||{count:0,start:Date.now()};
+    if(Date.now()-row.start>15*60*1000){row.count=0;row.start=Date.now();}
+    if(row.count>=20)throw mediaError('Подключение файлов временно ограничено. Повторите позже.',429,'MEDIA_SESSION_RATE_LIMIT');
+    if(sessionChecks>=16)throw mediaError('Подключение файлов занято. Повторите позже.',503,'MEDIA_SESSION_BUSY');
+    row.count++;sessionAttempts.set(userId,row);if(sessionAttempts.size>20000)sessionAttempts.delete(sessionAttempts.keys().next().value);
+    sessionChecks++;
+    try{
+      // This retains the application's existing ID-based 1C access model.
+      // A client assertion of a successful login never grants a media session.
+      const auth=await read('/auth/max',envelope);
+      const data=Array.isArray(auth.data)?Object.assign({},...auth.data.filter(x=>x&&typeof x==='object'&&!Array.isArray(x))):(auth.data||{});
+      const candidates=[auth.user,data.user,data.profile,data.employee,auth.employee,data,auth].map(globalThis.ITUS_API.normalizeUser).filter(Boolean);
+      const identity=candidates.find(x=>x.employeeRef||x.userRef||x.name);
+      if(!identity||auth.authorized===false||data.authorized===false||identity.authorized===false||identity.active===false)throw mediaError('1С не подтвердила доступ сотрудника',403,'MEDIA_AUTH_REJECTED');
+      for(const field of ['maxUserId','authId'])if(identity[field]&&String(identity[field])!==userId)throw mediaError('Ответ 1С относится к другому сотруднику',403,'MEDIA_AUTH_MISMATCH');
+      return store.issueDevice(userId);
+    }finally{sessionChecks--;}
+  }
   async function device(req){if(!enabled||!ready)throw mediaError('Буфер файлов пока не подключён',503,'MEDIA_NOT_CONFIGURED');return store.authenticate(token(req));}
   async function handle(req,res,path){
     if(!path.startsWith('/api/media/'))return false;
     try{
       if(req.method==='OPTIONS'){res.writeHead(204);res.end();return true;}
-      if(path==='/api/media/config'&&req.method==='GET'){json(res,200,{success:true,data:{enabled:enabled&&ready,thresholdBytes:DIRECT_FILE_BYTES,pairingRequired:true}});return true;}
+      if(path==='/api/media/config'&&req.method==='GET'){json(res,200,{success:true,data:{enabled:enabled&&ready,thresholdBytes:DIRECT_FILE_BYTES,pairingRequired:false,automaticSession:true}});return true;}
       if(!enabled||!ready)throw mediaError('Буфер файлов пока не подключён',503,'MEDIA_NOT_CONFIGURED');
+      if(path==='/api/media/session'&&req.method==='POST'){json(res,200,{success:true,data:await automaticSession(req)});return true;}
       const download=path.match(/^\/api\/media\/download\/([a-f0-9]{48})$/);
       if(download&&['GET','HEAD'].includes(req.method)){downloads.serve(req,res,download[1]);return true;}
       if(path==='/api/media/pair'&&req.method==='POST'){

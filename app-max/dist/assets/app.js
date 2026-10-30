@@ -23,7 +23,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.1'
+    version: 'i-max-2.8.2'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -72,7 +72,7 @@
   let activeOrderQrSearch = null;
   let lastOrderQrValue = '';
   const longRunningActions = new Set([
-    'media-device-pair','media-device-revoke',
+    'media-device-reconnect',
     'login', 'logout', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
     'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
     'start-acceptance', 'complete-acceptance', 'choose-post', 'set-post', 'assign-executor', 'assign-other-executor', 'set-executor',
@@ -102,10 +102,8 @@
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead,
     attachment:async(route,payload,size)=>{
       const session=sessionSnapshot(),media=mediaClient(session);
-      if(!media?.connected()){
-        if(size>10*1024*1024)throw new Error('Подключите устройство в настройках крупных файлов для открытия этого вложения');
-        return null;
-      }
+      if(!media)return null;
+      try{await media.connect();}catch(error){if(size>10*1024*1024||error.queuePaused)throw error;return null;}
       return media.attachment(route,{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...payload,requestId:requestId(),timestamp:nowIso()},size);
     },
     outbox: {
@@ -211,14 +209,18 @@
     };
   }
 
+  let cachedMediaClient=null;
   function mediaClient(session=sessionSnapshot()) {
-    return window.ITUS_MEDIA_BUFFER?.create({base:()=>CONFIG.apiBase,userId:()=>session.userId,guard:()=>assertSession(session,session.scope),progress:detail=>{
+    if(window.ITUS_REVIEW_MODE)return null;
+    if(cachedMediaClient?.generation===session.generation)return cachedMediaClient.client;
+    const client=window.ITUS_MEDIA_BUFFER?.create({base:()=>CONFIG.apiBase,userId:()=>session.userId,auth:()=>({...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version}),guard:()=>assertSession(session,session.scope),progress:detail=>{
       if(!sessionCurrent(session))return;
       const operation=state.queuedOperations.find(item=>item.requestId===detail.requestId);
       if(operation)operation.progress=detail;
       const panel=document.querySelector?.(`[data-media-progress="${detail.requestId}"]`);
       if(panel)panel.textContent=detail.state==='uploading'?`В буфер: ${detail.percent}%`:detail.state==='confirmed'?'Сохранено в 1С':'Буфер принят · переносим в 1С…';
     }});
+    cachedMediaClient={generation:session.generation,client};return client;
   }
   function operationEnvelope(operation) {
     return {...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...operation.envelopeContext,...operation.body,requestId:operation.requestId,timestamp:operation.createdAt};
@@ -340,6 +342,7 @@
     try {
       window.ITUS_WORKTIME?.record(method, payload);
       const media=mediaClient(session),file=envelope.entry?.file||envelope.file;
+      if(options.envelopeContext&&media&&/\/(acceptance|defects)\/complete$/.test(method))await media.connect();
       if(file?.transport==='s3'){
         if(!media)throw Object.assign(new Error('Обновите приложение для отправки крупных файлов'),{code:'MEDIA_CLIENT_MISSING',status:503});
         return await media.send(method,envelope,{signal:controller.signal,manual:options.manual});
@@ -361,6 +364,10 @@
       catch { throw Object.assign(new Error(response.status === 404 ? `Метод ${method} не найден на сервере 1С (404). Файл не отправлен.` : '1С вернула не JSON'), { code: 'BAD_JSON', status: response.status }); }
       if (!response.ok || data.success === false) {
         const err = data.error || {};
+        if(response.status===401&&err?.code==='DEVICE_REQUIRED'&&media&&!options.mediaRenewed){
+          await media.connect({force:true});assertSession(session);
+          return call1C(method,payload,{...options,session,requestId:headers['X-ITUS-Request-Id'],timestamp:envelope.timestamp,mediaRenewed:true});
+        }
         const message = apiErrorMessage(err) || apiErrorMessage(data.message)
           || (response.status === 404 ? `Метод ${method} не найден в 1С (404)` : `HTTP ${response.status}`);
         const code = typeof err === 'object' && !Array.isArray(err) ? err.code : '';
@@ -424,6 +431,7 @@
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
       if (!Object.keys(state.views).length) { state.initialized = true; return; }
+      void mediaClient(session)?.connect().catch(error=>{if(sessionCurrent(session))console.warn('Media session:',error.code||'MEDIA_UNAVAILABLE');});
       await loadOrders(false);
       await refreshQueuedOperations();
       assertSession(session);
@@ -636,7 +644,7 @@
       route:operation.method, requestId:operation.requestId, clientEntryId:operation.clientEntryId, attempt:operation.attempts,
       operationKind:operation.kind, attachmentType:operation.body?.entry?.type
     }));
-    if(!open){toast(error.code==='DEVICE_REQUIRED'?'Подключите устройство в настройках крупных файлов. Пакет сохранён.':'Отправка не подтверждена. Пакет сохранён; отчёт доступен в очереди.',true);return;}
+    if(!open){toast('Отправка не подтверждена. Пакет сохранён; отчёт доступен в очереди.',true);return;}
     const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
     if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(error.code||operation.error)){
       showSheet('Нужна сверка с 1С','Пакет сохранён. Повтор может создать дубль, поэтому отправка остановлена до проверки результата.',report);return;
@@ -1525,8 +1533,8 @@
     const process = order?.[acceptance?'_acceptance':'_defectSheet'];
     const pendingEntries = operations.filter(item => item.kind === 'entry' && item.documentKey === documentKey);
     const media=mediaClient(session);
-    if(media?.connected()){
-      try{await media.completion(operation.method,operationEnvelope(operation),pendingEntries.map(item=>item.requestId));assertSession(session,session.scope);}
+    if(media){
+      try{await media.connect();await media.completion(operation.method,operationEnvelope(operation),pendingEntries.map(item=>item.requestId));assertSession(session,session.scope);}
       catch(error){if(error.queuePaused)throw error;toast('Команда завершения сохранена на устройстве. Сервер пока недоступен.',true);scheduleQueueResume(5000);}
     }
     if (pendingEntries.length) {
@@ -1651,7 +1659,7 @@
     if(!url && file.contentBlob) url=URL.createObjectURL(file.contentBlob);
     if(!url&&!file.contentBase64&&file.fileRef){
       const media=mediaClient(session);
-      if(!media?.connected())return toast('Подключите устройство в настройках крупных файлов',true);
+      if(!media)return toast('Обновите приложение для открытия файла',true);
       try{const sheet=context.order._defectSheet;const result=await media.attachment('/defects/start',{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...orderPayloadFor(context.order),documentRef:sheet.documentRef,existingDocumentRef:sheet.documentRef,attachmentRef:file.fileRef,entryRef:entry.id,requestId:requestId()},file.sizeBytes);if(!sheetCurrent(context))return;url=result.url;}
       catch(error){if(sheetCurrent(context))toast(error.message,true);return;}
     }
@@ -2181,19 +2189,21 @@
 
   function showSettings() {
     const display=window.ITUS_DISPLAY;
-    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Крупные файлы · подключение устройства</button>';
+    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
     showSheet('Настройки I-MAX', 'Параметры приложения', `${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
   }
 
   function showMediaDeviceSettings() {
     const connected=mediaClient()?.connected();
-    showSheet('Крупные файлы','Файлы больше 10 МиБ передаются через защищённый буфер и затем целиком в 1С.',connected?'<p>Устройство подключено. После загрузки в буфер перенос продолжится даже при закрытом приложении.</p><button data-action="media-device-revoke">Отключить устройство</button>':'<p>Получите у администратора одноразовый код для своего MAX ID. Он действует 15 минут.</p><label for="mediaDeviceCode">Код подключения</label><input id="mediaDeviceCode" autocomplete="off" autocapitalize="characters" maxlength="40"><button class="primary" data-action="media-device-pair">Подключить</button><p>Файлы, которые ещё не загружены в буфер, остаются на этом устройстве и продолжат загрузку при следующем входе.</p>');
+    showSheet('Крупные файлы','Подключение выполняется автоматически после входа.',`<p>${connected?'Отправка файлов подключена.':'Подключение файлов будет обновлено автоматически перед отправкой.'}</p><p>Файлы больше 10 МиБ передаются через защищённый буфер и затем целиком в 1С. После полной загрузки в буфер перенос продолжится даже при закрытом приложении.</p><button data-action="media-device-reconnect">Проверить подключение</button>`);
   }
 
   async function logout() {
+    const media=mediaClient();
+    const mediaLogout=media?.revoke().catch(()=>{});
     loggingOut=true;
     setAuth(state.userId,state.authMode); // Invalidate every running request before remote cleanup.
-    try { await Promise.allSettled([unregisterWebPush(),window.ITUS_NATIVE_PUSH?.unregister?.()]); }
+    try { await Promise.allSettled([mediaLogout,unregisterWebPush(),window.ITUS_NATIVE_PUSH?.unregister?.()]); }
     finally {
       messenger?.reset(); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();
       mediaPicker?.dismiss?.({force:true});
@@ -2341,8 +2351,7 @@
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return await toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return await initialize(); }
       if (action === 'settings') return await showSettings();
       if (action === 'media-device-settings') return showMediaDeviceSettings();
-      if (action === 'media-device-pair') {await mediaClient().pair(String($('mediaDeviceCode')?.value||''));showMediaDeviceSettings();toast('Устройство подключено');scheduleQueueResume();return;}
-      if (action === 'media-device-revoke') {await mediaClient().revoke();showMediaDeviceSettings();return;}
+      if (action === 'media-device-reconnect') {await mediaClient().connect({force:true});showMediaDeviceSettings();toast('Отправка файлов подключена');scheduleQueueResume();return;}
       if (action === 'notification-settings') return await showNotificationSettings();
       if (action === 'save-notifications') {
         const prefs = FEATURES.preferences(state.userId);
