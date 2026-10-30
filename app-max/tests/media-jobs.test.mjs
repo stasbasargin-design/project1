@@ -44,7 +44,7 @@ try{
  for(const status of [422,409]){
    const e={...envelope,requestId:'rejected-file-'+status},j=await jobs.create('111','/defects/entries/add',e);await jobs.uploaded('111',j.id);
    const rejected=new MediaJobs({...options,send:async()=>({status,body:Readable.from([JSON.stringify({success:false,error:{code:'TEST_REJECTION'}})])})});rejected.active=true;
-   await rejected.drain();const saved=await rejected.owned('111',j.id);assert.equal(saved.state,status===422?'invalid':'uncertain');await rejected.drain();assert.equal((await rejected.owned('111',j.id)).attempts,1);await assert.rejects(rejected.retry('111',j.id));
+   await rejected.drain();const saved=await rejected.owned('111',j.id);assert.equal(saved.state,status===422?'invalid':'uncertain');await rejected.drain();assert.equal((await rejected.owned('111',j.id)).attempts,1);if(status===409)await assert.rejects(rejected.retry('111',j.id));else assert.equal((await rejected.retry('111',j.id)).state,'ready');
  }
  // Restart after an ambiguous response retains the same IDs, and five failures
  // stop the worker without losing the job or its file.

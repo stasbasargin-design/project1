@@ -5,11 +5,12 @@ import {createMediaS3} from './media-s3.mjs';
 import {Transform} from 'node:stream';
 import {randomUUID} from 'node:crypto';
 import {MediaDownloads} from './media-downloads.mjs';
+import {WriteLedger,WRITE_ROUTES} from './write-ledger.mjs';
 
 async function limitedJson(stream,limit=256*1024){const chunks=[];let size=0;for await(const chunk of stream){size+=chunk.length;if(size>limit)throw mediaError('Запрос слишком велик',413);chunks.push(Buffer.from(chunk));}try{return JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/,''));}catch(error){if(error.status)throw error;throw mediaError('Нужен JSON');}}
 export function createMediaService({env=process.env,upstreamHeaders,json,log=()=>{},s3Factory=createMediaS3}){
   const enabled=env.MEDIA_BUFFER_ENABLED==='true';
-  let store,jobs,downloads,ready=false,initializing,timer,cleanupTimer;
+  let store,jobs,downloads,ledger,ready=false,initializing,timer,cleanupTimer;
   const pairingAttempts=new Map();
   const target=String(env.ONE_C_TARGET||'').replace(/\/+$/,'');
   const scope=digest([env.MEDIA_CONTEXT||'',target].join('|')).slice(0,24);
@@ -42,10 +43,11 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
       for(const key of ['MEDIA_STATE_DIR','MEDIA_CONTEXT','MEDIA_S3_BUCKET','MEDIA_S3_ACCESS_KEY','MEDIA_S3_SECRET_KEY','ONE_C_TARGET'])if(!env[key])throw Error('Missing media configuration: '+key);
       if(!['test','production'].includes(env.MEDIA_CONTEXT))throw Error('Invalid media context');
       store=new MediaStore(env.MEDIA_STATE_DIR);await store.init();
+      ledger=new WriteLedger({store,scope});
       const s3=await s3Factory(env);
       downloads=new MediaDownloads({authorize,fetchAttachment:(route,envelope)=>fetch(target+route,{method:'POST',headers:upstreamHeaders(),body:JSON.stringify({...envelope,includeAttachmentContent:true}),signal:AbortSignal.timeout(20*60*1000)})});
       jobs=new MediaJobs({store,s3,scope,authorize,capacityBytes:Number(env.MEDIA_BUFFER_CAPACITY_BYTES)||50*1024**3,log,
-        send:(route,{body,byteLength,requestId})=>fetch(target+route,{method:'POST',headers:{...upstreamHeaders(),'Content-Length':String(byteLength),'x-itus-request-id':requestId},body,...(typeof body==='string'?{}:{duplex:'half'}),signal:AbortSignal.timeout(Number(env.MEDIA_IMPORT_TIMEOUT_MS)||20*60*1000)})});
+        send:(route,{body,byteLength,requestId,envelope,manual})=>ledger.run(String(envelope.userId),route,envelope,()=>fetch(target+route,{method:'POST',headers:{...upstreamHeaders(),'Content-Length':String(byteLength),'x-itus-request-id':requestId},body,...(typeof body==='string'?{}:{duplex:'half'}),signal:AbortSignal.timeout(Number(env.MEDIA_IMPORT_TIMEOUT_MS)||20*60*1000)}),{manual})});
       await jobs.recover();ready=true;
       timer=setInterval(()=>jobs.wake(),1000);timer.unref();
       cleanupTimer=setInterval(()=>void Promise.all([jobs.cleanup(),downloads.cleanup()]).catch(error=>log({event:'cleanup-error',code:error.code||error.name})),60000);cleanupTimer.unref();
@@ -107,5 +109,13 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
     }catch(error){if(!res.headersSent)json(res,error.status||502,{success:false,error:{code:error.code||'MEDIA_SERVICE_ERROR',message:error.status&&error.status<500?error.message:'Не удалось выполнить операцию с буфером файлов'}});}
     return true;
   }
-  return {init,handle,device,async receipt(owner,envelope,response){if(owner&&jobs)await jobs.receipt(owner.userId,envelope,response);},close(){jobs&&(jobs.stopped=true);clearInterval(timer);clearInterval(cleanupTimer);}};
+  return {init,handle,device,
+    async write(route,envelope,send,options){
+      if(!enabled||!WRITE_ROUTES.has(route)||!/^\d{1,30}$/.test(String(envelope?.userId||'')))return send();
+      if(!ready)throw mediaError('Журнал отправки пока недоступен',503,'WRITE_LEDGER_NOT_READY');
+      const response=await ledger.run(String(envelope.userId),route,envelope,send,options);
+      if(response.status===200){const raw=await response.clone().text();const data=raw.trim()?JSON.parse(raw):{success:true};if(data.success!==false)await jobs.receipt(String(envelope.userId),envelope,data,route);}
+      return response;
+    },
+    async receipt(owner,envelope,response){if(owner&&jobs)await jobs.receipt(owner.userId,envelope,response);},close(){jobs&&(jobs.stopped=true);clearInterval(timer);clearInterval(cleanupTimer);}};
 }

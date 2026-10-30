@@ -33,21 +33,22 @@ try{
   const page=pages.find(p=>p.type==='page');assert.ok(page,'browser page missing');
   socket=new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
-  let sequence=0;const waiting=new Map();
-  socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const w=waiting.get(m.id);if(!w)return;waiting.delete(m.id);clearTimeout(w.timer);m.error?w.reject(new Error(JSON.stringify(m.error))):w.resolve(m.result);}};
+  let sequence=0;const waiting=new Map(),loaded=new Set();
+  socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.method==='Page.lifecycleEvent'&&m.params.name==='load')loaded.add(m.params.loaderId);if(m.id){const w=waiting.get(m.id);if(!w)return;waiting.delete(m.id);clearTimeout(w.timer);m.error?w.reject(new Error(JSON.stringify(m.error))):w.resolve(m.result);}};
   const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>{waiting.delete(id);reject(new Error('CDP timeout: '+method));},10000);waiting.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
   const settle=()=>evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   const waitFor=selector=>evaluate(`new Promise((r,j)=>{const t=setInterval(()=>{if(document.querySelector(${JSON.stringify(selector)})){clearInterval(t);r(true)}},20);setTimeout(()=>{clearInterval(t);j(new Error('Missing '+${JSON.stringify(selector)}))},3000)})`);
+  const navigate=async url=>{const {loaderId}=await send('Page.navigate',{url});for(let n=0;n<200&&!loaded.has(loaderId);n++)await new Promise(r=>setTimeout(r,25));assert.ok(loaded.has(loaderId),'new document did not load');};
   const snap=()=>evaluate(`(()=>{const box=s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect(),c=getComputedStyle(e);return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right,display:c.display};};return {width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.documentElement.scrollHeight,scrollWidth:document.documentElement.scrollWidth,header:box('.top'),logo:box('.logo'),nav:box('#tabs'),phone:box('.phone'),app:box('#app'),frame:box('.messenger'),history:box('.msg-history'),compose:box('.msg-compose')};})()`);
   const screenshot=async name=>{if(!artifactDir)return;const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(join(artifactDir,name+'.png'),Buffer.from(shot.data,'base64'));};
   const visibleNavigation=(m,label)=>{assert.equal(m.nav.display,'flex',label+' navigation hidden');assert.ok(m.nav.y>=m.header.bottom-1,label+' tabs overlap header');assert.ok(m.nav.bottom<=m.phone.bottom+1,label+' tabs below viewport');assert.ok(m.scrollWidth<=m.width+1,label+' horizontal document overflow');};
-  await send('Page.enable');await send('Network.enable');await send('Network.setBlockedURLs',{urls:['https://*']});
+  await send('Page.enable');await send('Page.setLifecycleEventsEnabled',{enabled:true});await send('Network.enable');await send('Network.setBlockedURLs',{urls:['https://*']});
   const results=[];
   for(const [width,height] of [[360,852],[393,852],[800,852],[1200,852],[852,393]]){
     const label=width+'x'+height;
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true});
-    await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=master`});
+    await navigate(`http://127.0.0.1:${server.address().port}/?role=master`);
     await waitFor('#orderSearch');await settle();const normal=await snap();visibleNavigation(normal,label+' normal');
     await evaluate(`(()=>{const d=document.createElement('div');d.id='long-test-list';d.style.height='1600px';document.querySelector('.phone').appendChild(d);scrollTo(0,400)})()`);await settle();
     const scrolled=await snap();visibleNavigation(scrolled,label+' scrolled');
@@ -71,7 +72,7 @@ try{
   }
   // WebView safe-area CSS values: no OS required and no mutation of application sources.
   await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});
-  await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=master`});await waitFor('#orderSearch');
+  await navigate(`http://127.0.0.1:${server.address().port}/?role=master`);await waitFor('#orderSearch');
   await evaluate(`document.documentElement.style.setProperty('--safe-area-inset-top','32px');document.documentElement.style.setProperty('--safe-area-inset-bottom','24px');document.querySelector('[data-view="chat"]').click()`);
   await waitFor('.msg-thread');await evaluate(`document.querySelector('[data-action="msg-open"]').click()`);await waitFor('.msg-compose');await settle();
   const safe=await snap();visibleNavigation(safe,'safe-area');assert.ok(safe.logo.y>=32,'header content under cutout');assert.ok(safe.compose.bottom<=852-24+1,'composer under bottom system bar');assert.equal(safe.scrollHeight,852);
@@ -83,7 +84,7 @@ try{
   // Actual settings modal, font controls and long service-history data must never enlarge the viewport.
   for(const width of [360,393,800]){
     await send('Emulation.setDeviceMetricsOverride',{width,height:852,deviceScaleFactor:1,mobile:true});
-    await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=executor`});await waitFor('#orderSearch');
+    await navigate(`http://127.0.0.1:${server.address().port}/?role=executor`);await waitFor('#orderSearch');
     for(const size of ['compact','normal','large','extra']){
       await evaluate(`document.getElementById('userPanel').click()`);await waitFor('#appDisplaySize');
       await evaluate(`(()=>{const el=document.getElementById('appDisplaySize');el.value=${JSON.stringify(size)};el.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#sheetBody details').open=true;})()`);await settle();

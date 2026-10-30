@@ -29,9 +29,10 @@
     function ensureOutboxSession(session,scope){if(session!==epoch || !owner() || scope!==outboxScope())throw Object.assign(new Error('Пользователь изменился. Файл не отправлен.'),{code:'SESSION_CHANGED'});}
     function outboxRows(items){return items.map(operation=>{
       const rejected=['invalid','failed'].includes(operation.status);
+      const uncertain=['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(operation.error);
       const status=operation.status==='invalid'?'Данные отклонены — нужна проверка':operation.status==='failed'?'Отправка не подтверждена':operation.status==='sending'?'Отправляется…':'Сохранено на устройстве';
       const name=operation.body?.file?.fileName||operation.body?.text||'Сообщение';
-      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div data-media-progress="${escape(operation.requestId)}">${status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button><button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`:''}</div>`;
+      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div data-media-progress="${escape(operation.requestId)}">${uncertain?'Нужна сверка результата в 1С':status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button>${uncertain?'':`<button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`}`:''}</div>`;
     }).join('');}
     function threadOutboxHtml(){return outboxRows(outboxItems.filter(operation=>{const thread=chatThread(operation);return thread.source===source&&thread.ref===selected;}));}
     function paintOutbox(){

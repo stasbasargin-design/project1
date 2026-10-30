@@ -90,7 +90,15 @@ export class MediaJobs {
   });}
   async receipt(userId,envelope,response,route=''){if(!envelope?.requestId)return;await this.store.put('receipts',this.id(userId,envelope.requestId),{scope:this.scope,userId,requestId:envelope.requestId,documentRef:envelope.documentRef||'',signature:route?digest(stable({route,envelope})):'',confirmedAt:now(),response});this.wake();}
   async dependenciesReady(job){for(const requestId of job.dependencies){const receipt=await this.store.get('receipts',this.id(job.userId,requestId));if(!receipt||receipt.userId!==job.userId||receipt.scope!==job.scope||receipt.documentRef!==job.envelope.documentRef)return false;}return true;}
-  async retry(userId,id){return this.store.locked(id,async()=>{const job=await this.owned(userId,id);if(['invalid','uncertain'].includes(job.state))throw mediaError('Требуется сверка в 1С по requestId',409,'MEDIA_RECONCILIATION_REQUIRED');if(job.state==='failed'){if(job.error?.code==='UPLOAD_EXPIRED'){job.uploadId=await this.s3.create(job.key,fileOf(job.envelope).mimeType);job.bufferRemoved=false;job.state='uploading';}else job.state='ready';job.attempts=0;job.error=null;await this.save(job);this.wake();}return this.view(job);});}
+  async retry(userId,id){return this.store.locked(id,async()=>{
+    const job=await this.owned(userId,id);
+    if(job.state==='uncertain')throw mediaError('Требуется сверка в 1С по requestId',409,'MEDIA_RECONCILIATION_REQUIRED');
+    if(['failed','invalid'].includes(job.state)){
+      if(job.error?.code==='UPLOAD_EXPIRED'){job.uploadId=await this.s3.create(job.key,fileOf(job.envelope).mimeType);job.bufferRemoved=false;job.state='uploading';}else job.state='ready';
+      job.manual=true;job.attempts=0;job.error=null;await this.save(job);this.wake();
+    }
+    return this.view(job);
+  });}
   async recover(){for(const job of await this.store.list('jobs'))if(job.scope===this.scope&&job.state==='importing'){const receipt=await this.store.get('receipts',job.id);if(receipt?.signature===job.signature){job.state='confirmed';job.response=receipt.response;job.confirmedAt=receipt.confirmedAt;}else job.state=job.attempts>=5?'uncertain':'ready';await this.save(job);}this.wake();}
   wake(){if(this.active||this.stopped)return;this.active=true;void this.drain().catch(error=>this.log({event:'worker-error',code:safeCode(error.code||error.name)})).finally(()=>{this.active=false;});}
   async drain(){
@@ -106,7 +114,7 @@ export class MediaJobs {
           await this.authorize(job.userId,job.route,job.envelope);
           let body=JSON.stringify(job.envelope),byteLength=Buffer.byteLength(body);
           if(job.kind==='file'){const head=await this.s3.head(job.key);if(Number(head.ContentLength)!==fileOf(job.envelope).sizeBytes)throw mediaError('Размер файла изменился',409,'MEDIA_SIZE_CHANGED');stream=await this.s3.read(job.key);({body,byteLength}=base64Envelope(job.envelope,stream));}
-          const response=await this.send(job.route,{body,byteLength,requestId:job.envelope.requestId});
+          const response=await this.send(job.route,{body,byteLength,requestId:job.envelope.requestId,envelope:job.envelope,manual:job.manual===true});
           const chunks=[];let length=0;
           for await(const chunk of response.body){length+=chunk.length;if(length>responseLimit)throw mediaError('Ответ 1С слишком велик',502,'ONE_C_RESPONSE_LIMIT');chunks.push(Buffer.from(chunk));}
           let data;try{const raw=Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/,'').trim();data=raw?JSON.parse(raw):{success:true};}catch{throw mediaError('1С не подтвердила запись JSON-ответом',409,'ONE_C_BAD_JSON');}

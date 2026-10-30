@@ -51,6 +51,7 @@
         file: normalizeFile(item?.file || (isObject(item?.media) ? item.media : item?.attachment)),
         transcript: text(item?.transcript)
       };
+      if(base.type.includes('/'))base.type=/^video\//i.test(base.file?.mimeType||base.type)?'video':/^image\//i.test(base.file?.mimeType||base.type)?'photo':/^audio\//i.test(base.file?.mimeType||base.type)?'voice':base.file?'file':'text';
       const attachments = asArray(item?.attachments || item?.files || (Array.isArray(item?.media) ? item.media : []))
         .map(normalizeFile).filter(Boolean);
       if (base.file) result.push(base);
@@ -72,16 +73,20 @@
 
   function normalizeFile(value) {
     if (!value) return null;
-    if (typeof value === 'string') return { fileRef: value, fileName: value };
+    if (typeof value === 'string') return value.length<=512?{ fileRef: value, fileName: value }:null;
     if (!isObject(value)) return null;
+    const base64=text(value.contentBase64 || value.base64),declared=text(value.mimeType || value.contentType);
+    const mimeType=declared&&declared!=='application/octet-stream'?declared:base64.startsWith('iVBORw0KGgo')?'image/png':base64.startsWith('/9j/')?'image/jpeg':declared;
+    const extension={'image/png':'png','image/jpeg':'jpg','video/mp4':'mp4','video/quicktime':'mov','video/webm':'webm','image/webp':'webp','image/gif':'gif'}[mimeType];
+    let fileName=text(value.fileName||value.name,'Файл');if(extension&&!/\.[a-z0-9]{1,10}$/i.test(fileName))fileName+='.'+extension;
     return {
       fileRef: text(value.fileRef || value.ref || value.id),
-      fileName: text(value.fileName || value.name, 'Файл'),
-      mimeType: text(value.mimeType || value.contentType),
+      fileName,
+      mimeType,
       sizeBytes: Number(value.sizeBytes || value.size || 0),
       ...(value.bufferJobId ? {bufferJobId:text(value.bufferJobId)} : {}),
       ...(value.contentBlob && typeof value.contentBlob.size === 'number' ? {contentBlob:value.contentBlob} : {}),
-      contentBase64: text(value.contentBase64 || value.base64),
+      contentBase64: base64,
       downloadUrl: text(value.downloadUrl || value.url),
       previewUrl: text(value.previewUrl || value.thumbnailUrl)
     };

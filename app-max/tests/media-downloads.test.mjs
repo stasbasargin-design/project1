@@ -16,7 +16,7 @@ try{
  await assert.rejects(extractAttachment(Readable.from([JSON.stringify(response('another'))]),join(folder,'wrong-file'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length}),error=>error.code==='MEDIA_FILE_MISMATCH');
  await assert.rejects(extractAttachment(Readable.from([JSON.stringify(response('file-one','another'))]),join(folder,'wrong-message'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length}),error=>error.code==='MEDIA_MESSAGE_MISMATCH');
  const many=response();many.data.messages[0].attachments.push({fileRef:'another',contentBase64:'YQ=='});
- await assert.rejects(extractAttachment(Readable.from([JSON.stringify(many)]),join(folder,'many'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length+1}),error=>error.code==='MEDIA_NOT_TARGETED');
+ const selected=await extractAttachment(Readable.from([JSON.stringify(many)]),join(folder,'many'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length+1});assert.equal(selected.size,bytes.length);assert.equal((await readFile(join(folder,'many'))).compare(bytes),0);
  const downloads=new MediaDownloads({directory:folder,authorize:async()=>{},fetchAttachment:async()=>({status:200,body:Readable.from([raw])})});
  const prepared=await downloads.prepare('111','/internal-chat/messages/list',{messageRef:'message-one',attachmentRef:'file-one'},bytes.length);
  const server=createServer((req,res)=>{try{downloads.serve(req,res,req.url.slice(1));}catch(error){res.writeHead(error.status||500).end();}});await new Promise(r=>server.listen(0,'127.0.0.1',r));

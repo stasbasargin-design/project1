@@ -268,6 +268,7 @@
 
   function safeDiagnosticMessage(error, status) {
     if(error?.code==='DEVICE_REQUIRED')return 'Устройство не подключено. Откройте настройки крупных файлов и введите код администратора.';
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN'].includes(error?.code))return '1С могла уже записать пакет. Повтор остановлен до сверки результата в 1С.';
     if(error?.code==='ONE_C_RESPONSE_TOO_LARGE')return '1С вернула содержимое файлов вместо лёгких данных. Передайте отчёт разработчику 1С.';
     if (status === 422) return '1С отклонила данные операции.';
     if (status) return `1С вернула HTTP ${status}.`;
@@ -330,6 +331,7 @@
     let timer;
     const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
+    if(options.manual)headers['X-ITUS-Retry']='checked';
     const envelope = {
       ...authPayload(), max: maxContext(), miniApp: 'ITUS', version: CONFIG.version,
       ...options.envelopeContext, ...payload,
@@ -592,7 +594,7 @@
       const items = await operationQueue.list(session.scope);
       assertSession(session, session.scope);
       state.queuedOperations = items.map(operation => ({
-        id:operation.id, requestId:operation.requestId, kind:operation.kind, status:operation.status, documentKey:operation.documentKey,
+        id:operation.id, requestId:operation.requestId, kind:operation.kind, status:operation.status, error:operation.error, documentKey:operation.documentKey,
         orderRef:String(operation.body?.orderRef || operation.body?.orderId || '')
       }));
       void messenger?.refreshOutbox?.();
@@ -636,6 +638,9 @@
     }));
     if(!open){toast(error.code==='DEVICE_REQUIRED'?'Подключите устройство в настройках крупных файлов. Пакет сохранён.':'Отправка не подтверждена. Пакет сохранён; отчёт доступен в очереди.',true);return;}
     const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(error.code||operation.error)){
+      showSheet('Нужна сверка с 1С','Пакет сохранён. Повтор может создать дубль, поэтому отправка остановлена до проверки результата.',report);return;
+    }
     if (error.queueStatus === 'invalid') {
       showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', `${report}<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>`);
       return;
@@ -1625,7 +1630,7 @@
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
-    const completing = state.completionKey === completionKey;
+    const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
     const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }

@@ -1,50 +1,53 @@
-import streamJson from 'stream-json';
-import {Readable} from 'node:stream';
-import {mkdtemp,open,rm,statfs,mkdir,readdir,stat} from 'node:fs/promises';
+import {mkdtemp,open,rm,statfs,readdir,stat,rename,unlink} from 'node:fs/promises';
 import {createReadStream} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomBytes} from 'node:crypto';
 import {mediaError} from './media-store.mjs';
+import {scanMediaJson} from './media-metadata.mjs';
 
 // Consume one targeted attachment response. Binary content goes straight to a
 // private disk file; only bounded metadata is assembled. A response containing
 // another file/message is rejected before it can be served to the browser.
 export async function extractAttachment(stream,path,{fileRef,messageRef='',maxBytes,signal}={}){
-  const parser=streamJson.parser({packKeys:true,packStrings:false,packNumbers:true,streamKeys:false,streamNumbers:false,streamStrings:true});
-  const source=stream?.getReader?Readable.fromWeb(stream):stream;source.pipe(parser);
-  const sourceError=error=>parser.destroy(error);source.on('error',sourceError);
-  const output=await open(path,'wx',0o600),stack=[];
-  let metadata,chars=0,nodes=0,string='',binary=false,binaryObject=null,ancestors=[],carry='',bytes=0,padded=false,padding=0,stringStarted=false;
-  const attach=value=>{if(++nodes>20000)throw mediaError('Ответ содержит слишком много записей',502,'MEDIA_METADATA_LIMIT');const parent=stack.at(-1);if(!parent){metadata=value;return;}if(Array.isArray(parent.value))parent.value.push(value);else parent.value[parent.key]=value;};
+  let current=null,selected=null;
+  async function discard(){if(current?.handle)await current.handle.close();if(current?.path)await unlink(current.path).catch(()=>{});current=null;}
+  async function finish(){
+    const node=current.node,matches=String(node.fileRef||node.ref||node.id)===String(fileRef);
+    if(matches&&!current.skip){if(selected)throw mediaError('1С вернула выбранный файл дважды',502,'MEDIA_NOT_TARGETED');await rename(current.path,path);selected={...current,path};current=null;}
+    else await discard();
+  }
   async function decode(value,final=false){
+    if(!current?.handle)return;
     value=value.replace(/[\r\n]/g,'');
-    if(!/^[A-Za-z0-9+/]*={0,2}$/.test(value)||padded&&/[^=]/.test(value))throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
-    padding+=(value.match(/=/g)||[]).length;if(padding>2)throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
-    if(value.includes('='))padded=true;
-    carry+=value;const count=final?carry.length:Math.max(0,Math.floor(carry.length/4)*4-(padded?4:0));
-    if(final&&carry.length%4)throw mediaError('Файл передан не полностью',502,'MEDIA_BAD_BASE64');
-    if(count){const buffer=Buffer.from(carry.slice(0,count),'base64');carry=carry.slice(count);bytes+=buffer.length;if(bytes>maxBytes)throw mediaError('Недостаточно места или размер файла изменился',507,'MEDIA_DOWNLOAD_CAPACITY');await output.writeFile(buffer);}
+    if(!/^[A-Za-z0-9+/]*={0,2}$/.test(value)||current.padded&&/[^=]/.test(value))throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
+    current.padding+=(value.match(/=/g)||[]).length;if(current.padding>2)throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
+    if(value.includes('='))current.padded=true;
+    current.carry+=value;const count=final?current.carry.length:Math.max(0,Math.floor(current.carry.length/4)*4-(current.padded?4:0));
+    if(final&&current.carry.length%4)throw mediaError('Файл передан не полностью',502,'MEDIA_BAD_BASE64');
+    if(count){const bytes=Buffer.from(current.carry.slice(0,count),'base64');current.carry=current.carry.slice(count);current.bytes+=bytes.length;if(current.bytes>maxBytes)throw mediaError('Недостаточно места для выбранного файла',507,'MEDIA_DOWNLOAD_CAPACITY');await current.handle.writeFile(bytes);}
   }
   try{
-    for await(const token of parser){
-      signal?.throwIfAborted();
-      if(token.name==='startObject'||token.name==='startArray'){if(stack.length>=100)throw mediaError('Слишком глубокий ответ',502);const value=token.name==='startObject'?Object.create(null):[];attach(value);stack.push({value,key:''});}
-      else if(token.name==='endObject'||token.name==='endArray')stack.pop();
-      else if(token.name==='keyValue'){chars+=token.value.length;if(chars>2*1024*1024)throw mediaError('Слишком большие метаданные',502);stack.at(-1).key=token.value;}
-      else if(token.name==='startString'){string='';binary=['contentBase64','base64'].includes(stack.at(-1)?.key);carry='';padded=false;padding=0;stringStarted=false;}
-      else if(token.name==='stringChunk'){
-        if(binary){if(!stringStarted&&token.value.length){if(binaryObject)throw mediaError('1С вернула содержимое нескольких файлов',502,'MEDIA_NOT_TARGETED');binaryObject=stack.at(-1).value;ancestors=stack.map(x=>x.value);stringStarted=true;}await decode(token.value);}
-        else{chars+=token.value.length;if(chars>2*1024*1024)throw mediaError('Слишком большие метаданные',502,'MEDIA_METADATA_LIMIT');string+=token.value;}
-      }else if(token.name==='endString'){if(binary){await decode('',true);attach('');}else attach(string);}
-      else if(['numberValue','trueValue','falseValue','nullValue'].includes(token.name))attach(token.name==='numberValue'?Number(token.value):token.value);
-    }
-    if(metadata?.success===false)throw mediaError('1С не вернула файл',422,'ONE_C_ATTACHMENT_REJECTED');
-    if(!binaryObject||!bytes||String(binaryObject.fileRef||binaryObject.ref||binaryObject.id)!==String(fileRef))throw mediaError('1С вернула другой файл',502,'MEDIA_FILE_MISMATCH');
-    if(messageRef&&!ancestors.some(x=>String(x.messageRef||x.messageId||x.ref||'')===String(messageRef)))throw mediaError('1С вернула другое сообщение',502,'MEDIA_MESSAGE_MISMATCH');
-    const declared=Number(binaryObject.sizeBytes||binaryObject.size||0);if(declared&&declared!==bytes)throw mediaError('Размер файла не совпадает',502,'MEDIA_FILE_SIZE_MISMATCH');
-    return {size:bytes,fileName:String(binaryObject.fileName||binaryObject.name||'attachment'),mimeType:String(binaryObject.mimeType||binaryObject.contentType||'application/octet-stream')};
-  }finally{source.off('error',sourceError);source.destroy?.();parser.destroy();await output.close();}
+    const result=await scanMediaJson(stream,{signal,
+      async binaryStart(context){
+        if(current)throw mediaError('Вложенные двоичные поля недопустимы',502);
+        const known=context.node.fileRef||context.node.ref||context.node.id;
+        current={...context,skip:known&&String(known)!==String(fileRef),bytes:0,carry:'',padded:false,padding:0};
+        if(!current.skip){current.path=path+'.candidate';current.handle=await open(current.path,'wx',0o600);}
+      },
+      async binaryChunk(_context,value){await decode(value);},
+      async binaryEnd(){await decode('',true);if(current?.handle){await current.handle.close();current.handle=null;}if(current&&(current.node.fileRef||current.node.ref||current.node.id))await finish();},
+      async containerEnd(node){
+        if(current?.node!==node)return;
+        await finish();
+      }
+    });
+    if(result.metadata?.success===false)throw mediaError('1С не вернула файл',422,'ONE_C_ATTACHMENT_REJECTED');
+    if(!selected||!selected.bytes)throw mediaError('1С вернула другой файл',502,'MEDIA_FILE_MISMATCH');
+    if(messageRef&&!selected.ancestors.some(x=>String(x.messageRef||x.messageId||x.ref||'')===String(messageRef)))throw mediaError('1С вернула другое сообщение',502,'MEDIA_MESSAGE_MISMATCH');
+    const declared=Number(selected.node.sizeBytes||selected.node.size||0);if(declared&&declared!==selected.bytes)throw mediaError('Размер файла не совпадает',502,'MEDIA_FILE_SIZE_MISMATCH');
+    return {size:selected.bytes,fileName:String(selected.node.fileName||selected.node.name||'attachment'),mimeType:String(selected.node.mimeType||selected.node.contentType||'application/octet-stream')};
+  }finally{await discard();}
 }
 
 export class MediaDownloads {

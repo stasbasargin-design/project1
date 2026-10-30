@@ -361,8 +361,8 @@ window.ITUS_CONFIG = {
   // by the deployment configuration; a private key must never be placed here.
   WEB_PUSH_VAPID_PUBLIC_KEY: "",
 
-  // Фото/документы сохраняют прежние ограничения. Видео передаётся отдельным
-  // бинарным транспортом, без фиксированного лимита размера в приложении.
+  // Подготовленные файлы больше 10 МиБ идут через приватный S3-буфер;
+  // прежнего фиксированного лимита 15/20 МиБ для новых отправок нет.
   MAX_PHOTO_UPLOAD_BYTES: 0,
   MAX_VIDEO_UPLOAD_BYTES: 0,
   MAX_DOCUMENT_UPLOAD_BYTES: 0,
@@ -450,6 +450,7 @@ window.ITUS_CONFIG = {
         file: normalizeFile(item?.file || (isObject(item?.media) ? item.media : item?.attachment)),
         transcript: text(item?.transcript)
       };
+      if(base.type.includes('/'))base.type=/^video\//i.test(base.file?.mimeType||base.type)?'video':/^image\//i.test(base.file?.mimeType||base.type)?'photo':/^audio\//i.test(base.file?.mimeType||base.type)?'voice':base.file?'file':'text';
       const attachments = asArray(item?.attachments || item?.files || (Array.isArray(item?.media) ? item.media : []))
         .map(normalizeFile).filter(Boolean);
       if (base.file) result.push(base);
@@ -471,16 +472,20 @@ window.ITUS_CONFIG = {
 
   function normalizeFile(value) {
     if (!value) return null;
-    if (typeof value === 'string') return { fileRef: value, fileName: value };
+    if (typeof value === 'string') return value.length<=512?{ fileRef: value, fileName: value }:null;
     if (!isObject(value)) return null;
+    const base64=text(value.contentBase64 || value.base64),declared=text(value.mimeType || value.contentType);
+    const mimeType=declared&&declared!=='application/octet-stream'?declared:base64.startsWith('iVBORw0KGgo')?'image/png':base64.startsWith('/9j/')?'image/jpeg':declared;
+    const extension={'image/png':'png','image/jpeg':'jpg','video/mp4':'mp4','video/quicktime':'mov','video/webm':'webm','image/webp':'webp','image/gif':'gif'}[mimeType];
+    let fileName=text(value.fileName||value.name,'Файл');if(extension&&!/\.[a-z0-9]{1,10}$/i.test(fileName))fileName+='.'+extension;
     return {
       fileRef: text(value.fileRef || value.ref || value.id),
-      fileName: text(value.fileName || value.name, 'Файл'),
-      mimeType: text(value.mimeType || value.contentType),
+      fileName,
+      mimeType,
       sizeBytes: Number(value.sizeBytes || value.size || 0),
       ...(value.bufferJobId ? {bufferJobId:text(value.bufferJobId)} : {}),
       ...(value.contentBlob && typeof value.contentBlob.size === 'number' ? {contentBlob:value.contentBlob} : {}),
-      contentBase64: text(value.contentBase64 || value.base64),
+      contentBase64: base64,
       downloadUrl: text(value.downloadUrl || value.url),
       previewUrl: text(value.previewUrl || value.thumbnailUrl)
     };
@@ -1012,6 +1017,10 @@ window.ITUS_CONFIG = {
       // Another tab may reject the operation between the first read and claim.
       // Only the value returned by the atomic claim is authoritative now.
       assertAutomaticRetryAllowed();
+      if(!operation.envelopeContext&&operation.attempts>0&&!manual&&snapshot()){
+        await persistOwned({...operation,status:'failed',error:'LEGACY_RESULT_UNCERTAIN',diagnostic:{status:409,code:'LEGACY_RESULT_UNCERTAIN',requestId:operation.requestId,clientEntryId:operation.clientEntryId,route:operation.method}});
+        throw Object.assign(new Error('Результат старой отправки требует сверки в 1С перед повтором'),{status:409,code:'LEGACY_RESULT_UNCERTAIN',operation,queueStatus:'failed'});
+      }
       if(!operation.envelopeContext) await persistOwned({...operation,envelopeContext:clone(snapshot())});
       if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {
@@ -1160,10 +1169,10 @@ window.ITUS_CONFIG = {
     function metadata(envelope){const copy={...envelope};if(envelope.entry)copy.entry={...envelope.entry};const file={...fileOf(envelope)};delete file.contentBlob;delete file.contentBase64;(copy.entry?.file?copy.entry:copy).file=file;return copy;}
     async function completion(route,envelope,dependencies=[],signal){return request('/jobs',{body:{route,envelope,complete:true,dependencies},signal});}
     async function wait(job,{signal,manual=false}={}){
-      if(job.state==='failed'&&manual)job=await request('/jobs/'+job.id+'/retry',{body:{},signal});
+      if(['failed','invalid'].includes(job.state)&&manual)job=await request('/jobs/'+job.id+'/retry',{body:{},signal});
       while(job.state!=='confirmed'){
         guard?.();progress({requestId:job.requestId,state:job.state,percent:100,jobId:job.id});
-        if(['invalid','uncertain','failed'].includes(job.state))throw Object.assign(new Error(job.state==='invalid'?'1С отклонила пакет. Откройте отчёт.':'Отправка не подтверждена. Нужна проверка результата в 1С.'),{status:job.state==='invalid'?422:409,code:job.error?.code||'MEDIA_RECONCILIATION_REQUIRED',jobId:job.id});
+        if(['invalid','uncertain','failed'].includes(job.state))throw Object.assign(new Error(job.state==='invalid'?'1С отклонила пакет. Откройте отчёт.':'Отправка не подтверждена. Нужна проверка результата в 1С.'),{status:job.state==='invalid'?422:job.state==='uncertain'?409:Number(job.error?.status)||503,code:job.error?.code||'MEDIA_RECONCILIATION_REQUIRED',jobId:job.id});
         await pause(2000,signal);job=await request('/jobs/'+job.id,{signal});
       }
       progress({requestId:job.requestId,state:'confirmed',jobId:job.id});
@@ -1172,7 +1181,7 @@ window.ITUS_CONFIG = {
     async function send(route,envelope,{signal,manual}={}){
       const file=fileOf(envelope),blob=file?.contentBlob;
       let job=await request('/jobs',{body:{route,envelope:metadata(envelope)},signal});
-      if(job.state==='failed'&&manual)job=await request('/jobs/'+job.id+'/retry',{body:{},signal});
+      if(['failed','invalid'].includes(job.state)&&manual)job=await request('/jobs/'+job.id+'/retry',{body:{},signal});
       if(job.state==='uploading'){
         if(!blob||blob.size!==file.sizeBytes)throw Object.assign(new Error('Локальный файл недоступен'),{code:'BUFFER_LOCAL_FILE_MISSING',status:409});
         const parts=await request('/jobs/'+job.id+'/parts',{signal}),present=new Set(parts.map(x=>x.number));
@@ -1227,9 +1236,10 @@ window.ITUS_CONFIG = {
     function ensureOutboxSession(session,scope){if(session!==epoch || !owner() || scope!==outboxScope())throw Object.assign(new Error('Пользователь изменился. Файл не отправлен.'),{code:'SESSION_CHANGED'});}
     function outboxRows(items){return items.map(operation=>{
       const rejected=['invalid','failed'].includes(operation.status);
+      const uncertain=['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(operation.error);
       const status=operation.status==='invalid'?'Данные отклонены — нужна проверка':operation.status==='failed'?'Отправка не подтверждена':operation.status==='sending'?'Отправляется…':'Сохранено на устройстве';
       const name=operation.body?.file?.fileName||operation.body?.text||'Сообщение';
-      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div data-media-progress="${escape(operation.requestId)}">${status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button><button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`:''}</div>`;
+      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div data-media-progress="${escape(operation.requestId)}">${uncertain?'Нужна сверка результата в 1С':status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button>${uncertain?'':`<button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`}`:''}</div>`;
     }).join('');}
     function threadOutboxHtml(){return outboxRows(outboxItems.filter(operation=>{const thread=chatThread(operation);return thread.source===source&&thread.ref===selected;}));}
     function paintOutbox(){
@@ -12714,6 +12724,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
 
   function safeDiagnosticMessage(error, status) {
     if(error?.code==='DEVICE_REQUIRED')return 'Устройство не подключено. Откройте настройки крупных файлов и введите код администратора.';
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN'].includes(error?.code))return '1С могла уже записать пакет. Повтор остановлен до сверки результата в 1С.';
     if(error?.code==='ONE_C_RESPONSE_TOO_LARGE')return '1С вернула содержимое файлов вместо лёгких данных. Передайте отчёт разработчику 1С.';
     if (status === 422) return '1С отклонила данные операции.';
     if (status) return `1С вернула HTTP ${status}.`;
@@ -12776,6 +12787,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     let timer;
     const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
+    if(options.manual)headers['X-ITUS-Retry']='checked';
     const envelope = {
       ...authPayload(), max: maxContext(), miniApp: 'ITUS', version: CONFIG.version,
       ...options.envelopeContext, ...payload,
@@ -13038,7 +13050,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       const items = await operationQueue.list(session.scope);
       assertSession(session, session.scope);
       state.queuedOperations = items.map(operation => ({
-        id:operation.id, requestId:operation.requestId, kind:operation.kind, status:operation.status, documentKey:operation.documentKey,
+        id:operation.id, requestId:operation.requestId, kind:operation.kind, status:operation.status, error:operation.error, documentKey:operation.documentKey,
         orderRef:String(operation.body?.orderRef || operation.body?.orderId || '')
       }));
       void messenger?.refreshOutbox?.();
@@ -13082,6 +13094,9 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     }));
     if(!open){toast(error.code==='DEVICE_REQUIRED'?'Подключите устройство в настройках крупных файлов. Пакет сохранён.':'Отправка не подтверждена. Пакет сохранён; отчёт доступен в очереди.',true);return;}
     const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(error.code||operation.error)){
+      showSheet('Нужна сверка с 1С','Пакет сохранён. Повтор может создать дубль, поэтому отправка остановлена до проверки результата.',report);return;
+    }
     if (error.queueStatus === 'invalid') {
       showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', `${report}<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>`);
       return;
@@ -14071,7 +14086,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
-    const completing = state.completionKey === completionKey;
+    const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
     const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }

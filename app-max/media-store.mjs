@@ -15,8 +15,8 @@ const keyPattern=/^[a-f0-9]{64}$/;
 // restart/deployment from turning an accepted job into a partial JSON document.
 export class MediaStore {
   constructor(directory){this.directory=directory;this.locks=new Map();}
-  async init(){for(const kind of ['jobs','receipts','codes','devices'])await mkdir(join(this.directory,kind),{recursive:true,mode:0o700});}
-  path(kind,key){if(!['jobs','receipts','codes','devices'].includes(kind)||!keyPattern.test(key))throw mediaError('Неверный идентификатор');return join(this.directory,kind,key+'.json');}
+  async init(){for(const kind of ['jobs','receipts','codes','devices','writes'])await mkdir(join(this.directory,kind),{recursive:true,mode:0o700});}
+  path(kind,key){if(!['jobs','receipts','codes','devices','writes'].includes(kind)||!keyPattern.test(key))throw mediaError('Неверный идентификатор');return join(this.directory,kind,key+'.json');}
   async get(kind,key){try{return JSON.parse(await readFile(this.path(kind,key),'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw error;}}
   async put(kind,key,value){
     const target=this.path(kind,key),temp=target+'.'+randomBytes(8).toString('hex')+'.tmp';

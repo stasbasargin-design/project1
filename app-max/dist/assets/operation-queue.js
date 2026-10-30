@@ -277,6 +277,10 @@
       // Another tab may reject the operation between the first read and claim.
       // Only the value returned by the atomic claim is authoritative now.
       assertAutomaticRetryAllowed();
+      if(!operation.envelopeContext&&operation.attempts>0&&!manual&&snapshot()){
+        await persistOwned({...operation,status:'failed',error:'LEGACY_RESULT_UNCERTAIN',diagnostic:{status:409,code:'LEGACY_RESULT_UNCERTAIN',requestId:operation.requestId,clientEntryId:operation.clientEntryId,route:operation.method}});
+        throw Object.assign(new Error('Результат старой отправки требует сверки в 1С перед повтором'),{status:409,code:'LEGACY_RESULT_UNCERTAIN',operation,queueStatus:'failed'});
+      }
       if(!operation.envelopeContext) await persistOwned({...operation,envelopeContext:clone(snapshot())});
       if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {

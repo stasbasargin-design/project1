@@ -13,6 +13,7 @@ import {createMediaService} from './media-service.mjs';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {assertMediaIdentity} from './media-store.mjs';
+import {scanMediaJson} from './media-metadata.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -91,7 +92,7 @@ function allowCapacitorApiOrigin(req, res) {
   // narrow CORS response; do not reflect arbitrary browser origins.
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Range, X-ITUS-Request-Id, X-ITUS-Token, X-ITUS-Device');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Range, X-ITUS-Request-Id, X-ITUS-Token, X-ITUS-Device, X-ITUS-Retry');
   res.setHeader('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges');
   res.setHeader('Vary', 'Origin');
 }
@@ -289,10 +290,17 @@ async function proxy1C(req, res, pathname) {
     const mediaOwner=req.headers['x-itus-device']?await mediaService.device(req):null;
     video=binaryVideo?await prepareVideoRequest(req,suffix,{signal:controller.signal}):null;
     const body = video?.body || await readBody(req);
+    let metadataOnly=false;
+    if(!video&&['/defects/start','/clients/messages/list','/internal-chat/messages/list'].includes(suffix)){
+      try{metadataOnly=JSON.parse(body.toString('utf8')).includeAttachmentContent===false;}catch{}
+    }
     let mediaEnvelope;
     if(mediaOwner){
       mediaEnvelope=video?.envelope||JSON.parse(body.toString('utf8'));
       assertMediaIdentity(mediaOwner.userId,mediaEnvelope);
+    }
+    if(!mediaEnvelope&&['/defects/entries/add','/clients/files/send','/internal-chat/files/send','/clients/messages/send','/internal-chat/messages/send','/acceptance/complete','/defects/complete'].includes(suffix)){
+      try{mediaEnvelope=video?.envelope||JSON.parse(body.toString('utf8'));}catch{}
     }
     let webPushRegistration = false;
     if (webPushRegistrationRoutes.has(suffix)) {
@@ -336,21 +344,18 @@ async function proxy1C(req, res, pathname) {
       console.log(`[ИТУС -> 1С] POST ${suffix}${requestId ? ` requestId=${requestId}` : ''}`);
     }
 
-    const upstream = await fetch(oneCTarget + suffix, {
+    const perform=()=>fetch(oneCTarget + suffix, {
       method: 'POST',
       headers,
       body,
       ...(video?{duplex:'half'}:{}),
       signal: controller.signal
     });
+    const upstream=mediaEnvelope?await mediaService.write(suffix,mediaEnvelope,perform,{binaryDigest:video?.binaryDigest,manual:req.headers['x-itus-retry']==='checked'}):await perform();
     let responseBytes=0;
-    if(mediaOwner && ['/defects/entries/add','/clients/files/send','/internal-chat/files/send','/clients/messages/send','/internal-chat/messages/send'].includes(suffix)){
-      const chunks=[];
-      for await(const chunk of upstream.body){responseBytes+=chunk.length;if(responseBytes>512*1024)throw Object.assign(new Error('Слишком большой ответ на запись'),{status:502,code:'ONE_C_RESPONSE_LIMIT'});chunks.push(Buffer.from(chunk));}
-      const responseBody=Buffer.concat(chunks);
-      if(upstream.status===200){let data;try{const raw=responseBody.toString('utf8').replace(/^\uFEFF/,'').trim();data=raw?JSON.parse(raw):{success:true};}catch{}if(data&&data.success!==false)await mediaService.receipt(mediaOwner,mediaEnvelope,data);}
-      res.writeHead(upstream.status,{'Content-Type':upstream.headers.get('content-type')||'application/json','Cache-Control':'no-store'});
-      res.end(responseBody);
+    if(metadataOnly&&upstream.status===200){
+      const result=await scanMediaJson(upstream.body,{signal:controller.signal});responseBytes=result.upstreamBytes;
+      res.setHeader('X-Content-Type-Options','nosniff');json(res,200,result.metadata);
     }else{
     res.writeHead(upstream.status, {
       'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',

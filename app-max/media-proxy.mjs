@@ -2,7 +2,7 @@ import {mkdtemp,open,rm,statfs,readdir,stat} from 'node:fs/promises';
 import {createReadStream} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {Readable} from 'node:stream';
 
 export const VIDEO_CONTENT_TYPE='application/vnd.itus.video';
@@ -67,10 +67,11 @@ export async function prepareVideoRequest(req,route,{directory=MEDIA_DIRECTORY,s
     reservation=size;reserved+=size;
     folder=await mkdtemp(join(directory,'itus-video-'));
     const path=join(folder,'body');handle=await open(path,'wx',0o600);
-    let received=0;
+    let received=0;const fileHash=createHash('sha256');
     async function append(chunk){
       signal?.throwIfAborted();received+=chunk.length;
       if(received>size)throw failure('Размер видео отличается от указанного');
+      fileHash.update(chunk);
       await handle.writeFile(chunk);
     }
     if(remaining.length){await append(remaining);remaining=Buffer.alloc(0);}
@@ -91,6 +92,6 @@ export async function prepareVideoRequest(req,route,{directory=MEDIA_DIRECTORY,s
       if(carry.length)yield carry.toString('base64');
       yield suffix;
     })());
-    return {body,byteLength:prefix.length+4*Math.ceil(size/3)+suffix.length,cleanup,envelope};
+    return {body,byteLength:prefix.length+4*Math.ceil(size/3)+suffix.length,cleanup,envelope,binaryDigest:fileHash.digest('hex')};
   }catch(error){await cleanup();throw error;}
 }

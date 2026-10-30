@@ -30,7 +30,7 @@ node --check media-service.mjs
 node --check media-jobs.mjs
 install -d -m 0750 "$STAGE"
 cp -a dist assets "$STAGE/"
-cp -f server.mjs static-path.mjs web-push.mjs media-proxy.mjs media-store.mjs media-s3.mjs media-jobs.mjs media-service.mjs media-downloads.mjs package.json package-lock.json "$STAGE/"
+cp -f server.mjs static-path.mjs web-push.mjs media-proxy.mjs media-store.mjs media-s3.mjs media-jobs.mjs media-service.mjs media-downloads.mjs media-metadata.mjs write-ledger.mjs package.json package-lock.json "$STAGE/"
 install -d "$STAGE/scripts"
 cp -f scripts/media-device-code.mjs "$STAGE/scripts/"
 printf '%s\n' "$SHA" > "$STAGE/RELEASE_COMMIT"
