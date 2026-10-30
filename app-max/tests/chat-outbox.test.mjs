@@ -147,4 +147,15 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
   assert.equal(f.mediaSlot.renders,0);assert.ok(!f.toasts.some(([message])=>/вложение/i.test(message)));
   await f.messenger.enter('clients');f.messenger.paint();assert.doesNotMatch(f.app.innerHTML,/private old session/);
 }
-console.log('Chat outbox: durable complete batch, restore, stable IDs, 422 report/retry, owner isolation and error propagation passed');
+// A new text message in another conversation must start while a file is held.
+{
+  const gate=defer(),calls=[];
+  const f=fixture({sender:async operation=>{calls.push(operation);if(operation.body.file)await gate.promise;return {success:true};}});
+  await f.messenger.enqueueMediaBatch([files[0]],target);await until(()=>calls.length===1);
+  await f.messenger.enter('staff');await f.messenger.handle('msg-open',{dataset:{ref:'staff'}});
+  f.handlers.input({target:{id:'msgDraft',value:'Independent text'}});
+  await f.messenger.handle('msg-send',{dataset:{}});await until(()=>calls.some(x=>x.body.text==='Independent text'));
+  assert.equal(f.store.records.size,1,'only the held file should remain');
+  gate.resolve();await until(()=>f.store.records.size===0);
+}
+console.log('Chat outbox: durable complete batch, restore, stable IDs, 422 report/retry, owner isolation, independent text lane and error propagation passed');

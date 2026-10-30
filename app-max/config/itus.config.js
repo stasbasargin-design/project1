@@ -52,11 +52,11 @@ window.ITUS_CONFIG = {
   // by the deployment configuration; a private key must never be placed here.
   WEB_PUSH_VAPID_PUBLIC_KEY: "",
 
-  // Фото/документы сохраняют прежние ограничения. Видео передаётся отдельным
-  // бинарным транспортом, без фиксированного лимита размера в приложении.
-  MAX_PHOTO_UPLOAD_BYTES: 15728640,
+  // Подготовленные файлы больше 10 МиБ идут через приватный S3-буфер;
+  // прежнего фиксированного лимита 15/20 МиБ для новых отправок нет.
+  MAX_PHOTO_UPLOAD_BYTES: 0,
   MAX_VIDEO_UPLOAD_BYTES: 0,
-  MAX_DOCUMENT_UPLOAD_BYTES: 15728640,
+  MAX_DOCUMENT_UPLOAD_BYTES: 0,
   // Compatibility for older clients; new code uses the type-specific values above.
   MAX_UPLOAD_BYTES: 15728640,
 

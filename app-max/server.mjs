@@ -9,6 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { parseFragment } from 'parse5';
 import { webPushConfig, deliverWebPush } from './web-push.mjs';
 import {prepareVideoRequest, VIDEO_CONTENT_TYPE, cleanupStaleVideos} from './media-proxy.mjs';
+import {createMediaService} from './media-service.mjs';
+import {Readable,Transform} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
+import {assertMediaIdentity} from './media-store.mjs';
+import {scanMediaJson} from './media-metadata.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -86,8 +91,9 @@ function allowCapacitorApiOrigin(req, res) {
   // public HTTPS API are cross-origin and therefore require an explicit,
   // narrow CORS response; do not reflect arbitrary browser origins.
   res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, X-ITUS-Request-Id, X-ITUS-Token');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Range, X-ITUS-Request-Id, X-ITUS-Token, X-ITUS-Device, X-ITUS-Retry');
+  res.setHeader('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges');
   res.setHeader('Vary', 'Origin');
 }
 
@@ -281,8 +287,21 @@ async function proxy1C(req, res, pathname) {
   const requestId = String(req.headers['x-itus-request-id'] || '').trim();
   let video;
   try {
+    const mediaOwner=req.headers['x-itus-device']?await mediaService.device(req):null;
     video=binaryVideo?await prepareVideoRequest(req,suffix,{signal:controller.signal}):null;
     const body = video?.body || await readBody(req);
+    let metadataOnly=false;
+    if(!video&&['/defects/start','/clients/messages/list','/internal-chat/messages/list'].includes(suffix)){
+      try{metadataOnly=JSON.parse(body.toString('utf8')).includeAttachmentContent===false;}catch{}
+    }
+    let mediaEnvelope;
+    if(mediaOwner){
+      mediaEnvelope=video?.envelope||JSON.parse(body.toString('utf8'));
+      assertMediaIdentity(mediaOwner.userId,mediaEnvelope);
+    }
+    if(!mediaEnvelope&&['/defects/entries/add','/clients/files/send','/internal-chat/files/send','/clients/messages/send','/internal-chat/messages/send','/acceptance/complete','/defects/complete'].includes(suffix)){
+      try{mediaEnvelope=video?.envelope||JSON.parse(body.toString('utf8'));}catch{}
+    }
     let webPushRegistration = false;
     if (webPushRegistrationRoutes.has(suffix)) {
       try {
@@ -325,28 +344,33 @@ async function proxy1C(req, res, pathname) {
       console.log(`[ИТУС -> 1С] POST ${suffix}${requestId ? ` requestId=${requestId}` : ''}`);
     }
 
-    const upstream = await fetch(oneCTarget + suffix, {
+    const perform=()=>fetch(oneCTarget + suffix, {
       method: 'POST',
       headers,
       body,
       ...(video?{duplex:'half'}:{}),
       signal: controller.signal
     });
-    const responseBody = Buffer.from(await upstream.arrayBuffer());
-    if (logProxyRequests) {
-      console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now() - startedAt}ms${requestId ? ` requestId=${requestId}` : ''} requestBytes=${video?.byteLength || body.length} responseBytes=${responseBody.length}`);
-    }
+    const upstream=mediaEnvelope?await mediaService.write(suffix,mediaEnvelope,perform,{binaryDigest:video?.binaryDigest,manual:req.headers['x-itus-retry']==='checked'}):await perform();
+    let responseBytes=0;
+    if(metadataOnly&&upstream.status===200){
+      const result=await scanMediaJson(upstream.body,{signal:controller.signal});responseBytes=result.upstreamBytes;
+      res.setHeader('X-Content-Type-Options','nosniff');json(res,200,result.metadata);
+    }else{
     res.writeHead(upstream.status, {
       'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff'
     });
-    res.end(responseBody);
+    await pipeline(Readable.fromWeb(upstream.body),new Transform({transform(chunk,_encoding,callback){responseBytes+=chunk.length;callback(null,chunk);}}),res);
+    }
+    if(logProxyRequests)console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now()-startedAt}ms${requestId?` requestId=${requestId}`:''} requestBytes=${video?.byteLength||body.length} responseBytes=${responseBytes}`);
   } catch (error) {
     const timeout = error?.name === 'AbortError';
     const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
     console.error(`[Ошибка proxy 1С] POST ${suffix} ${Date.now() - startedAt}ms: ${String(error?.message || error)}${requestId ? ` requestId=${requestId}` : ''}`);
     if (tooLarge || binaryVideo) res.setHeader('Connection', 'close');
+    if(res.headersSent){res.destroy();return;}
     json(res, timeout ? 504 : (tooLarge ? 413 : (error.status || 502)), {
       success: false,
       error: {
@@ -382,6 +406,8 @@ function serveStatic(req, res, pathname) {
   createReadStream(filePath).pipe(res);
 }
 
+const mediaService=createMediaService({env:{...process.env,ONE_C_TARGET:oneCTarget},json,upstreamHeaders:()=>({'Content-Type':'application/json; charset=utf-8','Accept':'application/json',...(oneCToken?{'X-ITUS-Token':oneCToken}:{}),...(oneCBasicUser?{Authorization:`Basic ${Buffer.from(`${oneCBasicUser}:${oneCBasicPassword}`).toString('base64')}`}:{})}),log:event=>console.log(JSON.stringify(event))});
+void mediaService.init().catch(error=>console.error('Media buffer unavailable:',error.code||error.name));
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const basePath = detectBasePath(req.headers.host, url.pathname);
@@ -391,6 +417,7 @@ const server = http.createServer(async (req, res) => {
   }
   const pathname = basePath !== '/' && url.pathname.startsWith(basePath + '/')
     ? url.pathname.slice(basePath.length) : url.pathname;
+  if(pathname.startsWith('/api/media/')){allowCapacitorApiOrigin(req,res);await mediaService.handle(req,res,pathname);return;}
   if (pathname === '/health') {
     json(res, 200, { success: true, service: 'ITUS', version: buildInfo.version, commit: buildInfo.commit, oneCTargetConfigured: Boolean(oneCTarget) });
     return;

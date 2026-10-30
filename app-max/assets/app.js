@@ -18,12 +18,12 @@
     timeoutMs: Number(window.ITUS_CONFIG?.REQUEST_TIMEOUT_MS || 35000),
     pollMs: Number(window.ITUS_CONFIG?.POLL_INTERVAL_MS || 60000),
     webPushPublicKey: String(window.ITUS_CONFIG?.WEB_PUSH_VAPID_PUBLIC_KEY || '').trim(),
-    maxPhotoBytes: Number(window.ITUS_CONFIG?.MAX_PHOTO_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxPhotoBytes: Number(window.ITUS_CONFIG?.MAX_PHOTO_UPLOAD_BYTES ?? 0),
     maxVideoBytes: 0, // No fixed video-size cap; transport uses a Blob instead of a Base64 string.
-    maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES || window.ITUS_CONFIG?.MAX_UPLOAD_BYTES || 15 * 1024 * 1024),
+    maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.0'
+    version: 'i-max-2.8.1'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -72,6 +72,7 @@
   let activeOrderQrSearch = null;
   let lastOrderQrValue = '';
   const longRunningActions = new Set([
+    'media-device-pair','media-device-revoke',
     'login', 'logout', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
     'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
     'start-acceptance', 'complete-acceptance', 'choose-post', 'set-post', 'assign-executor', 'assign-other-executor', 'set-executor',
@@ -82,12 +83,31 @@
     'msg-new-chat', 'msg-source', 'msg-section', 'msg-open', 'msg-refresh', 'msg-refresh-messages', 'msg-send', 'msg-media', 'msg-poll-send', 'msg-poll-vote', 'msg-outbox-show', 'msg-outbox-report', 'msg-outbox-retry'
   ]);
   let mediaPicker = null;
+  let orderSelectionRevision=0,orderLoadingRef='';
+  let sheetRevision = 0;
+  let sheetOrder = null;
+
+  function sheetContext(order = currentOrder()) {
+    return {revision:sheetRevision, session:sessionSnapshot(), order, ref:order?.orderRef || order?.id || ''};
+  }
+  function sheetCurrent(context) {
+    return context.revision === sheetRevision && sessionCurrent(context.session)
+      && context.ref === (currentOrder()?.orderRef || currentOrder()?.id || '');
+  }
 
   const messenger = window.ITUS_MESSENGER?.create({
     api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
     toast,pickFile:configureFilePicker,photo:choosePhoto,media:openMediaPicker,filePayload:fileToPayload,
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead,
+    attachment:async(route,payload,size)=>{
+      const session=sessionSnapshot(),media=mediaClient(session);
+      if(!media?.connected()){
+        if(size>10*1024*1024)throw new Error('Подключите устройство в настройках крупных файлов для открытия этого вложения');
+        return null;
+      }
+      return media.attachment(route,{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...payload,requestId:requestId(),timestamp:nowIso()},size);
+    },
     outbox: {
       scope: () => queueScope(),
       prepareBatch: async definitions => {
@@ -118,6 +138,8 @@
   }
 
   function showSheet(title, hint, html) {
+    sheetRevision++;
+    sheetOrder = currentOrder();
     $('sheetTitle').textContent = title;
     $('sheetHint').textContent = hint || '';
     $('sheetBody').innerHTML = html;
@@ -126,6 +148,8 @@
 
   function closeSheet() {
     if (mediaPicker?.dismiss?.() === false) return false;
+    sheetRevision++;
+    sheetOrder = null;
     orderQrScanner?.stop?.();
     orderQrScanner = null;
     state.cameraStream?.getTracks().forEach(track => track.stop());
@@ -145,6 +169,7 @@
 
   function setAuth(id, mode) {
     sessionGeneration++;
+    orderSelectionRevision++;orderLoadingRef='';
     for (const controller of sessionRequests) controller.abort();
     sessionRequests.clear();
     clearTimeout(queueResumeTimer); queueResumeTimer = null; queueResumeAt = 0;
@@ -184,6 +209,19 @@
       miniAppId: CONFIG.miniAppId, userId: state.userId, maxUserId: state.userId,
       authMode: state.authMode || 'max'
     };
+  }
+
+  function mediaClient(session=sessionSnapshot()) {
+    return window.ITUS_MEDIA_BUFFER?.create({base:()=>CONFIG.apiBase,userId:()=>session.userId,guard:()=>assertSession(session,session.scope),progress:detail=>{
+      if(!sessionCurrent(session))return;
+      const operation=state.queuedOperations.find(item=>item.requestId===detail.requestId);
+      if(operation)operation.progress=detail;
+      const panel=document.querySelector?.(`[data-media-progress="${detail.requestId}"]`);
+      if(panel)panel.textContent=detail.state==='uploading'?`В буфер: ${detail.percent}%`:detail.state==='confirmed'?'Сохранено в 1С':'Буфер принят · переносим в 1С…';
+    }});
+  }
+  function operationEnvelope(operation) {
+    return {...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...operation.envelopeContext,...operation.body,requestId:operation.requestId,timestamp:operation.createdAt};
   }
 
   function orderPayloadFor(order, extra = {}) {
@@ -229,6 +267,9 @@
   }
 
   function safeDiagnosticMessage(error, status) {
+    if(error?.code==='DEVICE_REQUIRED')return 'Устройство не подключено. Откройте настройки крупных файлов и введите код администратора.';
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN'].includes(error?.code))return '1С могла уже записать пакет. Повтор остановлен до сверки результата в 1С.';
+    if(error?.code==='ONE_C_RESPONSE_TOO_LARGE')return '1С вернула содержимое файлов вместо лёгких данных. Передайте отчёт разработчику 1С.';
     if (status === 422) return '1С отклонила данные операции.';
     if (status) return `1С вернула HTTP ${status}.`;
     if (error?.code === 'TIMEOUT') return 'Истекло время ожидания ответа 1С.';
@@ -268,6 +309,17 @@
     ].join('\n');
   }
 
+  async function readApiResponse(response,method,payload) {
+    const metadata=/\/(messages\/list|orders\/(list|get)|defects\/start)$/.test(method)&&payload.includeAttachmentContent!==true;
+    const limit=(metadata?4:16)*1024*1024;
+    if(!response.body?.getReader)return response.text();
+    const reader=response.body.getReader(),chunks=[];let length=0;
+    try{
+      for(;;){const part=await reader.read();if(part.done)break;length+=part.value.length;if(length>limit){await reader.cancel();throw Object.assign(new Error('1С вернула слишком большой JSON. Нужен ответ без содержимого вложений.'),{code:'ONE_C_RESPONSE_TOO_LARGE',status:413});}chunks.push(part.value);}
+      const result=new Uint8Array(length);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}return new TextDecoder().decode(result);
+    }finally{reader.releaseLock();}
+  }
+
   async function call1C(method, payload = {}, options = {}) {
     const session = options.session || sessionSnapshot();
     assertSession(session);
@@ -279,18 +331,30 @@
     let timer;
     const headers = { 'Content-Type': 'application/json; charset=utf-8', 'X-ITUS-Request-Id': options.requestId || requestId() };
     if (CONFIG.token) headers['X-ITUS-Token'] = CONFIG.token;
+    if(options.manual)headers['X-ITUS-Retry']='checked';
     const envelope = {
-      requestId: headers['X-ITUS-Request-Id'], timestamp: options.timestamp || nowIso(), ...authPayload(), ...payload,
-      max: maxContext(), miniApp: 'ITUS', version: CONFIG.version
+      ...authPayload(), max: maxContext(), miniApp: 'ITUS', version: CONFIG.version,
+      ...options.envelopeContext, ...payload,
+      requestId: headers['X-ITUS-Request-Id'], timestamp: options.timestamp || nowIso()
     };
     try {
       window.ITUS_WORKTIME?.record(method, payload);
-      const video=window.ITUS_VIDEO_TRANSPORT?.encode(method,{...envelope,clientBotId:state.clientBotId,serviceBotId:state.serviceBotId});
+      const media=mediaClient(session),file=envelope.entry?.file||envelope.file;
+      if(file?.transport==='s3'){
+        if(!media)throw Object.assign(new Error('Обновите приложение для отправки крупных файлов'),{code:'MEDIA_CLIENT_MISSING',status:503});
+        return await media.send(method,envelope,{signal:controller.signal,manual:options.manual});
+      }
+      if(options.envelopeContext && /\/(acceptance|defects)\/complete$/.test(method) && media?.connected()){
+        const job=await media.completion(method,envelope,[],controller.signal);
+        return await media.wait(job,{signal:controller.signal,manual:options.manual});
+      }
+      if(options.envelopeContext && media?.connected())Object.assign(headers,media.headers());
+      const video=window.ITUS_VIDEO_TRANSPORT?.encode(method,{clientBotId:state.clientBotId,serviceBotId:state.serviceBotId,...envelope});
       if((envelope.file?.contentBlob || envelope.entry?.file?.contentBlob) && !video)throw Object.assign(new Error('Обновите приложение: транспорт видео ещё не загружен'),{code:'VIDEO_TRANSPORT_UNAVAILABLE',status:400});
       timer=setTimeout(()=>controller.abort(),video?20*60*1000:CONFIG.timeoutMs);
       if(video)headers['Content-Type']=video.contentType;
       const response = await fetch(base + method, { method: 'POST', headers, body: video?.body || JSON.stringify(envelope), signal: controller.signal });
-      const raw = (await response.text()).replace(/^\uFEFF/, '');
+      const raw = (await readApiResponse(response,method,payload)).replace(/^\uFEFF/, '');
       assertSession(session);
       let data;
       try { data = raw ? JSON.parse(raw) : {}; }
@@ -389,11 +453,15 @@
   }
 
   async function loadSingleOrder(orderRef, {select = true} = {}) {
+    const selection=select?++orderSelectionRevision:null;
+    if(select){orderLoadingRef=String(orderRef);const known=state.orders.find(item=>String(item.orderRef||item.id)===String(orderRef));if(known)state.selectedOrderId=known.id;render();}
+    try{
     const response = await call1C('/orders/get', { orderRef, orderId: orderRef }, { silent: true });
     const raw = response.order || response.data?.order || response.data || response;
     const mapped = API.mapOrder(raw);
-    if (mapped.id) { mergeOrder(mapped); if (select) state.selectedOrderId = mapped.id; }
+    if (mapped.id) { mergeOrder(mapped); if (select&&selection===orderSelectionRevision) state.selectedOrderId = mapped.id; }
     return mapped;
+    }finally{if(select&&selection===orderSelectionRevision){orderLoadingRef='';render();}}
   }
 
   function renderAuth() {
@@ -479,6 +547,7 @@
     if (state.error) return $('app').innerHTML = `<div class="card"><h2>Нет подключения к 1С</h2><p class="muted">${esc(state.error)}</p><div class="grid two"><button data-action="retry-init">Повторить</button><button data-action="settings">Настройки</button></div></div>`;
     if (!Object.keys(state.views).length) return $('app').innerHTML = '<div class="card"><h2>Нет доступных разделов</h2><p>Обратитесь к администратору 1С для назначения прав.</p><button data-action="logout">Выйти</button></div>';
     if (state.view === 'chat' && messenger) { messenger.enter(); return; }
+    if(orderLoadingRef&&['mp','executor','tech'].includes(state.view))return $('app').innerHTML='<div class="card loading"><span class="spinner"></span>Загружаем выбранный заказ-наряд…</div>';
     const renderers = { orders: renderOrdersView, mp: renderMpView, executor: renderExecutorView, tech: renderTechView, clients: renderClientsView, chat: renderChatView };
     $('app').innerHTML = (renderers[state.view] || renderOrdersView)();
   }
@@ -512,8 +581,9 @@
 
   const operationQueue = window.ITUS_OPERATION_QUEUE?.create({
     context: sessionSnapshot,
+    snapshot: () => ({...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,clientBotId:state.clientBotId,serviceBotId:state.serviceBotId}),
     guard: (operation, session) => assertSession(session, operation.scope),
-    sender: (operation, session) => call1C(operation.method, operation.body, { silent:true, requestId:operation.requestId, timestamp:operation.createdAt, session })
+    sender: (operation, session, options) => call1C(operation.method, operation.body, { silent:true, requestId:operation.requestId, timestamp:operation.createdAt, envelopeContext:operation.envelopeContext, session,manual:options?.manual })
   });
   const queueScope = () => [String(CONFIG.apiBase || ''), String(CONFIG.publicBase || ''), String(state.userId || '')].join('|');
 
@@ -524,7 +594,7 @@
       const items = await operationQueue.list(session.scope);
       assertSession(session, session.scope);
       state.queuedOperations = items.map(operation => ({
-        id:operation.id, kind:operation.kind, status:operation.status, documentKey:operation.documentKey,
+        id:operation.id, requestId:operation.requestId, kind:operation.kind, status:operation.status, error:operation.error, documentKey:operation.documentKey,
         orderRef:String(operation.body?.orderRef || operation.body?.orderId || '')
       }));
       void messenger?.refreshOutbox?.();
@@ -544,7 +614,7 @@
   async function showOperationQueue() {
     await refreshQueuedOperations();
     const items = state.queuedOperations;
-    const rows = items.map(item => `<div class="entry"><strong>${item.kind==='complete' ? 'Завершение документа' : item.kind==='chat' ? 'Сообщение чата' : 'Запись или вложение'}</strong><div>${['failed','invalid'].includes(item.status) ? 'Требуется проверка' : 'Ожидает отправки'}</div>${['failed','invalid'].includes(item.status) ? `<button data-action="open-operation-report" data-operation-id="${escAttr(item.id)}">Отчёт и повтор</button>` : ''}</div>`).join('');
+    const rows = items.map(item => `<div class="entry"><strong>${item.kind==='complete' ? 'Завершение документа' : item.kind==='chat' ? 'Сообщение чата' : 'Запись или вложение'}</strong><div data-media-progress="${escAttr(item.requestId)}">${['failed','invalid'].includes(item.status) ? 'Требуется проверка' : 'Ожидает подтверждения 1С'}</div>${['failed','invalid'].includes(item.status) ? `<button data-action="open-operation-report" data-operation-id="${escAttr(item.id)}">Отчёт и повтор</button>` : ''}</div>`).join('');
     showSheet('Неотправленные операции', `Сохранено на устройстве: ${items.length}`, rows || '<p>Все операции подтверждены.</p>');
     scheduleQueueResume();
   }
@@ -553,10 +623,10 @@
     const session=sessionSnapshot(), operation=await operationQueue.get(id);
     assertSession(session, operation?.scope);
     if (!operation || operation.scope!==session.scope) return toast('Сохранённый пакет не найден',true);
-    showQueuedOperationError({operation,queueStatus:operation.status,code:operation.error,diagnostic:operation.diagnostic,status:operation.diagnostic?.status});
+    showQueuedOperationError({operation,queueStatus:operation.status,code:operation.error,diagnostic:operation.diagnostic,status:operation.diagnostic?.status},{open:true});
   }
 
-  function showQueuedOperationError(error) {
+  function showQueuedOperationError(error,{open=false}={}) {
     if (error?.queuePaused) return;
     if (error?.code === 'QUEUE_BUSY') { scheduleQueueResume(Math.max(1000, Number(error.leaseUntil || Date.now()+1000)-Date.now()+100)); return; }
     const operation = error?.operation;
@@ -566,7 +636,11 @@
       route:operation.method, requestId:operation.requestId, clientEntryId:operation.clientEntryId, attempt:operation.attempts,
       operationKind:operation.kind, attachmentType:operation.body?.entry?.type
     }));
+    if(!open){toast(error.code==='DEVICE_REQUIRED'?'Подключите устройство в настройках крупных файлов. Пакет сохранён.':'Отправка не подтверждена. Пакет сохранён; отчёт доступен в очереди.',true);return;}
     const report = `<details><summary>Технический отчёт без данных вложения</summary><pre>${esc(state.failedOperationReport)}</pre></details><button data-action="copy-operation-report">Скопировать отчёт</button>`;
+    if(['ONE_C_RESULT_UNCERTAIN','LEGACY_RESULT_UNCERTAIN','MEDIA_RECONCILIATION_REQUIRED'].includes(error.code||operation.error)){
+      showSheet('Нужна сверка с 1С','Пакет сохранён. Повтор может создать дубль, поэтому отправка остановлена до проверки результата.',report);return;
+    }
     if (error.queueStatus === 'invalid') {
       showSheet('Проверьте данные', '1С отклонила пакет с кодом HTTP 422. Автоматический повтор остановлен.', `${report}<button class="primary" data-action="retry-failed-operation">Повторить после проверки данных</button>`);
       return;
@@ -628,10 +702,10 @@
     const promise = (async () => {
     const operations = await operationQueue.list(session.scope); assertSession(session,session.scope);
     const ordered = operations.slice().sort((a, b) => Number(a.kind === 'complete') - Number(b.kind === 'complete'));
-    for (const operation of ordered) {
+    const resumeOne = async operation => {
       assertSession(session,session.scope);
-      if (!['entry','complete','chat'].includes(operation.kind) || !['pending','sending'].includes(operation.status)) continue;
-      if (operation.kind === 'complete' && (await operationQueue.list(session.scope)).some(item => item.kind === 'entry' && item.documentKey === operation.documentKey)) continue;
+      if (!['entry','complete','chat'].includes(operation.kind) || !['pending','sending'].includes(operation.status)) return;
+      if (operation.kind === 'complete' && (await operationQueue.list(session.scope)).some(item => item.kind === 'entry' && item.documentKey === operation.documentKey)) return;
       try {
         if (operation.kind==='complete') await runQueuedDocumentCompletion(operation.documentKey,operation);
         else {
@@ -641,7 +715,9 @@
         }
         assertSession(session,session.scope);
       } catch (error) { if (error.queuePaused) throw error; if(error.code!=='QUEUE_NOT_FOUND') showQueuedOperationError(error); }
-    }
+    };
+    await Promise.all(ordered.filter(operation=>operation.kind!=='complete').map(resumeOne));
+    for(const operation of ordered.filter(operation=>operation.kind==='complete')) await resumeOne(operation);
     assertSession(session,session.scope);
     await refreshQueuedOperations();
     })().catch(error => {
@@ -688,6 +764,7 @@
   }
 
   function renderSelectedCard() {
+    if(orderLoadingRef)return '<div class="card loading"><span class="spinner"></span>Загружаем выбранный заказ-наряд…</div>';
     const order = currentOrder();
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
     const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
@@ -958,37 +1035,46 @@
 
   async function choosePost() {
     showSheet('Выбор поста', 'Получаем посты согласно правам пользователя', '<div class="loading"><span class="spinner"></span>Загрузка из 1С…</div>');
+    const context=sheetContext();
     try {
-      const response = await call1C('/resources/posts/list', orderPayload());
+      const response = await call1C('/resources/posts/list', orderPayloadFor(context.order));
+      if (!sheetCurrent(context)) return;
       const items = API.extractItems(response, ['posts']).map(API.normalizeResource);
       $('sheetBody').innerHTML = items.length ? `<div class="grid">${items.map(item => `<button data-action="set-post" data-ref="${escAttr(item.ref)}" data-name="${escAttr(item.name)}" ${item.available ? '' : 'disabled'}><b>${esc(item.name)}</b>${item.description ? `<br><span class="tiny">${esc(item.description)}</span>` : ''}</button>`).join('')}</div>` : '<div class="empty">1С не вернула доступные посты.</div>';
-    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+    } catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
   async function setPost(ref, name) {
-    const order = currentOrder(); if (!order) return;
-    await call1C('/resources/posts/assign', orderPayload({ postRef: ref }));
-    order.postRef = ref; order.post = name; closeSheet(); render(); toast('Пост назначен');
+    const context=sheetContext(sheetOrder),order=context.order;
+    if (!order || !sheetCurrent(context)) return;
+    await call1C('/resources/posts/assign', orderPayloadFor(order,{ postRef: ref }));
+    order.postRef = ref; order.post = name;
+    if(sheetCurrent(context)){closeSheet(); render(); toast('Пост назначен');}
   }
 
   async function assignExecutor(other = false) {
     showSheet('Назначить исполнителя', other ? 'Все доступные сотрудники согласно правам пользователя' : 'В первую очередь показаны запланированные ресурсы', '<div class="loading"><span class="spinner"></span>Загрузка из 1С…</div>');
+    const context=sheetContext();
     try {
       const method = other ? '/resources/executors/list' : '/resources/executors/planned/list';
-      const response = await call1C(method, orderPayload({ postRef: currentOrder()?.postRef || '' }));
+      const response = await call1C(method, orderPayloadFor(context.order,{ postRef: context.order?.postRef || '' }));
+      if (!sheetCurrent(context)) return;
       const items = API.extractItems(response, ['executors','employees','plannedExecutors']).map(API.normalizeResource);
       $('sheetBody').innerHTML = `${items.length ? `<div class="grid">${items.map(item => `<button data-action="set-executor" data-ref="${escAttr(item.ref)}" data-name="${escAttr(item.name)}" ${item.available ? '' : 'disabled'}><b>${esc(item.name)}</b>${item.description ? `<br><span class="tiny">${esc(item.description)}</span>` : ''}</button>`).join('')}</div>` : '<div class="empty">Исполнители не найдены.</div>'}${other ? '' : '<button class="secondary" style="margin-top:10px" data-action="assign-other-executor">Выбрать другого исполнителя</button>'}`;
-    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+    } catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
   async function setExecutor(ref, name) {
-    const order = currentOrder(); if (!order) return;
-    await call1C('/executor/assign', orderPayload({ employeeRef: ref, executorRef: ref, postRef: order.postRef || '', notifyExecutor: true }));
-    order.executorRef = ref; order.executor = name; closeSheet(); render(); toast('Исполнитель назначен и уведомлён через 1С');
+    const context=sheetContext(sheetOrder),order=context.order;
+    if (!order || !sheetCurrent(context)) return;
+    await call1C('/executor/assign', orderPayloadFor(order,{ employeeRef: ref, executorRef: ref, postRef: order.postRef || '', notifyExecutor: true }));
+    order.executorRef = ref; order.executor = name;
+    if(sheetCurrent(context)){closeSheet(); render(); toast('Исполнитель назначен и уведомлён через 1С');}
   }
 
   async function startExecutorWork() {
     const order = currentOrder(); if (!order) return;
+    const session=sessionSnapshot();
     state.busy = true;
     try {
       const response = await call1C('/workshop/work/start', orderPayload({ executorRef: order.executorRef || state.user?.employeeRef || '' }));
@@ -996,7 +1082,7 @@
       const packageData = response.package || response.data?.package;
       if (packageData) { order.packageRef = String(packageData.packageRef || packageData.ref || order.packageRef || ''); order.packageStatus = String(packageData.status || order.packageStatus); }
       render(); toast('Работа начата, контрольный лист загружен из 1С');
-    } finally { state.busy = false; }
+    } finally { if(sessionCurrent(session)){state.busy = false; render();} }
   }
 
   async function completeChecklist() {
@@ -1036,16 +1122,18 @@
     const context = orderPayload();
     worktimeDraft = null;
     showSheet('Создание пакета УРВ', 'Получаем работы без активных пакетов', '<p>Загрузка…</p>');
+    const sheet=sheetContext();
     try {
       const response = await call1C('/worktime/orders/works', {...context, withoutActivePackages:true});
+      if(!sheetCurrent(sheet))return;
       const data = response.data || response;
       const workshopRef = String(data.workshopRef || currentOrder()?.workshopRef || state.user?.workshopRef || '');
       if (!workshopRef) throw new Error('1С не вернула цех для заказ-наряда');
       const works = API.extractItems(response, ['works']).filter(x => x.available !== false && x.hasActivePackage !== true && !x.activePackageRef && !(x.activePackages?.length)).map(x => ({ref:String(x.workRef || x.ref || ''),name:String(x.name || x.title || x.workRef || ''),available:true})).filter(x => x.ref);
       worktimeDraft = {context,workshopRef,works,employees:[],workRefs:[],employeeRefs:[],participants:[],step:'works',clientPackageId:requestId(),busy:false,sent:false};
       renderWorktimeStep();
-    } catch(error) { $('sheetBody').innerHTML = `<p role="alert">${esc(error.message)}</p><button data-action="package-create">Повторить загрузку</button>`; }
-    finally { state.busy = false; }
+    } catch(error) { if(sheetCurrent(sheet)) $('sheetBody').innerHTML = `<p role="alert">${esc(error.message)}</p><button data-action="package-create">Повторить загрузку</button>`; }
+    finally { if(sessionCurrent(sheet.session))state.busy = false; }
   }
 
   async function worktimeStep(action) {
@@ -1099,11 +1187,14 @@
   async function selectPackage() {
     const order = currentOrder(); if (!order || state.busy) return;
     showSheet('Пакеты работ', `Незакрытые пакеты ЗН ${order.num}`, '<div class="loading"><span class="spinner"></span>Загрузка из 1С…</div>');
+    const context=sheetContext(order);
     try {
-      const response = await call1C('/worktime/packages/list', orderPayload({onlyOpen:true}));
+      const response = await call1C('/worktime/packages/list', orderPayloadFor(order,{onlyOpen:true}));
+      if(!sheetCurrent(context))return;
       const remote = API.extractItems(response, ['packages','worktimePackages']).map(normalizeWorktimePackage);
       renderPackageChoices(availablePackages(order, remote));
     } catch (error) {
+      if(!sheetCurrent(context))return;
       const embedded = availablePackages(order);
       if (embedded.length) renderPackageChoices(embedded, 'Показаны пакеты из карточки ЗН; обновить полный список из 1С не удалось.');
       else $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button data-action="package-select">Повторить</button>`;
@@ -1111,7 +1202,7 @@
   }
 
   function usePackage(ref, number, status) {
-    const order = currentOrder(); if (!order || !ref) return;
+    const context=sheetContext(sheetOrder),order=context.order; if (!order || !ref || !sheetCurrent(context)) return;
     order.packageRef = ref; order.packageNumber = number || ''; order.packageStatus = status || 'Не стартовал';
     closeSheet(); render(); toast('Пакет УРВ выбран');
   }
@@ -1155,8 +1246,10 @@
 
   async function showProduction() {
     showSheet('Выработка', 'Количество закрытых часов текущего пользователя', '<div class="loading"><span class="spinner"></span>Получаем данные из 1С…</div>');
+    const context=sheetContext();
     try {
       const response = await call1C('/worktime/production', { employeeRef: state.user?.employeeRef || '', period: 'today' });
+      if(!sheetCurrent(context))return;
       const data = response.production || response.data?.production || response.data || response;
       const grades = Array.isArray(data.grades) ? data.grades : [];
       const total = grades.reduce((sum, item) => sum + (Number.isFinite(Number(item.closedHours)) ? Number(item.closedHours) : 0), 0);
@@ -1164,17 +1257,18 @@
         ? grades.map(item => `<tr><td>${esc(item.grade)}</td><td>${esc(item.closedHours)}</td></tr>`).join('')
         : '<tr><td colspan="2">Нет закрытых н/ч</td></tr>';
       $('sheetBody').innerHTML = `<div class="table-wrap"><table class="production-table"><thead><tr><th>Разряд</th><th>Количество закрытых н/ч</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th><th>${esc(total)}</th></tr></tfoot></table></div><button class="primary" data-action="close-sheet">Закрыть</button>`;
-    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
+    } catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
   }
 
   async function startQuality(source = 'manual') {
     const order = currentOrder(); if (!order) return;
+    const session=sessionSnapshot();
     state.busy = true;
     try {
       const response = await call1C('/quality/start', orderPayload({ source }));
       order._quality = API.normalizeProcess(response, 'qualityControl');
       render(); toast('Документ контроля качества создан, анкета загружена');
-    } finally { state.busy = false; }
+    } finally { if(sessionCurrent(session)){state.busy = false; render();} }
   }
 
   async function completeQuality(result = '') {
@@ -1190,19 +1284,23 @@
 
   async function showCurrentAppeal() {
     showSheet('Текущее обращение', 'Причина обращения загружается из 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
+    const context=sheetContext();
     try {
-      const response = await call1C('/quality/current-appeal', orderPayload());
+      const response = await call1C('/quality/current-appeal', orderPayloadFor(context.order));
+      if (!sheetCurrent(context)) return;
       const appeal = response.appeal || response.data?.appeal || response.data || {};
       $('sheetBody').innerHTML = `<div class="reason"><b>Причина обращения:</b><br>${esc(appeal.reason || appeal.text || currentOrder()?.reason || 'Не заполнена')}</div>${appeal.createdAt ? `<p class="tiny">Создано: ${esc(FEATURES.dateTime(appeal.createdAt))}</p>` : ''}<button class="primary" data-action="close-sheet">Закрыть</button>`;
-    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+    } catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
   async function openServiceHistory() {
     showSheet('История обслуживания', 'Загружаем предыдущие заезды автомобиля из 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
+    const context=sheetContext();
     try {
-      const order = currentOrder();
+      const order = context.order;
       const mileage = String(order?.mileage ?? '').trim();
-      const response = await call1C('/quality/service-history', orderPayload(/^\d+$/.test(mileage) ? { mileage: Number(mileage) } : {}));
+      const response = await call1C('/quality/service-history', orderPayloadFor(order,/^\d+$/.test(mileage) ? { mileage: Number(mileage) } : {}));
+      if (!sheetCurrent(context)) return;
       const data = response.data || response;
       const visits = API.extractItems(response, ['visits','history','items']);
       if (!visits.length) { $('sheetBody').innerHTML = '<div class="empty">1С не вернула историю обслуживания по этому автомобилю.</div>'; return; }
@@ -1215,7 +1313,7 @@
         const mileageLabel = visit.mileage ?? visit.odometer;
         return `<article class="entry"><div class="entry-head"><b>ЗН ${esc(number)}</b><span>${esc(FEATURES.dateTime(visit.closedAt || visit.date || visit.createdAt))}</span></div>${mileageLabel !== undefined && mileageLabel !== null && mileageLabel !== '' ? `<p><b>Пробег:</b> ${esc(mileageLabel)} км</p>` : ''}<p><b>Причина обращения:</b> ${esc(reason)}</p>${goods.length ? `<p><b>Товары:</b> ${goods.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}${works.length ? `<p><b>Работы:</b> ${works.map(item => esc(typeof item === 'string' ? item : item.name || item.title || item.description || '')).filter(Boolean).join(', ')}</p>` : ''}<p><b>Рекомендации:</b> ${esc(recommendations)}</p></article>`;
       }).join('')}</div><button class="secondary" data-action="close-sheet">Закрыть</button>`;
-    } catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
+    } catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button class="primary" data-action="close-sheet">Закрыть</button>`; }
   }
 
   async function requestQualityControl() {
@@ -1363,8 +1461,12 @@
   function appendQueuedEntry(process, response, operation, fallback) {
     const raw = response.entry || response.data?.entry || { ...fallback, id: operation.clientEntryId };
     const entry = API.normalizeProcess({ entries:[raw] }, 'x').entries[0];
+    entry.clientEntryId=operation.clientEntryId;
+    const localFile=fallback?.file || operation.body?.entry?.file;
+    if(localFile)entry.file={...localFile,...entry.file,...(response.mediaReceipt?{bufferJobId:response.mediaReceipt.jobId}:{})};
     process.entries = Array.isArray(process.entries) ? process.entries : [];
-    if (!process.entries.some(item => String(item.id || '') === String(entry.id || operation.clientEntryId))) process.entries.push(entry);
+    const index=process.entries.findIndex(item=>String(item.id||'')===String(entry.id||operation.clientEntryId)||item.id===operation.clientEntryId||item.clientEntryId===operation.clientEntryId);
+    if(index<0)process.entries.push(entry);else process.entries[index]={...process.entries[index],...entry};
     return entry;
   }
 
@@ -1375,8 +1477,11 @@
       assertSession(session,operation.scope);
       onProgress?.({sent, total:operations.length});
       try {
-        await operationQueue.run(operation.id);
+        const response=await operationQueue.run(operation.id);
         assertSession(session,operation.scope);
+        const owner=state.orders.find(item=>String(item.orderRef||item.id)===String(operation.body?.orderRef));
+        const process=[owner?._acceptance,owner?._defectSheet].find(item=>item?.documentRef===operation.documentKey);
+        if(process)appendQueuedEntry(process,response,operation,{...operation.body.entry,createdAt:operation.createdAt});
         sent++;
         onProgress?.({sent, total:operations.length});
       } catch (error) {
@@ -1419,6 +1524,11 @@
     const order = state.orders.find(item=>String(item.orderRef || item.id)===orderRef);
     const process = order?.[acceptance?'_acceptance':'_defectSheet'];
     const pendingEntries = operations.filter(item => item.kind === 'entry' && item.documentKey === documentKey);
+    const media=mediaClient(session);
+    if(media?.connected()){
+      try{await media.completion(operation.method,operationEnvelope(operation),pendingEntries.map(item=>item.requestId));assertSession(session,session.scope);}
+      catch(error){if(error.queuePaused)throw error;toast('Команда завершения сохранена на устройстве. Сервер пока недоступен.',true);scheduleQueueResume(5000);}
+    }
     if (pendingEntries.length) {
       const failed = pendingEntries.some(item => item.status === 'invalid' || item.status === 'failed');
       state.completionKey = key;
@@ -1466,10 +1576,12 @@
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
   async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
-    if (hasDocumentRef(order._defectSheet?.documentRef)) return order._defectSheet;
+    const session=sessionSnapshot();
+    if (!refreshExisting && hasDocumentRef(order._defectSheet?.documentRef)) return order._defectSheet;
     const ref = order.orderRef || order.id;
     if (pendingDefectSheets.has(ref)) return pendingDefectSheets.get(ref);
     const attach = process => {
+      assertSession(session);
       if (!hasDocumentRef(process.documentRef)) throw new Error('1С не вернула ссылку на дефектовочную ведомость. Файл не отправлен.');
       for (const item of [order, ...state.orders.filter(item => (item.orderRef || item.id) === ref)]) {
         item._defectSheet = process; item.defectDocumentRef = process.documentRef;
@@ -1481,14 +1593,17 @@
     if (!refreshExisting && hasDocumentRef(order.defectDocumentRef)) return existing(order.defectDocumentRef, order.defects);
     const pending = (async () => {
       // Read the current order first; a stale list must not trigger creation.
-      const response = await call1C('/orders/get', {orderRef:ref,orderId:ref});
+      const response = await call1C('/orders/get', {orderRef:ref,orderId:ref},{session});
       const fresh = API.mapOrder(response.order || response.data?.order || response.data || response);
       if ((fresh.orderRef || fresh.id) !== ref) throw new Error('Не удалось проверить действующий документ выбранного ЗН');
       const existingRef = fresh.defectDocumentRef || order.defectDocumentRef || order._defectSheet?.documentRef || '';
       if (!refreshExisting && hasDocumentRef(existingRef)) return existing(existingRef, fresh.defects || order.defects);
-      const started = await call1C('/defects/start', {orderRef:ref,orderId:ref,existingDocumentRef:existingRef});
+      const started = await call1C('/defects/start', {orderRef:ref,orderId:ref,existingDocumentRef:existingRef,includeAttachmentContent:false},{session});
       const process = API.normalizeProcess(started, 'defectSheet');
       if (!process.entries.length && Array.isArray(fresh.defects)) process.entries = API.normalizeProcess({entries:fresh.defects}, 'defectSheet').entries;
+      const pending=await operationQueue.list(session.scope);assertSession(session,session.scope);
+      const ids=new Set(pending.filter(item=>item.kind==='entry'&&item.documentKey===process.documentRef).map(item=>item.clientEntryId));
+      for(const local of order._defectSheet?.entries||[])if(ids.has(local.clientEntryId||local.id)&&!process.entries.some(item=>item.id===local.id||item.clientEntryId&&item.clientEntryId===local.clientEntryId))process.entries.push(local);
       return attach(process);
     })();
     pendingDefectSheets.set(ref,pending);
@@ -1515,22 +1630,31 @@
       return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
-    const completing = state.completionKey === completionKey;
+    const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
     const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }
 
   async function openDefectSheet() {
     showSheet('Дефектовочная ведомость', 'Проверяем документ в 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
-    try { await ensureDefectSheet(currentOrder(), {refreshExisting:true}); if (state.view === 'mp' && currentOrder()?._acceptance?.active) render(); renderDefectSheet(); }
-    catch (error) { $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+    const context=sheetContext();
+    try { await ensureDefectSheet(context.order, {refreshExisting:true}); if(!sheetCurrent(context))return; if (state.view === 'mp' && context.order?._acceptance?.active) render(); renderDefectSheet(); }
+    catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
   }
 
-  function openDefectMedia(index) {
+  async function openDefectMedia(index) {
+    const context=sheetContext(),session=context.session;
     const entry = currentOrder()?._defectSheet?.entries?.[index], file = entry?.file;
     if (!file) return;
     const mime = file.mimeType || 'application/octet-stream';
     let url = file.downloadUrl;
+    if(!url && file.contentBlob) url=URL.createObjectURL(file.contentBlob);
+    if(!url&&!file.contentBase64&&file.fileRef){
+      const media=mediaClient(session);
+      if(!media?.connected())return toast('Подключите устройство в настройках крупных файлов',true);
+      try{const sheet=context.order._defectSheet;const result=await media.attachment('/defects/start',{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...orderPayloadFor(context.order),documentRef:sheet.documentRef,existingDocumentRef:sheet.documentRef,attachmentRef:file.fileRef,entryRef:entry.id,requestId:requestId()},file.sizeBytes);if(!sheetCurrent(context))return;url=result.url;}
+      catch(error){if(sheetCurrent(context))toast(error.message,true);return;}
+    }
     if (!url && file.contentBase64) {
       try {
         const raw = atob(file.contentBase64.replace(/^data:[^,]*,/, ''));
@@ -1598,6 +1722,7 @@
   }
 
   function openMediaPicker(target) {
+    const targetOrder=currentOrder(),targetSession=sessionSnapshot();
     const process=target.type==='acceptance'?currentOrder()?._acceptance:target.type==='defect'?currentOrder()?._defectSheet:null;
     if(documentCompletionLocked(process?.documentRef)) return toast('Завершение уже сохранено. Статус доступен в очереди.',true);
     if (!mediaPicker && window.ITUS_MEDIA_PICKER?.create) {
@@ -1608,7 +1733,7 @@
     const queueTarget = target.type === 'acceptance' || target.type === 'defect';
     mediaPicker.open({
       hint: `Файлы будут отправлены в ${labels[target.type] || 'текущий раздел'} по одному действию.`,
-      onCommit: queueTarget ? files => commitMediaBatch(target.type, files) : target.type==='messenger' ? files => messenger.enqueueMediaBatch(files,target) : null,
+      onCommit: queueTarget ? files => {assertSession(targetSession);return commitMediaBatch(target.type, files,targetOrder);} : target.type==='messenger' ? files => messenger.enqueueMediaBatch(files,target) : null,
       onSend: async (file, kind, uploadId) => {
         toast(`Загрузка файла «${file.name || 'вложения'}»…`);
         if (target.type === 'messenger') return messenger.upload(file, { ...target, kind });
@@ -1621,10 +1746,10 @@
     });
   }
 
-  async function commitMediaBatch(type, files) {
+  async function commitMediaBatch(type, files, targetOrder = currentOrder()) {
     const session=sessionSnapshot();
     if (!operationQueue || !files.length) throw new Error('Очередь отправки недоступна');
-    const order = currentOrder();
+    const order = targetOrder;
     if (!order) throw new Error('Сначала выберите заказ-наряд');
     const orderData = orderPayloadFor(order);
     const process = type === 'acceptance' ? order._acceptance : await ensureDefectSheet(order);
@@ -1665,7 +1790,7 @@
 
   function configureFilePicker(target, accept, capture, multiple = false) {
     const input = $('filePicker');
-    state.fileTarget = target; input.value = ''; input.accept = accept || '*/*'; input.multiple = multiple;
+    state.fileTarget = {...target,orderRef:currentOrder()?.orderRef||currentOrder()?.id,session:sessionSnapshot()}; input.value = ''; input.accept = accept || '*/*'; input.multiple = multiple;
     if (capture) input.setAttribute?.('capture', capture); else input.removeAttribute?.('capture');
     input.click?.();
   }
@@ -1680,9 +1805,9 @@
       const limitMb = (limit / 1024 / 1024).toFixed(0);
       throw new Error(`Размер файла ${actualMb} МБ превышает допустимый предел ${limitMb} МБ`);
     }
-    if(kind==='video') {
-      if(!blob.size)throw new Error('Видеофайл пуст');
-      return {fileName:file.name || `video-${Date.now()}.mp4`,mimeType:window.ITUS_VIDEO_TRANSPORT?.mime(file) || blob.type || 'video/mp4',sizeBytes:blob.size,contentBlob:blob,clientFileId:requestId()};
+    if(kind==='video' || blob.size>10*1024*1024) {
+      if(!blob.size)throw new Error('Файл пуст');
+      return {fileName:file.name || `${kind}-${Date.now()}`,mimeType:kind==='video'?(window.ITUS_VIDEO_TRANSPORT?.mime(file) || blob.type || 'video/mp4'):(blob.type || file.type || 'application/octet-stream'),sizeBytes:blob.size,contentBlob:blob,clientFileId:requestId(),transport:blob.size>10*1024*1024?'s3':'direct'};
     }
     const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
     const mimeType = blob.type || file.type || 'application/octet-stream';
@@ -2056,8 +2181,13 @@
 
   function showSettings() {
     const display=window.ITUS_DISPLAY;
-    const size=display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '';
+    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Крупные файлы · подключение устройства</button>';
     showSheet('Настройки I-MAX', 'Параметры приложения', `${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+  }
+
+  function showMediaDeviceSettings() {
+    const connected=mediaClient()?.connected();
+    showSheet('Крупные файлы','Файлы больше 10 МиБ передаются через защищённый буфер и затем целиком в 1С.',connected?'<p>Устройство подключено. После загрузки в буфер перенос продолжится даже при закрытом приложении.</p><button data-action="media-device-revoke">Отключить устройство</button>':'<p>Получите у администратора одноразовый код для своего MAX ID. Он действует 15 минут.</p><label for="mediaDeviceCode">Код подключения</label><input id="mediaDeviceCode" autocomplete="off" autocapitalize="characters" maxlength="40"><button class="primary" data-action="media-device-pair">Подключить</button><p>Файлы, которые ещё не загружены в буфер, остаются на этом устройстве и продолжат загрузку при следующем входе.</p>');
   }
 
   async function logout() {
@@ -2118,6 +2248,8 @@
   async function handleFilePicked(event) {
     const file = event.target.files?.[0], target = state.fileTarget; state.fileTarget = null;
     if (!file || !target) return;
+    if(target.session&&!sessionCurrent(target.session))return toast('Войдите повторно и выберите файл',true);
+    if(target.type!=='messenger'&&target.orderRef!==(currentOrder()?.orderRef||currentOrder()?.id))return toast('Заказ-наряд изменился. Выберите файл в нужном заказе.',true);
     if(window.ITUS_VIDEO_TRANSPORT?.isVideo(file))target.kind='video';
     try {
       if (target.type === 'messenger') { await messenger.upload(file,target); return; }
@@ -2190,7 +2322,7 @@
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
     const session=sessionSnapshot();
-    const actionKey=[session.generation,action,button.dataset.operationId || button.dataset.operation || '',button.dataset.ref || '',currentOrder()?.id || ''].join('|');
+    const actionKey=[session.generation,action,button.dataset.operationId || button.dataset.operation || '',button.dataset.source || '',button.dataset.section || '',button.dataset.ref || '',currentOrder()?.id || ''].join('|');
     const tracksPendingState = longRunningActions.has(action);
     if (button.disabled || (tracksPendingState && (pendingActionButtons.has(button) || pendingActions.has(actionKey)))) return;
     if (tracksPendingState) {
@@ -2208,6 +2340,9 @@
       if (action === 'manual-auth-qr') return await manualQr();
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return await toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return await initialize(); }
       if (action === 'settings') return await showSettings();
+      if (action === 'media-device-settings') return showMediaDeviceSettings();
+      if (action === 'media-device-pair') {await mediaClient().pair(String($('mediaDeviceCode')?.value||''));showMediaDeviceSettings();toast('Устройство подключено');scheduleQueueResume();return;}
+      if (action === 'media-device-revoke') {await mediaClient().revoke();showMediaDeviceSettings();return;}
       if (action === 'notification-settings') return await showNotificationSettings();
       if (action === 'save-notifications') {
         const prefs = FEATURES.preferences(state.userId);
@@ -2241,7 +2376,7 @@
       if (action === 'close-sheet') return await closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return await render(); }
       if (action === 'search-orders') return await searchOrders();
-      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return await render(); }
+      if (action === 'select-order') { const loading=loadSingleOrder(button.dataset.ref);state.view=viewForCurrentUser();render();await loading;return render(); }
       if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return await toast('Карточка обновлена из 1С'); }
       if (action === 'scan-order-qr') return await openOrderQrScanner();
       if (action === 'manual-order-qr') return await showOrderQrManual();
@@ -2292,13 +2427,16 @@
       if (action === 'chat-file') return await configureFilePicker({type:'chat',kind:'file'}, '*/*');
       if (action === 'open-notification') return await openNotification(button.dataset.event);
       if (action === 'dismiss-notification') { state.notifications = state.notifications.filter(item => item.eventId !== button.dataset.event); return await renderNotifications(); }
-    } catch (error) { if(!error.queuePaused && sessionCurrent(session)) { console.error(action, error); toast(error.message || 'Ошибка выполнения операции', true); } }
+    } catch (error) { if(!error.queuePaused && sessionCurrent(session)) { console.error(action,{code:diagnosticToken(error.code),status:Number(error.status||0),requestId:diagnosticToken(error.diagnostic?.requestId)}); toast(error.message || 'Ошибка выполнения операции', true); } }
     finally {
-      if (tracksPendingState && button.isConnected) {
+      if (tracksPendingState) {
+        pendingActions.delete(actionKey);
         pendingActionButtons.delete(button);
-        button.disabled = false;
-        button.removeAttribute('aria-busy');
-        button.classList.remove('is-pending');
+        if(button.isConnected){
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+          button.classList.remove('is-pending');
+        }
       }
     }
   });

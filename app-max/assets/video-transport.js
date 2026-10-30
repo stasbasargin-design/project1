@@ -19,7 +19,7 @@
     const copy={...envelope};
     if(path.length===2)copy.entry={...envelope.entry};
     const target=path.length===2?copy.entry:copy;
-    const metadata={...file,contentBase64:''};delete metadata.contentBlob;
+    const metadata={...file,contentBase64:''};delete metadata.contentBlob;delete metadata.transport;
     target.file=metadata;
     const header=new TextEncoder().encode(JSON.stringify({envelope:copy,sizeBytes:blob.size}));
     if(header.length>256*1024)throw Error('Слишком большой объём сопутствующих данных видео');

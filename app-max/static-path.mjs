@@ -8,7 +8,8 @@ export function resolvePublicPath(root, pathname, paths = path) {
   const parts = decoded.split('/').filter(Boolean);
   if (parts.some(part => part === '.' || part === '..')) return null;
   if (parts.length === 0) parts.push('index.html');
-  if (/^(?:data|server\.mjs|static-path\.mjs)$/i.test(parts[0])) return null;
+  if(parts.some(part=>part.startsWith('.')))return null;
+  if(!['assets','config'].includes(parts[0])&&!['index.html','preview.html','OPEN_REVIEW.html','manifest.webmanifest','notification-sw.js','build-info.json','favicon.ico'].includes(parts[0]))return null;
   const file = paths.resolve(root, ...parts);
   const relative = paths.relative(paths.resolve(root), file);
   if (paths.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + paths.sep)) return null;

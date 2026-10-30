@@ -4,7 +4,7 @@
   const DB_NAME = 'itus-operation-queue';
   const STORE_NAME = 'operations';
   const MAX_ATTEMPTS = 5;
-  const LEASE_MS = 600000;
+  const LEASE_MS = 90000;
   const RETRY_DELAYS_MS = [0, 1000, 3000, 7000, 15000];
 
   // IndexedDB preserves immutable Blob values without expanding large videos into Base64.
@@ -40,9 +40,9 @@
   function openDb() {
     if (!root.indexedDB) return Promise.resolve(null);
     return new Promise((resolve,reject) => {
-      // Version 3 prevents an old JSON-only worker from rewriting a Blob as {}.
-      // The store and every existing operation remain intact during the upgrade.
-      const request = root.indexedDB.open(DB_NAME, 3);
+      // Version 4 fences old senders that do not understand an S3-buffer route.
+      // The store and all v2/v3 operations (including Blobs) remain intact.
+      const request = root.indexedDB.open(DB_NAME, 4);
       let blocked=false;
       request.onblocked=()=>{blocked=true;reject(Object.assign(new Error('Закройте старые вкладки I-MAX и повторите сохранение. Выбранные файлы остаются в форме.'),{code:'QUEUE_UPGRADE_BLOCKED'}));};
       request.onupgradeneeded = () => {
@@ -70,7 +70,7 @@
         tx.onabort = () => reject(tx.error || new Error('Операция IndexedDB отменена'));
       });
     };
-    const claim = async (id, owner, leaseMs) => {
+    const claim = async (id, owner, leaseMs, exclusive = false) => {
       const db = await openDb();
       if (!db) throw new Error('IndexedDB недоступна: пакет отправки не может быть заблокирован');
       return new Promise((resolve, reject) => {
@@ -82,7 +82,7 @@
           const value = request.result;
           if (!value) return;
           const now = Date.now();
-          const activeOtherLease = value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > now;
+          const activeOtherLease = !exclusive && value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > now;
           if (activeOtherLease) return;
           claimed = { ...value, leaseOwner: owner, leaseUntil: now + leaseMs };
           store.put(claimed);
@@ -188,15 +188,16 @@
     return status === 0 || status >= 500 || error?.name === 'TypeError' || error?.code === 'TIMEOUT';
   }
 
-  function create({ store = indexedDbStore(), sender, context = () => null, guard = () => {}, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
+  function create({ store = indexedDbStore(), sender, context = () => null, guard = () => {}, snapshot = () => null, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
     if (typeof sender !== 'function') throw new Error('Operation queue sender is required');
     const owner = root.crypto?.randomUUID?.() || `queue-${Date.now()}-${Math.random()}`;
     const running = new Map();
+    const lanes={file:Promise.resolve(),text:Promise.resolve()};
 
     function operationFromDefinition({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }, createdAt = new Date().toISOString()) {
       return {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, envelopeContext:clone(snapshot()), maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
       };
     }
 
@@ -234,7 +235,7 @@
       return values.map(value => resolved.get(value.id));
     }
 
-    async function execute(id, { manual = false } = {}) {
+    async function execute(id, { manual = false, exclusive = false } = {}) {
       const executionContext = context();
       let operation = await store.get(id);
       if (!operation) throw Object.assign(new Error('Сохранённый пакет отправки не найден'),{code:'QUEUE_NOT_FOUND'});
@@ -251,7 +252,7 @@
       }
       assertAutomaticRetryAllowed();
       const attemptLimit = Number(operation.maxAttempts || maxAttempts);
-      const claimed = store.claim ? await store.claim(id, owner, LEASE_MS) : true;
+      const claimed = store.claim ? await store.claim(id, owner, LEASE_MS, exclusive) : true;
       const acquired = Boolean(claimed);
       if (!acquired) throw Object.assign(new Error('Операция уже отправляется в другой вкладке'), {code:'QUEUE_BUSY', leaseUntil:Number(operation.leaseUntil || 0)});
       operation = claimed === true ? await store.get(id) : claimed;
@@ -276,6 +277,11 @@
       // Another tab may reject the operation between the first read and claim.
       // Only the value returned by the atomic claim is authoritative now.
       assertAutomaticRetryAllowed();
+      if(!operation.envelopeContext&&operation.attempts>0&&!manual&&snapshot()){
+        await persistOwned({...operation,status:'failed',error:'LEGACY_RESULT_UNCERTAIN',diagnostic:{status:409,code:'LEGACY_RESULT_UNCERTAIN',requestId:operation.requestId,clientEntryId:operation.clientEntryId,route:operation.method}});
+        throw Object.assign(new Error('Результат старой отправки требует сверки в 1С перед повтором'),{status:409,code:'LEGACY_RESULT_UNCERTAIN',operation,queueStatus:'failed'});
+      }
+      if(!operation.envelopeContext) await persistOwned({...operation,envelopeContext:clone(snapshot())});
       if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {
         guard(operation, executionContext);
@@ -285,7 +291,7 @@
         await persistOwned({ ...operation, attempts: operation.attempts + 1, status: 'sending' }); // Persist before transport so a lost response still consumes the attempt.
         try {
           guard(operation, executionContext);
-          const response = await sender(operation, executionContext);
+          const response = await sender(operation, executionContext, {manual});
           guard(operation, executionContext);
           if(lost)throw leaseLost();
           const removed = store.removeOwned
@@ -328,7 +334,23 @@
 
     function run(id, options) {
       if (running.has(id)) return running.get(id);
-      const promise = execute(id, options).finally(() => running.delete(id));
+      const queuedContext=context();
+      const promise = (async()=>{
+        const operation=await store.get(id);
+        if(!operation)throw Object.assign(new Error('Пакет уже отправлен'),{code:'QUEUE_NOT_FOUND'});
+        guard(operation,queuedContext);
+        const lane=(operation.body?.file || operation.body?.entry?.file)?'file':'text';
+        const task=lanes[lane].catch(()=>{}).then(()=>{
+          guard(operation,queuedContext);
+          if(root.navigator?.locks?.request)return root.navigator.locks.request('itus-operation:'+id,{ifAvailable:true},lock=>{
+            if(!lock)throw Object.assign(new Error('Операция отправляется в другой вкладке'),{code:'QUEUE_BUSY',leaseUntil:Date.now()+1000});
+            return execute(id,{...options,exclusive:true});
+          });
+          return execute(id,options);
+        });
+        lanes[lane]=task.catch(()=>{});
+        return task;
+      })().finally(() => running.delete(id));
       running.set(id, promise);
       return promise;
     }
