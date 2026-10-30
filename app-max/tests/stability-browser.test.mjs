@@ -10,7 +10,7 @@ const hooks=`<script>window.auditCalls=[];const baseFetch=window.fetch;window.fe
 const html=readFileSync(join(root,'index.html'),'utf8').replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script><script src="./config/itus.config.js">').replace('<script src="./assets/app.js"></script>',hooks+'<script src="./assets/app.js"></script>');
 const server=createServer((req,res)=>{const path=new URL(req.url,'http://local.test').pathname,file=path==='/'?null:resolve(root,'.'+path);if(file&&(!file.startsWith(root)||!existsSync(file))){res.writeHead(404).end();return;}res.setHeader('Content-Type',file?({'.css':'text/css','.js':'text/javascript','.svg':'image/svg+xml','.png':'image/png'}[extname(file)]||'text/plain'):'text/html; charset=utf-8');res.end(file?readFileSync(file):html);});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync);assert.ok(browser);
+const browser=[process.env.CHROME_PATH,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser','C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean).find(existsSync);assert.ok(browser);
 const profile=mkdtempSync(join(tmpdir(),'imax-audit-1030-')),child=spawn(browser,['--headless=new','--disable-gpu','--disable-gpu-compositing','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
 let errors='',socket;child.stderr.on('data',c=>errors+=c);
 try{
