@@ -43,6 +43,12 @@ const page = `<!doctype html><meta charset="utf-8"><img src="/wait" hidden><pre 
     expect((await make().get('old-version-file')).body.entry.file.contentBase64==='preserved','upgrade erased an old pending file');
     const oldVersionBlocked=await new Promise(resolve=>{const request=indexedDB.open('itus-operation-queue',3);request.onerror=()=>resolve(request.error.name==='VersionError');request.onsuccess=()=>{request.result.close();resolve(false);};});
     expect(oldVersionBlocked,'old direct-only worker can still replay a buffered operation');
+    if(navigator.locks?.request){
+      const store=ITUS_OPERATION_QUEUE.indexedDbStore();
+      await store.put({id:'closed-tab-lease',scope:'browser',method:'/defects/entries/add',kind:'entry',documentKey:'doc',requestId:'closed-tab-request',body:{documentRef:'doc',entry:{type:'text',text:'Synthetic'}},status:'sending',attempts:1,maxAttempts:5,leaseOwner:'terminated-tab',leaseUntil:Date.now()+600000});
+      await make().run('closed-tab-lease');
+      expect(!await store.get('closed-tab-lease'),'closed browser lease still blocks restart despite exclusive Web Lock');
+    }
     const original = {id:'restart-entry',scope:'browser',method:'/defects/entries/add',kind:'entry',documentKey:'doc',clientEntryId:'entry-1',requestId:'request-1',body:{documentRef:'doc',clientEntryId:'entry-1',entry:{clientEntryId:'entry-1',file:{fileName:'one.jpg',contentBase64:'original'}}}};
     const first = make();
     const [saved] = await first.prepareBatch([original]);

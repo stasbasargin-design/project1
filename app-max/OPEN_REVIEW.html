@@ -739,7 +739,7 @@ window.ITUS_CONFIG = {
   const DB_NAME = 'itus-operation-queue';
   const STORE_NAME = 'operations';
   const MAX_ATTEMPTS = 5;
-  const LEASE_MS = 600000;
+  const LEASE_MS = 90000;
   const RETRY_DELAYS_MS = [0, 1000, 3000, 7000, 15000];
 
   // IndexedDB preserves immutable Blob values without expanding large videos into Base64.
@@ -805,7 +805,7 @@ window.ITUS_CONFIG = {
         tx.onabort = () => reject(tx.error || new Error('Операция IndexedDB отменена'));
       });
     };
-    const claim = async (id, owner, leaseMs) => {
+    const claim = async (id, owner, leaseMs, exclusive = false) => {
       const db = await openDb();
       if (!db) throw new Error('IndexedDB недоступна: пакет отправки не может быть заблокирован');
       return new Promise((resolve, reject) => {
@@ -817,7 +817,7 @@ window.ITUS_CONFIG = {
           const value = request.result;
           if (!value) return;
           const now = Date.now();
-          const activeOtherLease = value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > now;
+          const activeOtherLease = !exclusive && value.leaseOwner && value.leaseOwner !== owner && Number(value.leaseUntil || 0) > now;
           if (activeOtherLease) return;
           claimed = { ...value, leaseOwner: owner, leaseUntil: now + leaseMs };
           store.put(claimed);
@@ -970,7 +970,7 @@ window.ITUS_CONFIG = {
       return values.map(value => resolved.get(value.id));
     }
 
-    async function execute(id, { manual = false } = {}) {
+    async function execute(id, { manual = false, exclusive = false } = {}) {
       const executionContext = context();
       let operation = await store.get(id);
       if (!operation) throw Object.assign(new Error('Сохранённый пакет отправки не найден'),{code:'QUEUE_NOT_FOUND'});
@@ -987,7 +987,7 @@ window.ITUS_CONFIG = {
       }
       assertAutomaticRetryAllowed();
       const attemptLimit = Number(operation.maxAttempts || maxAttempts);
-      const claimed = store.claim ? await store.claim(id, owner, LEASE_MS) : true;
+      const claimed = store.claim ? await store.claim(id, owner, LEASE_MS, exclusive) : true;
       const acquired = Boolean(claimed);
       if (!acquired) throw Object.assign(new Error('Операция уже отправляется в другой вкладке'), {code:'QUEUE_BUSY', leaseUntil:Number(operation.leaseUntil || 0)});
       operation = claimed === true ? await store.get(id) : claimed;
@@ -1071,7 +1071,14 @@ window.ITUS_CONFIG = {
         if(!operation)throw Object.assign(new Error('Пакет уже отправлен'),{code:'QUEUE_NOT_FOUND'});
         guard(operation,queuedContext);
         const lane=(operation.body?.file || operation.body?.entry?.file)?'file':'text';
-        const task=lanes[lane].catch(()=>{}).then(()=>{guard(operation,queuedContext);return execute(id,options);});
+        const task=lanes[lane].catch(()=>{}).then(()=>{
+          guard(operation,queuedContext);
+          if(root.navigator?.locks?.request)return root.navigator.locks.request('itus-operation:'+id,{ifAvailable:true},lock=>{
+            if(!lock)throw Object.assign(new Error('Операция отправляется в другой вкладке'),{code:'QUEUE_BUSY',leaseUntil:Date.now()+1000});
+            return execute(id,{...options,exclusive:true});
+          });
+          return execute(id,options);
+        });
         lanes[lane]=task.catch(()=>{});
         return task;
       })().finally(() => running.delete(id));
