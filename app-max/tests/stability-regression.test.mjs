@@ -53,3 +53,11 @@ await check(`
  assert.deepEqual(bodies[0],bodies[1],'wire body must remain unchanged after reauthentication');
 `);
 console.log('Stability journeys: repeat success/error, detached DOM, in-flight click, ready forms, stale dialog, defect refresh and immutable retry passed');
+await check(`
+ const other={...order,orderRef:'other-order'};app.state.orders.push(context.ITUS_API.mapOrder(other));
+ let release;const held=new Promise(r=>release=r);
+ context.fetch=async(_url,options)=>{const body=JSON.parse(options.body);if(body.orderRef==='test-order')await held;return {ok:true,status:200,text:async()=>JSON.stringify({success:true,data:{order:body.orderRef==='test-order'?order:other}})};};
+ const older=click(button('select-order',{ref:'test-order'}));app.state.view='mp';
+ const newer=click(button('select-order',{ref:'other-order'}));await newer;app.state.view='tech';release();await older;
+ assert.equal(app.currentOrder().orderRef,'other-order');assert.equal(app.state.view,'tech','late selection must not steal the current section');
+`);

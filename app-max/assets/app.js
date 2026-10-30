@@ -83,6 +83,7 @@
     'msg-new-chat', 'msg-source', 'msg-section', 'msg-open', 'msg-refresh', 'msg-refresh-messages', 'msg-send', 'msg-media', 'msg-poll-send', 'msg-poll-vote', 'msg-outbox-show', 'msg-outbox-report', 'msg-outbox-retry'
   ]);
   let mediaPicker = null;
+  let orderSelectionRevision=0,orderLoadingRef='';
   let sheetRevision = 0;
   let sheetOrder = null;
 
@@ -168,6 +169,7 @@
 
   function setAuth(id, mode) {
     sessionGeneration++;
+    orderSelectionRevision++;orderLoadingRef='';
     for (const controller of sessionRequests) controller.abort();
     sessionRequests.clear();
     clearTimeout(queueResumeTimer); queueResumeTimer = null; queueResumeAt = 0;
@@ -449,11 +451,15 @@
   }
 
   async function loadSingleOrder(orderRef, {select = true} = {}) {
+    const selection=select?++orderSelectionRevision:null;
+    if(select){orderLoadingRef=String(orderRef);const known=state.orders.find(item=>String(item.orderRef||item.id)===String(orderRef));if(known)state.selectedOrderId=known.id;render();}
+    try{
     const response = await call1C('/orders/get', { orderRef, orderId: orderRef }, { silent: true });
     const raw = response.order || response.data?.order || response.data || response;
     const mapped = API.mapOrder(raw);
-    if (mapped.id) { mergeOrder(mapped); if (select) state.selectedOrderId = mapped.id; }
+    if (mapped.id) { mergeOrder(mapped); if (select&&selection===orderSelectionRevision) state.selectedOrderId = mapped.id; }
     return mapped;
+    }finally{if(select&&selection===orderSelectionRevision){orderLoadingRef='';render();}}
   }
 
   function renderAuth() {
@@ -539,6 +545,7 @@
     if (state.error) return $('app').innerHTML = `<div class="card"><h2>Нет подключения к 1С</h2><p class="muted">${esc(state.error)}</p><div class="grid two"><button data-action="retry-init">Повторить</button><button data-action="settings">Настройки</button></div></div>`;
     if (!Object.keys(state.views).length) return $('app').innerHTML = '<div class="card"><h2>Нет доступных разделов</h2><p>Обратитесь к администратору 1С для назначения прав.</p><button data-action="logout">Выйти</button></div>';
     if (state.view === 'chat' && messenger) { messenger.enter(); return; }
+    if(orderLoadingRef&&['mp','executor','tech'].includes(state.view))return $('app').innerHTML='<div class="card loading"><span class="spinner"></span>Загружаем выбранный заказ-наряд…</div>';
     const renderers = { orders: renderOrdersView, mp: renderMpView, executor: renderExecutorView, tech: renderTechView, clients: renderClientsView, chat: renderChatView };
     $('app').innerHTML = (renderers[state.view] || renderOrdersView)();
   }
@@ -752,6 +759,7 @@
   }
 
   function renderSelectedCard() {
+    if(orderLoadingRef)return '<div class="card loading"><span class="spinner"></span>Загружаем выбранный заказ-наряд…</div>';
     const order = currentOrder();
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
     const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
@@ -2363,7 +2371,7 @@
       if (action === 'close-sheet') return await closeSheet();
       if (action === 'refresh-orders') { await loadOrders(); return await render(); }
       if (action === 'search-orders') return await searchOrders();
-      if (action === 'select-order') { await loadSingleOrder(button.dataset.ref); state.view = viewForCurrentUser(); return await render(); }
+      if (action === 'select-order') { const loading=loadSingleOrder(button.dataset.ref);state.view=viewForCurrentUser();render();await loading;return render(); }
       if (action === 'load-order') { await loadSingleOrder(currentOrder().orderRef); render(); return await toast('Карточка обновлена из 1С'); }
       if (action === 'scan-order-qr') return await openOrderQrScanner();
       if (action === 'manual-order-qr') return await showOrderQrManual();
