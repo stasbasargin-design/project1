@@ -13,6 +13,7 @@ const upstream=createServer(async(req,res)=>{
  const chunks=[];for await(const chunk of req)chunks.push(chunk);const data=JSON.parse(Buffer.concat(chunks));
  res.setHeader('Content-Type','application/json');
  if(req.url==='/orders/get')return res.end(JSON.stringify({success:true,data:{order:{orderRef:'test-order',defectDocumentRef:'document-one'}}}));
+ if(req.url==='/defects/start'){assert.equal(req.headers['x-itus-request-id'],data.requestId,'legacy 1C requires matching header and body identity');return res.end(JSON.stringify({success:true,data:{entries:[{entryRef:'selected-entry',file:{fileRef:'selected-file',contentBase64:'dGVzdA==',sizeBytes:4,mimeType:'image/png'}}]}}));}
  calls.push({route:req.url,data});
  if(req.url==='/defects/entries/add'){assert.equal(Buffer.from(data.entry.file.contentBase64,'base64').compare(bytes),0);await held;}
  res.end(JSON.stringify({success:true,data:{saved:true}}));
@@ -53,6 +54,7 @@ try{
  assert.equal(calls.filter(x=>x.route==='/acceptance/complete').length,1);
  assert.equal((await request('/jobs',{route:'/defects/entries/add',envelope})).data.state,'confirmed');
  assert.equal(calls.filter(x=>x.route==='/defects/entries/add').length,1);
+ const selected=await request('/attachment',{route:'/defects/start',envelope:{userId:'111',requestId:'read-selected-file',orderRef:'test-order',documentRef:'document-one',existingDocumentRef:'document-one',attachmentRef:'selected-file',entryRef:'selected-entry'},expectedBytes:4});assert.equal(selected.status,200);assert.equal(selected.data.size,4);
  const other=(await request('/pair',{userId:'222',code:await store.issueCode('222')},'')).data.token;
  assert.equal((await request('/jobs/'+job.id,undefined,other)).status,404);
  console.log('Media HTTP: authenticated relay, exact chunk bytes, resume/status, other-user isolation, independent health, durable mixed package and one completion passed');

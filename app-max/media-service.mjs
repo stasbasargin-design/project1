@@ -45,7 +45,7 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
       store=new MediaStore(env.MEDIA_STATE_DIR);await store.init();
       ledger=new WriteLedger({store,scope});
       const s3=await s3Factory(env);
-      downloads=new MediaDownloads({authorize,fetchAttachment:(route,envelope)=>fetch(target+route,{method:'POST',headers:upstreamHeaders(),body:JSON.stringify({...envelope,includeAttachmentContent:true}),signal:AbortSignal.timeout(20*60*1000)})});
+      downloads=new MediaDownloads({authorize,fetchAttachment:(route,envelope)=>fetch(target+route,{method:'POST',headers:{...upstreamHeaders(),'x-itus-request-id':envelope.requestId},body:JSON.stringify({...envelope,includeAttachmentContent:true}),signal:AbortSignal.timeout(20*60*1000)})});
       jobs=new MediaJobs({store,s3,scope,authorize,capacityBytes:Number(env.MEDIA_BUFFER_CAPACITY_BYTES)||50*1024**3,log,
         send:(route,{body,byteLength,requestId,envelope,manual})=>ledger.run(String(envelope.userId),route,envelope,()=>fetch(target+route,{method:'POST',headers:{...upstreamHeaders(),'Content-Length':String(byteLength),'x-itus-request-id':requestId},body,...(typeof body==='string'?{}:{duplex:'half'}),signal:AbortSignal.timeout(Number(env.MEDIA_IMPORT_TIMEOUT_MS)||20*60*1000)}),{manual})});
       await jobs.recover();ready=true;

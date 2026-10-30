@@ -27,5 +27,5 @@ try{
    assert.equal((await fetch(url.replace(prepared.ticket,'0'.repeat(48)))).status,410);
    downloads.entries.get(prepared.ticket).expires=0;await downloads.cleanup();assert.equal((await fetch(url)).status,410);
  }finally{await new Promise(r=>server.close(r));}
- console.log('Binary attachment bridge: bounded streaming, exact IDs/bytes, multiple-file rejection, Range, expiry and cleanup passed');
+ console.log('Binary attachment bridge: bounded streaming, exact IDs/bytes, selection among multiple files, Range, expiry and cleanup passed');
 }finally{await rm(folder,{recursive:true,force:true});}
