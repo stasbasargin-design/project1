@@ -40,16 +40,20 @@ export class MediaStore {
     return this.locked('code:'+key,async()=>{
       const record=await this.get('codes',key);
       if(!record||record.used||record.expires<Date.now()||record.userId!==userId)throw mediaError('Код недействителен или уже использован',401,'DEVICE_CODE_INVALID');
-      const token=randomBytes(32).toString('hex'),expires=Date.now()+30*24*60*60*1000;
       await this.put('codes',key,{...record,used:true});
-      await this.put('devices',digest(token),{userId,expires,createdAt:new Date().toISOString()});
-      return {token,expires};
+      return this.issueDevice(userId);
     });
   }
+  async issueDevice(userId){
+    if(!/^\d{1,30}$/.test(userId))throw mediaError('Нужен числовой MAX ID');
+    const token=randomBytes(32).toString('hex'),expires=Date.now()+30*24*60*60*1000;
+    await this.put('devices',digest(token),{userId,expires,createdAt:new Date().toISOString()});
+    return {token,expires};
+  }
   async authenticate(token){
-    if(!/^[a-f0-9]{64}$/.test(token||''))throw mediaError('Подключите устройство кодом администратора',401,'DEVICE_REQUIRED');
+    if(!/^[a-f0-9]{64}$/.test(token||''))throw mediaError('Требуется обновить подключение файлов',401,'DEVICE_REQUIRED');
     const record=await this.get('devices',digest(token));
-    if(!record||record.expires<Date.now())throw mediaError('Подключите устройство повторно',401,'DEVICE_REQUIRED');
+    if(!record||record.expires<Date.now())throw mediaError('Требуется обновить подключение файлов',401,'DEVICE_REQUIRED');
     return {...record,device:digest(token)};
   }
 }
