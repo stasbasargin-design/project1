@@ -13,6 +13,8 @@ try{
  const stream=Readable.from((async function*(){for(let n=0;n<raw.length;n+=777)yield raw.slice(n,n+777);})());
  const metadata=await extractAttachment(stream,path,{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length});
  assert.equal(metadata.size,bytes.length);assert.equal((await readFile(path)).compare(bytes),0);
+ const wrapped=response();wrapped.data.messages[0].attachments[0].contentBase64=bytes.toString('base64').match(/.{1,76}/g).join('\r\n');
+ const wrappedResult=await extractAttachment(Readable.from([JSON.stringify(wrapped)]),join(folder,'wrapped'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length});assert.equal(wrappedResult.size,bytes.length);assert.equal((await readFile(join(folder,'wrapped'))).compare(bytes),0);
  await assert.rejects(extractAttachment(Readable.from([JSON.stringify(response('another'))]),join(folder,'wrong-file'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length}),error=>error.code==='MEDIA_FILE_MISMATCH');
  await assert.rejects(extractAttachment(Readable.from([JSON.stringify(response('file-one','another'))]),join(folder,'wrong-message'),{fileRef:'file-one',messageRef:'message-one',maxBytes:bytes.length}),error=>error.code==='MEDIA_MESSAGE_MISMATCH');
  const many=response();many.data.messages[0].attachments.push({fileRef:'another',contentBase64:'YQ=='});

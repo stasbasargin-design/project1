@@ -23,7 +23,10 @@ export async function extractAttachment(stream,path,{fileRef,messageRef='',maxBy
     if(!/^[A-Za-z0-9+/]*={0,2}$/.test(value)||current.padded&&/[^=]/.test(value))throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
     current.padding+=(value.match(/=/g)||[]).length;if(current.padding>2)throw mediaError('Неверное содержимое файла',502,'MEDIA_BAD_BASE64');
     if(value.includes('='))current.padded=true;
-    current.carry+=value;const count=final?current.carry.length:Math.max(0,Math.floor(current.carry.length/4)*4-(current.padded?4:0));
+    // Legacy 1C wraps Base64 at 76 characters. Batch those fragments instead
+    // of issuing hundreds of thousands of tiny disk writes for one video.
+    current.carry+=value;if(!final&&current.carry.length<64*1024)return;
+    const count=final?current.carry.length:Math.max(0,Math.floor(current.carry.length/4)*4-(current.padded?4:0));
     if(final&&current.carry.length%4)throw mediaError('Файл передан не полностью',502,'MEDIA_BAD_BASE64');
     if(count){const bytes=Buffer.from(current.carry.slice(0,count),'base64');current.carry=current.carry.slice(count);current.bytes+=bytes.length;if(current.bytes>maxBytes)throw mediaError('Недостаточно места для выбранного файла',507,'MEDIA_DOWNLOAD_CAPACITY');await current.handle.writeFile(bytes);}
   }
