@@ -91,6 +91,6 @@ export async function prepareVideoRequest(req,route,{directory=MEDIA_DIRECTORY,s
       if(carry.length)yield carry.toString('base64');
       yield suffix;
     })());
-    return {body,byteLength:prefix.length+4*Math.ceil(size/3)+suffix.length,cleanup};
+    return {body,byteLength:prefix.length+4*Math.ceil(size/3)+suffix.length,cleanup,envelope};
   }catch(error){await cleanup();throw error;}
 }

@@ -64,8 +64,8 @@
           try {
             const body = JSON.parse(requestInit.body);
             if (body && !Array.isArray(body) && typeof body === 'object') {
-              body.clientBotId = String(ids.clientBotId || '');
-              body.serviceBotId = String(ids.serviceBotId || '');
+              if(!Object.prototype.hasOwnProperty.call(body,'clientBotId'))body.clientBotId = String(ids.clientBotId || '');
+              if(!Object.prototype.hasOwnProperty.call(body,'serviceBotId'))body.serviceBotId = String(ids.serviceBotId || '');
               requestInit.body = JSON.stringify(body);
             }
           } catch (_) {}
@@ -75,6 +75,10 @@
 
     const response = await originalFetch(input, requestInit);
 
+    // Bot IDs are returned by login only. Cloning history/media responses doubled
+    // memory consumption for every attachment and could stall a mobile WebView.
+    const requestUrl=String(typeof input==='string'?input:input?.url || '');
+    if (!/\/auth\/max(?:[?#]|$)/.test(requestUrl)) return response;
     try {
       const clone = response.clone();
       const ct = clone.headers.get('content-type') || '';

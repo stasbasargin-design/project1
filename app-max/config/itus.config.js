@@ -54,9 +54,9 @@ window.ITUS_CONFIG = {
 
   // Фото/документы сохраняют прежние ограничения. Видео передаётся отдельным
   // бинарным транспортом, без фиксированного лимита размера в приложении.
-  MAX_PHOTO_UPLOAD_BYTES: 15728640,
+  MAX_PHOTO_UPLOAD_BYTES: 0,
   MAX_VIDEO_UPLOAD_BYTES: 0,
-  MAX_DOCUMENT_UPLOAD_BYTES: 15728640,
+  MAX_DOCUMENT_UPLOAD_BYTES: 0,
   // Compatibility for older clients; new code uses the type-specific values above.
   MAX_UPLOAD_BYTES: 15728640,
 

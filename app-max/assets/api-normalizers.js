@@ -43,6 +43,7 @@
       }
       const base = {
         id: text(item?.entryRef || item?.defectRef || item?.id, String(index)),
+        clientEntryId: text(item?.clientEntryId),
         type: text(item?.type, 'text'),
         text: text(item?.text || item?.description || item?.title),
         createdAt: text(item?.createdAt || item?.date),
@@ -78,6 +79,8 @@
       fileName: text(value.fileName || value.name, 'Файл'),
       mimeType: text(value.mimeType || value.contentType),
       sizeBytes: Number(value.sizeBytes || value.size || 0),
+      ...(value.bufferJobId ? {bufferJobId:text(value.bufferJobId)} : {}),
+      ...(value.contentBlob && typeof value.contentBlob.size === 'number' ? {contentBlob:value.contentBlob} : {}),
       contentBase64: text(value.contentBase64 || value.base64),
       downloadUrl: text(value.downloadUrl || value.url),
       previewUrl: text(value.previewUrl || value.thumbnailUrl)

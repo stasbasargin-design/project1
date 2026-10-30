@@ -40,9 +40,9 @@
   function openDb() {
     if (!root.indexedDB) return Promise.resolve(null);
     return new Promise((resolve,reject) => {
-      // Version 3 prevents an old JSON-only worker from rewriting a Blob as {}.
-      // The store and every existing operation remain intact during the upgrade.
-      const request = root.indexedDB.open(DB_NAME, 3);
+      // Version 4 fences old senders that do not understand an S3-buffer route.
+      // The store and all v2/v3 operations (including Blobs) remain intact.
+      const request = root.indexedDB.open(DB_NAME, 4);
       let blocked=false;
       request.onblocked=()=>{blocked=true;reject(Object.assign(new Error('Закройте старые вкладки I-MAX и повторите сохранение. Выбранные файлы остаются в форме.'),{code:'QUEUE_UPGRADE_BLOCKED'}));};
       request.onupgradeneeded = () => {
@@ -188,15 +188,16 @@
     return status === 0 || status >= 500 || error?.name === 'TypeError' || error?.code === 'TIMEOUT';
   }
 
-  function create({ store = indexedDbStore(), sender, context = () => null, guard = () => {}, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
+  function create({ store = indexedDbStore(), sender, context = () => null, guard = () => {}, snapshot = () => null, delays = RETRY_DELAYS_MS, maxAttempts = MAX_ATTEMPTS } = {}) {
     if (typeof sender !== 'function') throw new Error('Operation queue sender is required');
     const owner = root.crypto?.randomUUID?.() || `queue-${Date.now()}-${Math.random()}`;
     const running = new Map();
+    const lanes={file:Promise.resolve(),text:Promise.resolve()};
 
     function operationFromDefinition({ id, method, body, clientEntryId = '', requestId = '', kind = 'entry', scope = '', documentKey = '', operationMaxAttempts = maxAttempts }, createdAt = new Date().toISOString()) {
       return {
         id, method, body: clone(body), clientEntryId, requestId,
-        kind, scope, documentKey, maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
+        kind, scope, documentKey, envelopeContext:clone(snapshot()), maxAttempts: operationMaxAttempts, attempts: 0, status: 'pending', createdAt, error: '', diagnostic: null, leaseOwner: '', leaseUntil: 0
       };
     }
 
@@ -276,6 +277,7 @@
       // Another tab may reject the operation between the first read and claim.
       // Only the value returned by the atomic claim is authoritative now.
       assertAutomaticRetryAllowed();
+      if(!operation.envelopeContext) await persistOwned({...operation,envelopeContext:clone(snapshot())});
       if (manual) await persistOwned({ ...operation, attempts: 0, status: 'pending', error: '', diagnostic: null });
       while (operation.attempts < attemptLimit) {
         guard(operation, executionContext);
@@ -285,7 +287,7 @@
         await persistOwned({ ...operation, attempts: operation.attempts + 1, status: 'sending' }); // Persist before transport so a lost response still consumes the attempt.
         try {
           guard(operation, executionContext);
-          const response = await sender(operation, executionContext);
+          const response = await sender(operation, executionContext, {manual});
           guard(operation, executionContext);
           if(lost)throw leaseLost();
           const removed = store.removeOwned
@@ -328,7 +330,16 @@
 
     function run(id, options) {
       if (running.has(id)) return running.get(id);
-      const promise = execute(id, options).finally(() => running.delete(id));
+      const queuedContext=context();
+      const promise = (async()=>{
+        const operation=await store.get(id);
+        if(!operation)throw Object.assign(new Error('Пакет уже отправлен'),{code:'QUEUE_NOT_FOUND'});
+        guard(operation,queuedContext);
+        const lane=(operation.body?.file || operation.body?.entry?.file)?'file':'text';
+        const task=lanes[lane].catch(()=>{}).then(()=>{guard(operation,queuedContext);return execute(id,options);});
+        lanes[lane]=task.catch(()=>{});
+        return task;
+      })().finally(() => running.delete(id));
       running.set(id, promise);
       return promise;
     }

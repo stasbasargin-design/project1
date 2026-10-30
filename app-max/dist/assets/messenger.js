@@ -13,6 +13,7 @@
     const blobUrls=new Map();
     const mediaMemory=new Map(), mediaLoading=new Map(), restored=new Set();
     let outboxItems=[], outboxRunning=null, outboxRevision=0, outboxRerun=false;
+    const outboxActive=new Map();
     const CACHE_DB='itus-max-messenger-v1', CACHE_TTL=7*24*60*60*1000, CACHE_THREADS=40, CACHE_MEDIA_BYTES=25*1024*1024;
     let openingContact=false;
     const key=(s,id)=>s+':'+id;
@@ -30,7 +31,7 @@
       const rejected=['invalid','failed'].includes(operation.status);
       const status=operation.status==='invalid'?'Данные отклонены — нужна проверка':operation.status==='failed'?'Отправка не подтверждена':operation.status==='sending'?'Отправляется…':'Сохранено на устройстве';
       const name=operation.body?.file?.fileName||operation.body?.text||'Сообщение';
-      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div>${status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button><button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`:''}</div>`;
+      return `<div class="notice" data-chat-operation="${escape(operation.id)}"><strong>${escape(String(name).slice(0,90))}</strong><div data-media-progress="${escape(operation.requestId)}">${status}</div>${rejected?`<button data-action="msg-outbox-report" data-operation="${escape(operation.id)}">Отчёт</button><button data-action="msg-outbox-retry" data-operation="${escape(operation.id)}">${operation.status==='invalid'?'Повторить после проверки':'Повторить'}</button>`:''}</div>`;
     }).join('');}
     function threadOutboxHtml(){return outboxRows(outboxItems.filter(operation=>{const thread=chatThread(operation);return thread.source===source&&thread.ref===selected;}));}
     function paintOutbox(){
@@ -63,17 +64,22 @@
     }
     async function drainOutbox(){
       if(!outbox?.run)return;
-      if(outboxRunning){outboxRerun=true;return outboxRunning;}
       const session=epoch,scope=outboxScope();
       const running=(async()=>{
         const operations=await refreshOutbox();
+        const tasks=[];
         for(const operation of operations){
           ensureOutboxSession(session,scope);
           if(!['pending','sending'].includes(operation.status))continue;
+          if(outboxActive.has(operation.id)){tasks.push(outboxActive.get(operation.id));continue;}
+          const task=(async()=>{
           try {const response=await outbox.run(operation.id);ensureOutboxSession(session,scope);await confirmedOutbox(operation,response);}
           catch(error){if(['SESSION_CHANGED','QUEUE_PAUSED'].includes(error?.code))return;if(!['QUEUE_BUSY','QUEUE_NOT_FOUND'].includes(error?.code)&&session===epoch)errors[key(chatThread(operation).source,chatThread(operation).ref)]=error.message;}
           if(session===epoch&&scope===outboxScope())await refreshOutbox();
+          })().finally(()=>{if(outboxActive.get(operation.id)===task)outboxActive.delete(operation.id);});
+          outboxActive.set(operation.id,task);tasks.push(task);
         }
+        await Promise.all(tasks);
       })();
       outboxRunning=running;
       try{return await running;}finally{if(outboxRunning===running){outboxRunning=null;const again=outboxRerun;outboxRerun=false;if(again&&session===epoch&&scope===outboxScope())startOutbox();}}
@@ -367,11 +373,13 @@
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
       const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(s,id,message?.messageRef,file);
       async function asUrl(record){
+        if(record?.url&&record.expires>Date.now())return record.url;
         if(!record?.blob)return '';
         const existing=blobUrls.get(stableKey);if(existing)return existing;
         const url=URL.createObjectURL(record.blob);blobUrls.set(stableKey,url);return url;
       }
       let record=stableKey?mediaMemory.get(stableKey):null;
+      if(record?.expires&&record.expires<Date.now()){mediaMemory.delete(stableKey);record=null;}
       if(!record&&stableKey){record=await readStore('media',stableKey);if(!active())return;if(record?.owner===who&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
       if(!active())return;
       if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:who,key:stableKey};}catch{record=null;}}
@@ -380,6 +388,9 @@
         let pending=mediaLoading.get(stableKey);
         if(!pending){pending=(async()=>{
           if(!active())return null;
+          const binary=await options.attachment?.(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},file.sizeBytes);
+          if(!sameOwner())return null;
+          if(binary?.url){const saved={url:binary.url,expires:Date.now()+9*60*1000,owner:who,key:stableKey};mediaMemory.set(stableKey,saved);return saved;}
           const response=await call(endpoints(s)+'/messages/list',{...params(s,id),includeAttachmentContent:true,messageRef:message.messageRef,attachmentRef:file.fileRef},{silent:true});
           if(!sameOwner())return null;
           const fresh=api.extractItems(response,['messages']).map(api.normalizeMessage);cache[thread]=mergeMessages(cache[thread],fresh);void persistThread(thread);

@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,existsSync,mkdtempSync,rmSync,mkdirSync} from 'node:fs';
+import {createServer} from 'node:http';
+import {spawn} from 'node:child_process';
+import {join,extname,resolve} from 'node:path';
+import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url)),out=process.env.STABILITY_ARTIFACT_DIR||join(tmpdir(),'imax-stability-browser-artifacts');mkdirSync(out,{recursive:true});
+const hooks=`<script>window.auditCalls=[];const baseFetch=window.fetch;window.fetch=async(url,options={})=>{const route=String(url);auditCalls.push(route);if(route.endsWith('/defects/start'))return new Response(JSON.stringify({success:true,data:{documentRef:'synthetic-defect',entries:[{entryRef:'synthetic-entry',type:'text',text:'Синтетическая запись для проверки интерфейса'}]}}),{headers:{'Content-Type':'application/json'}});return baseFetch(url,options);};</script>`;
+const html=readFileSync(join(root,'index.html'),'utf8').replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script><script src="./config/itus.config.js">').replace('<script src="./assets/app.js"></script>',hooks+'<script src="./assets/app.js"></script>');
+const server=createServer((req,res)=>{const path=new URL(req.url,'http://local.test').pathname,file=path==='/'?null:resolve(root,'.'+path);if(file&&(!file.startsWith(root)||!existsSync(file))){res.writeHead(404).end();return;}res.setHeader('Content-Type',file?({'.css':'text/css','.js':'text/javascript','.svg':'image/svg+xml','.png':'image/png'}[extname(file)]||'text/plain'):'text/html; charset=utf-8');res.end(file?readFileSync(file):html);});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync);assert.ok(browser);
+const profile=mkdtempSync(join(tmpdir(),'imax-audit-1030-')),child=spawn(browser,['--headless=new','--disable-gpu','--disable-gpu-compositing','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+let errors='',socket;child.stderr.on('data',c=>errors+=c);
+try{
+ const portFile=join(profile,'DevToolsActivePort');for(let n=0;n<200&&!existsSync(portFile);n++)await new Promise(r=>setTimeout(r,50));assert.ok(existsSync(portFile),errors);
+ const port=readFileSync(portFile,'utf8').split('\n')[0],pages=await(await fetch('http://127.0.0.1:'+port+'/json/list')).json();socket=new WebSocket(pages.find(x=>x.type==='page').webSocketDebuggerUrl);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
+ let seq=0;const waiting=new Map();socket.onmessage=e=>{const m=JSON.parse(e.data),w=waiting.get(m.id);if(!w)return;waiting.delete(m.id);clearTimeout(w.timer);m.error?w.reject(Error(JSON.stringify(m.error))):w.resolve(m.result);};
+ const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>reject(Error('CDP timeout '+method)),15000);waiting.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
+ const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+ const settle=()=>evaluate('new Promise(r=>setTimeout(r,80))');
+ const wait=selector=>evaluate(`new Promise((r,j)=>{const t=setInterval(()=>{if(document.querySelector(${JSON.stringify(selector)})){clearInterval(t);r(true)}},20);setTimeout(()=>{clearInterval(t);j(Error('Missing '+${JSON.stringify(selector)}))},5000)})`);
+ const screenshot=async name=>writeFileSync(join(out,name+'.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await send('Page.enable');await send('Runtime.enable');await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});
+ await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=executor`});await wait('#orderSearch');
+ await evaluate(`document.querySelector('[data-view="executor"]').click()`);await wait('[data-action="open-defect-chat"]');
+ await evaluate(`document.querySelector('[data-action="open-defect-chat"]').click()`);await wait('.defect-history');await screenshot('defect-first-open');
+ await evaluate(`document.getElementById('closeSheetButton').click()`);await settle();
+ const before=await evaluate(`auditCalls.length`);await evaluate(`document.querySelector('[data-action="open-defect-chat"]').click()`);await settle();
+ const defect=await evaluate(`({overlayHidden:document.getElementById('overlay').classList.contains('hidden'),buttonDisabled:document.querySelector('[data-action="open-defect-chat"]').disabled,requests:auditCalls.length})`);
+ assert.equal(defect.overlayHidden,false);assert.equal(defect.buttonDisabled,false);assert.ok(defect.requests>before);await screenshot('defect-reopened');
+ await evaluate(`document.querySelector('[data-view="chat"]').click()`);await wait('[data-action="msg-open"]');
+ await evaluate(`document.querySelector('[data-action="msg-open"]').click()`);await wait('#msgDraft');
+ const chatBefore=await evaluate(`auditCalls.filter(x=>x.endsWith('/messages/send')).length`);
+ await evaluate(`(()=>{const t=document.getElementById('msgDraft');t.value='Синтетическое первое сообщение';t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-action="msg-send"]').click()})()`);await settle();await settle();
+ const first=await evaluate(`auditCalls.filter(x=>x.endsWith('/messages/send')).length`);
+ await evaluate(`(()=>{const t=document.getElementById('msgDraft');t.value='Синтетическое второе сообщение';t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-action="msg-send"]').click()})()`);await settle();
+ const chat=await evaluate(`({sendCalls:auditCalls.filter(x=>x.endsWith('/messages/send')).length,draft:document.getElementById('msgDraft').value,buttonDisabled:document.querySelector('[data-action="msg-send"]').disabled})`);
+ assert.equal(first,chatBefore+1);assert.equal(chat.sendCalls,first+1);assert.equal(chat.buttonDisabled,false);assert.equal(chat.draft,'');await screenshot('second-chat-send-succeeded');
+ // No request leaves localhost: the review fixture supplies every API response.
+ const geometry=await evaluate(`(()=>{const out={innerHeight,innerWidth,bodyClass:document.body.className,scale:document.documentElement.dataset.displaySize};for(const s of ['.phone','.top','#tabs','#notifications','#app','.messenger','.msg-conversation','.msg-history','.msg-compose']){const e=document.querySelector(s),r=e?.getBoundingClientRect(),c=e&&getComputedStyle(e);out[s]=r?{top:r.top,bottom:r.bottom,height:r.height,overflow:c.overflow,flex:c.flex,minHeight:c.minHeight}:null;}return out;})()`);
+ const result={version:'2.8.1',defectReopen:defect,secondChatSend:chat,geometry,liveDataUsed:false};writeFileSync(join(out,'journeys.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));await send('Browser.close');socket.close();
+}finally{socket?.close();child.kill();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}
