@@ -713,6 +713,16 @@
             "orderRef": "ORDER_GUID",
             "createdAt": "2026-07-20T10:01:00+05:00",
             "payload": {}
+          },
+          {
+            "eventId": "EVENT_3",
+            "type": "defect_complete",
+            "title": "Дефектовка завершена",
+            "message": "Откройте данные дефектовки",
+            "orderRef": "ORDER_GUID",
+            "documentRef": "DEFECT_GUID",
+            "createdAt": "2026-07-20T10:02:00+05:00",
+            "payload": {}
           }
         ]
       }

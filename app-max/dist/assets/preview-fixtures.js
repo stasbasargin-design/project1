@@ -7,7 +7,7 @@
   window.WebApp = {ready(){},expand(){},platform:'review',user:{id:'900000001'}};
   const messages = [{id:'m1',authorName:'Тестовый клиент',text:'Здравствуйте! Фото прикреплено.',createdAt:'2026-09-24T14:10:15+05:00'},
     {id:'m2',authorName:'Имя из истории',text:'Проверка имени текущего сотрудника',direction:'outgoing',createdAt:'2026-09-24T09:12:18Z'}];
-  const events = ['new_messages','executor_assigned','quality_control_requested'].map((type,i)=>({eventId:'review-'+i,type,title:'Проверочное уведомление',message:type,orderRef:'review-order',payload:{unreadCount:3}}));
+  const events = ['new_messages','executor_assigned','quality_control_requested','defect_complete'].map((type,i)=>({eventId:'review-'+i,type,title:'Проверочное уведомление',message:type,orderRef:'review-order',documentRef:type==='defect_complete'?'review-defect':'',payload:{unreadCount:3}}));
   let poll = 0;
   let reviewUnread = 3;
   let clientUnread = 1;
@@ -15,7 +15,7 @@
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();
-  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
+  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',defectDocumentRef:'review-defect',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
   window.fetch = async (url,options={}) => {
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}

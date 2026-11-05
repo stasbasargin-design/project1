@@ -5,7 +5,7 @@
     const roles = Array.isArray(user?.roles) ? user.roles : [user?.role, user?.roleName];
     const roleEvents = roles.flatMap(role => roleTypes[typeof role === 'object' ? (role.code || role.name) : role] || []);
     // New chat messages are relevant to every authorized employee, not only the МП role.
-    return ['new_messages', ...roleEvents].filter((type,index,array) => array.indexOf(type) === index);
+    return ['new_messages', 'defect_complete', ...roleEvents].filter((type,index,array) => array.indexOf(type) === index);
   }
   function dateTime(value) {
     if (!value) return '';
@@ -23,9 +23,9 @@
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
   }
   function preferences(id) {
-    try { return {new_messages:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true,
+    try { return {new_messages:true,defect_complete:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true,
       ...JSON.parse(localStorage.getItem('itus.notifications.'+id) || '{}')}; }
-    catch { return {new_messages:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true}; }
+    catch { return {new_messages:true,defect_complete:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true}; }
   }
   root.ITUS_FEATURES = {typesFor, dateTime, unread, preferences};
 })(typeof window === 'undefined' ? globalThis : window);

@@ -16,6 +16,9 @@ assert.equal(formatted.data.type, 'new_messages');
 assert.equal(formatted.data.eventId, 'event-1');
 assert.ok(Buffer.byteLength(JSON.stringify({notification:{title:formatted.title,body:formatted.body},data:formatted.data}), 'utf8') <= FCM_SAFE_PAYLOAD_BYTES);
 
+const defectComplete = fitPushPayload({title:'I-MAX',body:'Дефектовка завершена',data:{type:'defect_complete',eventId:'defect-event',orderRef:'defect-order',documentRef:'defect-document'}});
+assert.deepEqual(defectComplete.data,{type:'defect_complete',eventId:'defect-event',orderRef:'defect-order',documentRef:'defect-document'});
+
 const unicode = fitPushPayload({title:'I-MAX',body:'🙂'.repeat(3000),data:{type:'new_messages',eventId:'unicode'}});
 assert.ok(Buffer.byteLength(JSON.stringify({notification:{title:unicode.title,body:unicode.body},data:unicode.data}), 'utf8') <= FCM_SAFE_PAYLOAD_BYTES);
 assert.equal(/[\uD800-\uDBFF]$/.test(unicode.body), false);

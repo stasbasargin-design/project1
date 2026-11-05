@@ -253,7 +253,7 @@ body.messenger-view footer{display:none}
   window.WebApp = {ready(){},expand(){},platform:'review',user:{id:'900000001'}};
   const messages = [{id:'m1',authorName:'Тестовый клиент',text:'Здравствуйте! Фото прикреплено.',createdAt:'2026-09-24T14:10:15+05:00'},
     {id:'m2',authorName:'Имя из истории',text:'Проверка имени текущего сотрудника',direction:'outgoing',createdAt:'2026-09-24T09:12:18Z'}];
-  const events = ['new_messages','executor_assigned','quality_control_requested'].map((type,i)=>({eventId:'review-'+i,type,title:'Проверочное уведомление',message:type,orderRef:'review-order',payload:{unreadCount:3}}));
+  const events = ['new_messages','executor_assigned','quality_control_requested','defect_complete'].map((type,i)=>({eventId:'review-'+i,type,title:'Проверочное уведомление',message:type,orderRef:'review-order',documentRef:type==='defect_complete'?'review-defect':'',payload:{unreadCount:3}}));
   let poll = 0;
   let reviewUnread = 3;
   let clientUnread = 1;
@@ -261,7 +261,7 @@ body.messenger-view footer{display:none}
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();
-  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
+  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',defectDocumentRef:'review-defect',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
   window.fetch = async (url,options={}) => {
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
@@ -713,7 +713,7 @@ window.ITUS_CONFIG = {
     const roles = Array.isArray(user?.roles) ? user.roles : [user?.role, user?.roleName];
     const roleEvents = roles.flatMap(role => roleTypes[typeof role === 'object' ? (role.code || role.name) : role] || []);
     // New chat messages are relevant to every authorized employee, not only the МП role.
-    return ['new_messages', ...roleEvents].filter((type,index,array) => array.indexOf(type) === index);
+    return ['new_messages', 'defect_complete', ...roleEvents].filter((type,index,array) => array.indexOf(type) === index);
   }
   function dateTime(value) {
     if (!value) return '';
@@ -731,9 +731,9 @@ window.ITUS_CONFIG = {
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
   }
   function preferences(id) {
-    try { return {new_messages:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true,
+    try { return {new_messages:true,defect_complete:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true,
       ...JSON.parse(localStorage.getItem('itus.notifications.'+id) || '{}')}; }
-    catch { return {new_messages:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true}; }
+    catch { return {new_messages:true,defect_complete:true,executor_assigned:true,executor_changed:true,task_assigned:true,quality_control_requested:true,system:true}; }
   }
   root.ITUS_FEATURES = {typesFor, dateTime, unread, preferences};
 })(typeof window === 'undefined' ? globalThis : window);
@@ -12501,7 +12501,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.2'
+    version: 'i-max-2.8.3'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -14060,7 +14060,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     return completion;
   }
   const hasDocumentRef = ref => Boolean(String(ref || '').trim()) && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(String(ref));
-  async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false} = {}) {
+  async function ensureDefectSheet(order = currentOrder(), {refreshExisting = false, verifiedOrder = null} = {}) {
     if (!order) throw new Error('Выберите заказ-наряд');
     const session=sessionSnapshot();
     if (!refreshExisting && hasDocumentRef(order._defectSheet?.documentRef)) return order._defectSheet;
@@ -14079,8 +14079,11 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     if (!refreshExisting && hasDocumentRef(order.defectDocumentRef)) return existing(order.defectDocumentRef, order.defects);
     const pending = (async () => {
       // Read the current order first; a stale list must not trigger creation.
-      const response = await call1C('/orders/get', {orderRef:ref,orderId:ref},{session});
-      const fresh = API.mapOrder(response.order || response.data?.order || response.data || response);
+      let fresh = verifiedOrder;
+      if (!fresh) {
+        const response = await call1C('/orders/get', {orderRef:ref,orderId:ref},{session});
+        fresh = API.mapOrder(response.order || response.data?.order || response.data || response);
+      }
       if ((fresh.orderRef || fresh.id) !== ref) throw new Error('Не удалось проверить действующий документ выбранного ЗН');
       const existingRef = fresh.defectDocumentRef || order.defectDocumentRef || order._defectSheet?.documentRef || '';
       if (!refreshExisting && hasDocumentRef(existingRef)) return existing(existingRef, fresh.defects || order.defects);
@@ -14499,9 +14502,11 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     const type = String(payload?.type || '').trim();
     const orderRef = String(payload?.orderRef || payload?.orderId || '').trim();
     const topicRef = String(payload?.topicRef || payload?.topicId || '').trim();
+    const documentRef = String(payload?.documentRef || payload?.payload?.documentRef || '').trim();
     if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
     if (type === 'quality_control_requested') return orderRef ? {type,orderRef,payload:payload?.payload,message:payload?.message,eventId:String(payload?.eventId || payload?.notificationId || '')} : null;
     if (type === 'new_messages') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
+    if (type === 'defect_complete') return orderRef && documentRef ? {type,orderRef,documentRef,eventId:String(payload?.eventId || payload?.notificationId || '')} : null;
     if (orderRef) return {type,orderRef,eventId:String(payload?.eventId || payload?.notificationId || '')};
     return null;
   }
@@ -14509,7 +14514,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     const target = normalizePushTarget(data);
     return target?.type === 'internal_chat_message' ? Boolean(messenger?.refreshInternalThreadFromPush?.(target.topicRef)) : false;
   }
-  function pushTargetKey(target) { return target.eventId || `${target.type}:${target.topicRef || target.orderRef || ''}`; }
+  function pushTargetKey(target) { return target.eventId || `${target.type}:${target.topicRef || target.orderRef || ''}:${target.documentRef || ''}`; }
   async function openQualityPushTarget(target) {
     if (!state.views.tech) throw new Error('Выходной контроль недоступен для вашей роли');
     await loadSingleOrder(target.orderRef);
@@ -14520,6 +14525,28 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     render();
     toast(target.message || 'Открыт запрос выходного контроля');
   }
+  async function openCompletedDefectPushTarget(target) {
+    const order = await loadSingleOrder(target.orderRef);
+    if (String(order?.orderRef || order?.id || '') !== target.orderRef) throw new Error('Заказ-наряд не найден или недоступен');
+    if (String(order?.defectDocumentRef || order?._defectSheet?.documentRef || '') !== target.documentRef) {
+      throw new Error('Дефектовка не найдена или не соответствует заказ-наряду');
+    }
+    state.selectedOrderId = order.id;
+    state.view = 'orders';
+    render();
+    showSheet('Дефектовочная ведомость', 'Загружаем завершённую дефектовку из 1С', '<div class="loading"><span class="spinner"></span>Загрузка…</div>');
+    const context = sheetContext();
+    try {
+      const process = await ensureDefectSheet(order, {refreshExisting:true,verifiedOrder:order});
+      if (!sheetCurrent(context)) return false;
+      if (String(process.documentRef || '') !== target.documentRef) throw new Error('1С вернула другую дефектовочную ведомость');
+      renderDefectSheet();
+      return true;
+    } catch (error) {
+      if (sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+      throw error;
+    }
+  }
   async function applyPushTarget(target) {
     if (target.type === 'internal_chat_message') {
       if (!state.views.chat) throw new Error('Внутренние чаты недоступны для вашей роли');
@@ -14528,6 +14555,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       return;
     }
     if (target.type === 'quality_control_requested') return openQualityPushTarget(target);
+    if (target.type === 'defect_complete') return openCompletedDefectPushTarget(target);
     if (target.type === 'new_messages') {
       if (!state.views.clients) throw new Error('Чаты с клиентами недоступны для вашей роли');
       await setView('clients');
@@ -14580,7 +14608,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
 
   function showNotificationSettings() {
     const prefs = FEATURES.preferences(state.userId);
-    const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
+    const labels = {new_messages:'Новые сообщения бота',defect_complete:'Завершение дефектовки',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
     const types = FEATURES.typesFor(state.user);
     const native = nativePush();
     const deviceButton = native
@@ -14624,7 +14652,8 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
         if (!types.includes(type)) continue;
         const event = {eventId:String(raw.eventId || raw.id || JSON.stringify(raw)), type,
           title:String(raw.title || 'Уведомление из 1С'),message:String(raw.message || raw.text || ''),
-          orderRef:String(raw.orderRef || raw.orderId || raw.payload?.orderRef || ''),payload:raw.payload || {}};
+          orderRef:String(raw.orderRef || raw.orderId || raw.payload?.orderRef || ''),
+          documentRef:String(raw.documentRef || raw.payload?.documentRef || ''),payload:raw.payload || {}};
         if (state.seenEvents.has(event.eventId)) continue;
         if (type === 'new_messages' && count === null && state.unreadRevision === unreadRevision) {
           const eventCount = FEATURES.unread(raw.payload || raw);
@@ -14662,6 +14691,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     const event = state.notifications.find(item => item.eventId === eventId); if (!event) return;
     if (event.type === 'new_messages') return openPushTarget(event);
     if (event.type === 'quality_control_requested') return openQualityNotification(event);
+    if (event.type === 'defect_complete') return openPushTarget(event);
     if (event.orderRef) { await loadSingleOrder(event.orderRef); state.view = event.type === 'executor_assigned' ? 'executor' : 'orders'; render(); }
   }
 
@@ -14965,9 +14995,9 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     void window.ITUS_WEB_PUSH?.prepare().catch(() => {});
     const launch = new URL(window.location.href);
     if (launch.searchParams.get('push') === '1') {
-      const target = Object.fromEntries(['type','eventId','topicRef','topicId','orderRef','orderId'].map(key => [key,launch.searchParams.get(key) || '']));
+      const target = Object.fromEntries(['type','eventId','topicRef','topicId','orderRef','orderId','documentRef'].map(key => [key,launch.searchParams.get(key) || '']));
       void openPushTarget(target);
-      for (const key of ['push','type','eventId','topicRef','topicId','orderRef','orderId']) launch.searchParams.delete(key);
+      for (const key of ['push','type','eventId','topicRef','topicId','orderRef','orderId','documentRef']) launch.searchParams.delete(key);
       window.history.replaceState(null,'',launch.href);
     }
   }

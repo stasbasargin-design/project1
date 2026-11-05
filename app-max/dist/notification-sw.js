@@ -5,7 +5,7 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 function targetUrl(data) {
   const target = new URL('./', self.registration.scope);
   target.searchParams.set('push', '1');
-  for (const key of ['type', 'eventId', 'topicRef', 'topicId', 'orderRef', 'orderId']) {
+  for (const key of ['type', 'eventId', 'topicRef', 'topicId', 'orderRef', 'orderId', 'documentRef']) {
     if (typeof data?.[key] === 'string' && data[key].length <= 256) target.searchParams.set(key, data[key]);
   }
   return target.href;

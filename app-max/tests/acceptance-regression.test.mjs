@@ -60,7 +60,7 @@ const queueStore = {
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, commitMediaBatch, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, commitMediaBatch, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, normalizePushTarget, openPushTarget, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -222,3 +222,18 @@ await Promise.all([app.ensureDefectSheet(),app.ensureDefectSheet()]);
 assert.equal(calls.filter(c=>c.url.endsWith('/defects/start')).length,startCount+1);
 assert.equal(context.ITUS_API.mapOrder({...order,defectSheet:{documentRef:'nested-doc'}}).defectDocumentRef,'nested-doc');
 console.log('Existing document regression: OK — direct append, refresh before create, single concurrent start, nested reference.');
+
+// A completed-defect Push opens only the exact accessible document.
+app.state.initialized=true;order.defectDocumentRef='def-1';app.currentOrder().defectDocumentRef='def-1';app.currentOrder()._defectSheet=null;
+assert.equal(app.normalizePushTarget({type:'defect_complete',eventId:'defect-event'}),null);
+assert.equal(app.normalizePushTarget({type:'defect_complete',documentRef:'def-1',eventId:'defect-event'}),null);
+const defectPushOrders=calls.filter(call=>call.url.endsWith('/orders/get')).length;
+const defectPushStarts=calls.filter(call=>call.url.endsWith('/defects/start')).length;
+assert.equal(await app.openPushTarget({type:'defect_complete',orderRef:'test-order',documentRef:'def-1',eventId:'defect-event'}),true);
+assert.equal(app.currentOrder()._defectSheet.documentRef,'def-1');
+assert.equal(calls.filter(call=>call.url.endsWith('/orders/get')).length,defectPushOrders+1);
+assert.equal(calls.filter(call=>call.url.endsWith('/defects/start')).length,defectPushStarts+1);
+assert.equal(calls.filter(call=>call.url.endsWith('/defects/start')).at(-1).body.orderRef,'test-order');
+assert.equal(calls.filter(call=>call.url.endsWith('/defects/start')).at(-1).body.existingDocumentRef,'def-1');
+assert.match(element('sheetBody').innerHTML,/defect-history/);
+console.log('Defect completion Push: orderRef loads and exact documentRef opens the existing accessible defect sheet.');
