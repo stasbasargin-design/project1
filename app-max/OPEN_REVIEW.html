@@ -1212,11 +1212,19 @@ window.ITUS_CONFIG = {
         if(!blob||blob.size!==file.sizeBytes)throw Object.assign(new Error('Локальный файл недоступен'),{code:'BUFFER_LOCAL_FILE_MISSING',status:409});
         const parts=await request('/jobs/'+job.id+'/parts',{signal}),present=new Set(parts.map(x=>x.number));
         const count=Math.ceil(blob.size/job.partSize);
+        let relayChunks=false;
         for(let number=1;number<=count;number++){
           guard?.();if(present.has(number))continue;
           const offset=(number-1)*job.partSize,part=blob.slice(offset,Math.min(offset+job.partSize,blob.size));
+          const relayPath='/jobs/'+job.id+'/chunk/'+number;
           for(let attempt=0;;attempt++){
-            try{const signed=await request('/jobs/'+job.id+'/sign',{body:{number},signal});await upload(signed.relay?api()+signed.path:signed.url,part,loaded=>progress({requestId:job.requestId,state:'uploading',percent:Math.round(100*(offset+loaded)/blob.size),jobId:job.id}),signal,signed.relay);break;}
+            try{
+              // Relay chunks are authenticated individually. Only direct S3 uploads need a URL signed per part.
+              const signed=relayChunks?{relay:true,path:relayPath}:await request('/jobs/'+job.id+'/sign',{body:{number},signal});
+              relayChunks=signed.relay===true&&signed.path===relayPath;
+              await upload(signed.relay?api()+signed.path:signed.url,part,loaded=>progress({requestId:job.requestId,state:'uploading',percent:Math.round(100*(offset+loaded)/blob.size),jobId:job.id}),signal,signed.relay);
+              break;
+            }
             catch(error){if(signal?.aborted||attempt>=2)throw error;await pause(1000*(attempt+1),signal);}
           }
         }
@@ -1599,13 +1607,26 @@ window.ITUS_CONFIG = {
       else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
-    async function media(mi,fi){
+    async function media(mi,fi,{skipLink=false}={}){
       const s=source,id=selected,generation=epoch,selection=selectionEpoch,who=owner();
       const active=()=>generation===epoch&&selection===selectionEpoch&&who===owner()&&isVisibleThread(s,id);
       const sameOwner=()=>generation===epoch&&who===owner();
       const thread=key(s,id),message=cache[thread]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
       const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(s,id,message?.messageRef,file);
+      function display(url,retryLink=false){
+        if(!/^(video|image)\//.test(mime)){
+          const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();return;
+        }
+        const element=document.createElement(mime.startsWith('video/')?'video':'img');
+        if(element.tagName==='VIDEO'){element.controls=true;element.playsInline=true;element.preload='none';}
+        else element.alt=file.fileName;
+        if(retryLink)element.addEventListener('error',()=>{
+          if(active()&&slot.isConnected&&slot.contains(element))void media(mi,fi,{skipLink:true});
+        },{once:true});
+        slot.replaceChildren(element);
+        element.src=url;
+      }
       async function asUrl(record){
         if(record?.url&&record.expires>Date.now())return record.url;
         if(!record?.blob)return '';
@@ -1617,6 +1638,8 @@ window.ITUS_CONFIG = {
       if(!record&&stableKey){record=await readStore('media',stableKey);if(!active())return;if(record?.owner===who&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
       if(!active())return;
       if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:who,key:stableKey};}catch{record=null;}}
+      const readyLink=skipLink?'':safeUrl(file.downloadUrl);
+      if(!record&&readyLink&&/^(video|image)\//.test(mime))return display(readyLink,true);
       if(!record&&file.fileRef&&!message?.hasServerMessageRef)return toast('1С не передала идентификатор сообщения для вложения',true);
       if(!record&&stableKey){
         let pending=mediaLoading.get(stableKey);
@@ -1636,11 +1659,9 @@ window.ITUS_CONFIG = {
         try{record=await pending;}catch(error){if(active())toast('Не удалось загрузить вложение: '+error.message,true);return;}
       }
       if(!active())return;
-      let url=await asUrl(record);if(!active())return;if(!url)url=safeUrl(file.downloadUrl);
+      const url=(await asUrl(record))||readyLink;if(!active())return;
       if(!url)return toast('1С не передала содержимое или ссылку на файл',true);
-      if(/^video\//.test(mime)){const v=document.createElement('video');v.controls=true;v.playsInline=true;v.preload='none';v.src=url;slot.replaceChildren(v);}
-      else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
-      else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
+      display(url);
     }
     function back(){if(!visible||!selected)return false;selectionEpoch++;selected='';paint();return true;}
     async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);if(outbox?.list){await refreshOutbox();startOutbox();}}
@@ -12505,7 +12526,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.4'
+    version: 'i-max-2.8.5'
   };
   let buildCommit = '';
   async function loadBuildInfo() {

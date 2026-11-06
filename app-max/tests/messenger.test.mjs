@@ -6,11 +6,14 @@ const viewportStyles={};
 const shell={style:{setProperty(name,value){viewportStyles[name]=value;}}};
 const app={innerHTML:'',querySelector(){return null;},querySelectorAll(){return [];}};
 const calls=[], receipts=[], handlers={};let failRead=false,failSend=true,uuid=0;
+const fileReads=[];
+const mediaSlot={isConnected:true,contains(element){return this.child===element;},replaceChildren(element){this.child=element;}};
 const viewportHandlers={};
 const scope={
   URL, location:{origin:'https://ea-itus.ru'},
   document:{baseURI:'https://ea-itus.ru/p/max-service/',body:{classList:{toggle(){},remove(){}}},
-    getElementById(id){return id==='app'?app:null;},querySelector(selector){return selector==='.phone'?shell:null;},addEventListener(type,handler){handlers[type]=handler;}},
+    getElementById(id){return id==='app'?app:id==='msg-media-1-0'?mediaSlot:null;},querySelector(selector){return selector==='.phone'?shell:null;},addEventListener(type,handler){handlers[type]=handler;},
+    createElement(tag){return {tagName:tag.toUpperCase(),addEventListener(type,handler){this[type]=handler;}};}},
   innerHeight:800,addEventListener(){},ITUS_FEATURES:{dateTime:()=>''},
   visualViewport:{height:700,offsetTop:0,addEventListener(type,handler){viewportHandlers[type]=handler;}},
   crypto:{randomUUID:()=>`uuid-${++uuid}`}
@@ -24,7 +27,7 @@ const mock={
   '/internal-chat/contacts/list':{data:{contacts:[{employeeRef:'one',name:'Анна',authorized:true},{employeeRef:'two',name:'Нет входа',authorized:false}]}},
   '/internal-chat/direct/open':{data:{groupRef:'direct-one'}},
   '/internal-chat/messages/list':{data:{messages:[
-    {messageRef:'message-2',direction:'incoming',text:'Позднее',createdAt:'2026-10-07T10:02:00Z',attachments:[{fileName:'photo.jpg',mimeType:'image/jpeg',downloadUrl:'https://ea-itus.ru/photo.jpg'}]},
+    {messageRef:'message-2',direction:'incoming',text:'Позднее',createdAt:'2026-10-07T10:02:00Z',attachments:[{fileRef:'file-2',fileName:'photo.jpg',mimeType:'image/jpeg',downloadUrl:'https://ea-itus.ru/photo.jpg'}]},
     {messageRef:'message-1',direction:'outgoing',authorName:'Реальный автор',text:'Ранее',createdAt:'2026-10-07T10:01:00Z'}]}},
   '/internal-chat/messages/read':{data:{read:true}},
   '/internal-chat/messages/send':{data:{message:{messageRef:'sent-1',direction:'outgoing',text:'Повтор'}}},
@@ -34,7 +37,7 @@ const mock={
 };
 const messenger=scope.ITUS_MESSENGER.create({api:scope.ITUS_API,call:async(method,payload)=>{
   calls.push({method,payload});if(failRead && method.endsWith('/messages/read'))throw Error('Read rejected');if(failSend&&method.endsWith('/messages/send'))throw Error('Send rejected');if(!mock[method])throw new Error('Unexpected '+method);return mock[method];
-},onRead:receipt=>receipts.push(receipt),user:()=>({name:'Тест'}),allowed:()=>['staff','clients'],toast(){},pickFile(){},photo(){},filePayload(){},closeSheet(){},sheet(){},settings(){}});
+},attachment:async(method,payload)=>{fileReads.push({method,payload});return {url:'/api/media/download/test'};},onRead:receipt=>receipts.push(receipt),user:()=>({name:'Тест'}),allowed:()=>['staff','clients'],toast(){},pickFile(){},photo(){},filePayload(){},closeSheet(){},sheet(){},settings(){}});
 await messenger.enter('staff');
 assert.equal(viewportStyles['--messenger-viewport-height'],'700px');
 assert.equal(viewportStyles['--messenger-viewport-top'],'0px');
@@ -54,6 +57,15 @@ assert.match(app.innerHTML,/photo.jpg/);
 assert.match(app.innerHTML,/data-action="msg-media"/);
 assert.doesNotMatch(app.innerHTML,/<img src="https:\/\/ea-itus.ru\/photo.jpg"/);
 assert.doesNotMatch(app.innerHTML,/data-auto-image/);
+await messenger.handle('msg-media',{dataset:{mi:'1',fi:'0'}});
+assert.equal(mediaSlot.child.src,'https://ea-itus.ru/photo.jpg');
+assert.equal(fileReads.length,0,'an existing download URL must not refetch the message');
+mediaSlot.child.error();
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.equal(fileReads.length,1,'a failed URL falls back to one targeted fetch');
+assert.equal(fileReads[0].payload.messageRef,'message-2');
+assert.equal(fileReads[0].payload.attachmentRef,'file-2');
+assert.equal(mediaSlot.child.src,'/api/media/download/test');
 handlers.input({target:{id:'msgDraft',value:'Повтор'}});await messenger.handle('msg-send',{dataset:{}});
 failSend=false;await messenger.handle('msg-send',{dataset:{}});
 const sends=calls.filter(x=>x.method==='/internal-chat/messages/send');assert.equal(sends.length,2);assert.equal(sends[0].payload.clientMessageId,sends[1].payload.clientMessageId);

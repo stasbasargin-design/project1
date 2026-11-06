@@ -74,11 +74,19 @@
         if(!blob||blob.size!==file.sizeBytes)throw Object.assign(new Error('Локальный файл недоступен'),{code:'BUFFER_LOCAL_FILE_MISSING',status:409});
         const parts=await request('/jobs/'+job.id+'/parts',{signal}),present=new Set(parts.map(x=>x.number));
         const count=Math.ceil(blob.size/job.partSize);
+        let relayChunks=false;
         for(let number=1;number<=count;number++){
           guard?.();if(present.has(number))continue;
           const offset=(number-1)*job.partSize,part=blob.slice(offset,Math.min(offset+job.partSize,blob.size));
+          const relayPath='/jobs/'+job.id+'/chunk/'+number;
           for(let attempt=0;;attempt++){
-            try{const signed=await request('/jobs/'+job.id+'/sign',{body:{number},signal});await upload(signed.relay?api()+signed.path:signed.url,part,loaded=>progress({requestId:job.requestId,state:'uploading',percent:Math.round(100*(offset+loaded)/blob.size),jobId:job.id}),signal,signed.relay);break;}
+            try{
+              // Relay chunks are authenticated individually. Only direct S3 uploads need a URL signed per part.
+              const signed=relayChunks?{relay:true,path:relayPath}:await request('/jobs/'+job.id+'/sign',{body:{number},signal});
+              relayChunks=signed.relay===true&&signed.path===relayPath;
+              await upload(signed.relay?api()+signed.path:signed.url,part,loaded=>progress({requestId:job.requestId,state:'uploading',percent:Math.round(100*(offset+loaded)/blob.size),jobId:job.id}),signal,signed.relay);
+              break;
+            }
             catch(error){if(signal?.aborted||attempt>=2)throw error;await pause(1000*(attempt+1),signal);}
           }
         }

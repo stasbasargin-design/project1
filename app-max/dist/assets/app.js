@@ -23,7 +23,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.4'
+    version: 'i-max-2.8.5'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
