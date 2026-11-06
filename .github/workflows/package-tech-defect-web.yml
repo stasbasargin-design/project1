@@ -1,0 +1,105 @@
+name: Package tech defect verification web 2.8.4
+
+on:
+  push:
+    branches: [ci/tech-defect-web-284]
+    paths: [.github/workflows/package-tech-defect-web.yml]
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_COMMIT: 314dd7a4c6e8e874e96ad588527a9660e33ba885
+  BASE_COMMIT: bab1b36ee7da162ab91b63ebbb3863e49d8bf909
+  IMAX_BUILD_SHA: 314dd7a4c6e8e874e96ad588527a9660e33ba885
+  REQUIRE_BROWSER_TESTS: '1'
+
+jobs:
+  package-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+      - name: Verify immutable source and allowed diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git merge-base "$BASE_COMMIT" HEAD)" = "$BASE_COMMIT"
+          python3 - <<'PY'
+          import subprocess,os,json,pathlib
+          expected={
+            'app-max/1C_HTTP_METHODS_RELEASE.json','app-max/OPEN_REVIEW.html',
+            'app-max/android/app/build.gradle','app-max/assets/api-normalizers.js','app-max/assets/app.js',
+            'app-max/dist/assets/api-normalizers.js','app-max/dist/assets/app.js',
+            'app-max/package-lock.json','app-max/package.json','app-max/scripts/check-api.mjs',
+            'app-max/tests/acceptance-regression.test.mjs','app-max/tests/api-normalizers.test.mjs',
+            'app-max/tests/source-contract.test.mjs'}
+          actual=set(subprocess.check_output(['git','diff','--name-only',os.environ['BASE_COMMIT'],'HEAD'],text=True).splitlines())
+          assert actual==expected,sorted(actual^expected)
+          for name in ('app-max/package.json','app-max/package-lock.json'):
+            before=json.loads(subprocess.check_output(['git','show',os.environ['BASE_COMMIT']+':'+name]))
+            after=json.loads(pathlib.Path(name).read_text())
+            assert after['version']=='2.8.4'
+            after['version']=before['version']
+            if name.endswith('-lock.json'):
+              assert after['packages']['']['version']=='2.8.4'
+              after['packages']['']['version']=before['packages']['']['version']
+            assert after==before,'Unexpected dependency change: '+name
+          gradle=pathlib.Path('app-max/android/app/build.gradle').read_text()
+          assert 'versionCode 2804' in gradle and 'versionName "2.8.4"' in gradle
+          assert not any('i-max-logo.png' in p.lower() for p in actual)
+          PY
+          CHROME="$(command -v google-chrome || command -v chromium || true)"
+          test -n "$CHROME"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+      - name: Install exact dependencies
+        working-directory: app-max
+        run: npm ci
+      - name: Run full tests
+        working-directory: app-max
+        run: npm test
+      - name: Build web only
+        working-directory: app-max
+        run: npm run build
+      - name: Verify build and package web ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --exit-code
+          mkdir web-artifact
+          python3 - <<'PY'
+          import os,json,pathlib,hashlib,zipfile
+          source=os.environ['SOURCE_COMMIT'];base=os.environ['BASE_COMMIT']
+          dist=pathlib.Path('app-max/dist');out=pathlib.Path('web-artifact')
+          info=json.loads((dist/'build-info.json').read_text())
+          assert info=={'version':'2.8.4','commit':source},info
+          assert "version: 'i-max-2.8.4'" in (dist/'assets/app.js').read_text()
+          files=sorted(p for p in dist.rglob('*') if p.is_file())
+          assert files and not any(p.name.lower()=='i-max-logo.png' for p in files)
+          manifest={'sourceCommit':source,'baseCommit':base,'version':'2.8.4','target':'max-test.ea-itus.ru','files':{str(p.relative_to(dist)):{'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files}}
+          (out/'BUILD_MANIFEST.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          archive=out/f'I-MAX-web-2.8.4-{source}.zip'
+          with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+            for p in files:
+              name='dist/'+str(p.relative_to(dist));item=zipfile.ZipInfo(name,(2026,11,6,0,0,0));item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=0o100644<<16;z.writestr(item,p.read_bytes())
+          (out/'SHA256SUMS.txt').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
+          (out/'1C_HTTP_METHODS_RELEASE.json').write_bytes(pathlib.Path('app-max/1C_HTTP_METHODS_RELEASE.json').read_bytes())
+          (out/'TEST_ONLY.txt').write_text('Web-only candidate 2.8.4. Install dist only on max-test.ea-itus.ru after backup. Preserve config, server, env and queues. No main merge or production deployment. This workflow packages web only. Exact source and file hashes: BUILD_MANIFEST.json. Restore the saved dist directory for rollback.\n')
+          PY
+          cat web-artifact/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-web-2.8.4-314dd7a
+          path: web-artifact/
+          if-no-files-found: error
+          retention-days: 30
