@@ -23,7 +23,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.2'
+    version: 'i-max-2.8.4'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -60,6 +60,7 @@
   let pendingPushTarget = null;
   const handledPushTargets = new Set();
   const activeCompletions = new Map();
+  const pendingDefectVerifications = new Set();
   const pendingActionButtons = new WeakSet();
   const pendingActions = new Set();
   const sessionRequests = new Set();
@@ -1635,7 +1636,10 @@
       const fileButton = imageSource
         ? `<button class="defect-photo-preview" data-action="defect-media" data-index="${index}" aria-label="${escAttr(file.fileName || 'Фото дефекта')}"><img src="${escAttr(imageSource)}" alt="${escAttr(file.fileName || 'Фото дефекта')}" loading="lazy"><span>${esc(file.fileName || 'Фото дефекта')}</span></button>`
         : file ? `<button class="entry-file" data-action="defect-media" data-index="${index}"><span class="file-icon">${entry.type === 'video' ? '🎥' : '📷'}</span><span><b>${esc(file.fileName)}</b></span></button>` : '';
-      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}</div>`;
+      const verification = state.view === 'tech'
+        ? `<label class="setting-row defect-entry-verification"><input type="checkbox" data-action="verify-defect-entry" data-index="${index}" ${entry.verified ? 'checked disabled' : ''}${entry.hasServerEntryRef ? '' : ' disabled'}>Проверено</label>`
+        : '';
+      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}${verification}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
     const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
@@ -1648,6 +1652,29 @@
     const context=sheetContext();
     try { await ensureDefectSheet(context.order, {refreshExisting:true}); if(!sheetCurrent(context))return; if (state.view === 'mp' && context.order?._acceptance?.active) render(); renderDefectSheet(); }
     catch (error) { if(sheetCurrent(context)) $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div>`; }
+  }
+
+  async function verifyDefectEntry(index, control) {
+    if (state.view !== 'tech') throw new Error('Проверка строк доступна только технологу');
+    const context=sheetContext(),order=context.order,sheet=order?._defectSheet,entry=sheet?.entries?.[index];
+    const entryRef=String(entry?.entryRef || (entry?.hasServerEntryRef ? entry.id : '') || '').trim();
+    if (!sheet?.documentRef || !entryRef) throw new Error('1С не вернула идентификатор строки дефектовки');
+    if (entry.verified) return true;
+    const key=`${sheet.documentRef}:${entryRef}`;
+    if (pendingDefectVerifications.has(key)) return false;
+    pendingDefectVerifications.add(key);
+    if(control){control.checked=true;control.disabled=true;control.setAttribute?.('aria-busy','true');}
+    try {
+      const response=await call1C('/defects/entries/verify',{...orderPayloadFor(order),documentRef:sheet.documentRef,entryRef,verified:true},{session:context.session});
+      if(!sheetCurrent(context)||state.view!=='tech')return false;
+      const result=response?.data?.entry || response?.entry || response?.data || response || {};
+      if(result.verified!==true && result.checked!==true)throw new Error('1С не подтвердила проверку строки дефектовки');
+      for(const item of sheet.entries)if(String(item.entryRef || '')===entryRef)item.verified=true;
+      renderDefectSheet();toast('Строка дефектовки проверена');return true;
+    } catch(error) {
+      if(sheetCurrent(context)&&control?.isConnected!==false){control.checked=false;control.disabled=false;control.removeAttribute?.('aria-busy');}
+      throw error;
+    } finally { pendingDefectVerifications.delete(key); }
   }
 
   async function openDefectMedia(index) {
@@ -2421,6 +2448,7 @@
       if (action === 'defect-photo' || action === 'defect-video') return await openMediaPicker({ type:'defect' });
       if (action === 'send-defect-text') return await sendDefectText();
       if (action === 'defect-media') return await openDefectMedia(Number(button.dataset.index));
+      if (action === 'verify-defect-entry') return await verifyDefectEntry(Number(button.dataset.index),button);
       if (action === 'complete-defect-sheet') return await completeDefectSheet();
       if (action === 'load-client-topics') return await loadClientTopics();
       if (action === 'select-client-topic') { state.selectedClientTopic = button.dataset.ref; await loadClientMessages(button.dataset.ref); return await render(); }
