@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 const target = String(
   process.env.ONE_C_TARGET || 'https://1c.eazia.ru/aa6_ea_test9/ru/hs/max-service'
 ).replace(/\/+$/, '');
@@ -12,10 +14,11 @@ if (!userId) {
 }
 
 async function post(path, body) {
+  const requestId = randomUUID();
   const response = await fetch(target + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    headers: { 'Content-Type': 'application/json', 'x-itus-request-id': requestId },
+    body: JSON.stringify({ ...body, requestId })
   });
   const text = (await response.text()).replace(/^\uFEFF/, '');
   let data = null;

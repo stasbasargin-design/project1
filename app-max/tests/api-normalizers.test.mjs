@@ -58,6 +58,14 @@ const defectMedia = api.normalizeProcess({entries:[{entryRef:'d1',text:'Осмо
 assert.equal(defectMedia.entries.length, 2);
 assert.equal(defectMedia.entries[0].type, 'photo');
 assert.equal(defectMedia.entries[1].type, 'video');
+const verifiedDefects = api.normalizeProcess({entries:[
+  {entryRef:'verified-1',text:'Проверено',verified:true},
+  {entryRef:'checked-1',text:'Совместимость',checked:true},
+  {text:'Без идентификатора'}
+]}, 'defectSheet').entries;
+assert.equal(verifiedDefects[0].verified,true);
+assert.equal(verifiedDefects[1].verified,true);
+assert.equal(verifiedDefects[2].hasServerEntryRef,false);
 
 const messages = api.extractItems({ data: { messages: [{ messageId: 'm1', direction: 'outgoing', text: 'Тест' }] } }, ['messages']).map(api.normalizeMessage);
 assert.equal(messages[0].side, 'mine');

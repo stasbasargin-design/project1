@@ -52,3 +52,34 @@ try{
  await new (Object.getPrototypeOf(async function(){}).constructor)('assert','fs','vm','webcrypto',fixture+scenario)(assert,fs,vm,webcrypto);
  console.log('Automatic media session: server-side 1C verification, no code UI, single-flight, renewal/revocation, stale-login guard and employee/contour isolation passed');
 }finally{service.close();await Promise.all([new Promise(r=>server.close(r)),new Promise(r=>upstream.close(r))]);await rm(folder,{recursive:true,force:true});}
+
+for(const relay of [true,false]){
+ const signedParts=[],uploads=[],jobId='a'.repeat(64),jobPath='/jobs/'+jobId;
+ const file=new Blob(['abcdefghijklmnopq']),token='b'.repeat(64);
+ const relayPath=number=>jobPath+'/chunk/'+number;
+ const context=vm.createContext({Date,JSON,AbortController,DOMException,setTimeout,clearTimeout,
+  XMLHttpRequest:class{
+   upload={};headers={};
+   open(method,url){this.method=method;this.url=url;}
+   setRequestHeader(name,value){this.headers[name]=value;}
+   send(blob){uploads.push({method:this.method,url:this.url,headers:this.headers,size:blob.size});this.status=200;this.onload();}
+  },
+  fetch:async(url,options)=>{
+   const path=url.replace('/api/media','');let data;
+   if(path==='/jobs')data={id:jobId,requestId:'same-file',state:'uploading',partSize:4};
+   else if(path===jobPath+'/parts')data=[{number:1}];
+   else if(path===jobPath+'/sign'){const {number}=JSON.parse(options.body);signedParts.push(number);data=relay?{relay:true,path:relayPath(number)}:{url:'https://s3.example.test/part/'+number};}
+   else if(path===jobPath+'/uploaded')data={id:jobId,state:'confirmed',requestId:'same-file',response:{success:true}};
+   else throw Error('Unexpected '+path);
+   return {ok:true,json:async()=>({success:true,data})};
+  }
+ });context.window=context;
+ vm.runInContext(fs.readFileSync(new URL('../assets/media-buffer.js',import.meta.url),'utf8'),context);
+ const client=context.ITUS_MEDIA_BUFFER.create({base:'/api/1c',userId:()=> '111',storage:{getItem:()=>JSON.stringify({token,expires:Date.now()+300000})}});
+ assert.equal((await client.send('/defects/entries/add',{requestId:'same-file',file:{contentBlob:file,sizeBytes:file.size}})).mediaReceipt.confirmed,true);
+ assert.deepEqual(signedParts,relay?[2]:[2,3,4,5]);
+ assert.deepEqual(uploads.map(upload=>upload.url),[2,3,4,5].map(n=>relay?'/api/media'+relayPath(n):'https://s3.example.test/part/'+n));
+ assert.deepEqual(uploads.map(upload=>upload.size),[4,4,4,1]);
+ assert.ok(uploads.every(upload=>relay?upload.method==='POST'&&upload.headers['X-ITUS-Device']===token:upload.method==='PUT'&&!upload.headers['X-ITUS-Device']));
+}
+console.log('Multipart relay: one route lookup, authenticated chunks, resume and direct S3 signing passed');

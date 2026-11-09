@@ -366,13 +366,26 @@
       else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
       else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
     }
-    async function media(mi,fi){
+    async function media(mi,fi,{skipLink=false}={}){
       const s=source,id=selected,generation=epoch,selection=selectionEpoch,who=owner();
       const active=()=>generation===epoch&&selection===selectionEpoch&&who===owner()&&isVisibleThread(s,id);
       const sameOwner=()=>generation===epoch&&who===owner();
       const thread=key(s,id),message=cache[thread]?.[mi];let file=message?.attachments?.[fi];if(!file)return;
       const slot=document.getElementById(`msg-media-${mi}-${fi}`);if(!slot)return;
       const mime=file.mimeType||'application/octet-stream',stableKey=attachmentKey(s,id,message?.messageRef,file);
+      function display(url,retryLink=false){
+        if(!/^(video|image)\//.test(mime)){
+          const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();return;
+        }
+        const element=document.createElement(mime.startsWith('video/')?'video':'img');
+        if(element.tagName==='VIDEO'){element.controls=true;element.playsInline=true;element.preload='none';}
+        else element.alt=file.fileName;
+        if(retryLink)element.addEventListener('error',()=>{
+          if(active()&&slot.isConnected&&slot.contains(element))void media(mi,fi,{skipLink:true});
+        },{once:true});
+        slot.replaceChildren(element);
+        element.src=url;
+      }
       async function asUrl(record){
         if(record?.url&&record.expires>Date.now())return record.url;
         if(!record?.blob)return '';
@@ -384,6 +397,8 @@
       if(!record&&stableKey){record=await readStore('media',stableKey);if(!active())return;if(record?.owner===who&&Date.now()-record.updatedAt<CACHE_TTL)mediaMemory.set(stableKey,record);else record=null;}
       if(!active())return;
       if(!record&&file.contentBase64){try{const raw=atob(file.contentBase64.replace(/^data:[^,]*,/,''));record={blob:new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:mime}),size:raw.length,updatedAt:Date.now(),owner:who,key:stableKey};}catch{record=null;}}
+      const readyLink=skipLink?'':safeUrl(file.downloadUrl);
+      if(!record&&readyLink&&/^(video|image)\//.test(mime))return display(readyLink,true);
       if(!record&&file.fileRef&&!message?.hasServerMessageRef)return toast('1С не передала идентификатор сообщения для вложения',true);
       if(!record&&stableKey){
         let pending=mediaLoading.get(stableKey);
@@ -403,11 +418,9 @@
         try{record=await pending;}catch(error){if(active())toast('Не удалось загрузить вложение: '+error.message,true);return;}
       }
       if(!active())return;
-      let url=await asUrl(record);if(!active())return;if(!url)url=safeUrl(file.downloadUrl);
+      const url=(await asUrl(record))||readyLink;if(!active())return;
       if(!url)return toast('1С не передала содержимое или ссылку на файл',true);
-      if(/^video\//.test(mime)){const v=document.createElement('video');v.controls=true;v.playsInline=true;v.preload='none';v.src=url;slot.replaceChildren(v);}
-      else if(/^image\//.test(mime)){const img=document.createElement('img');img.src=url;img.alt=file.fileName;slot.replaceChildren(img);}
-      else{const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.download=file.fileName;a.click();}
+      display(url);
     }
     function back(){if(!visible||!selected)return false;selectionEpoch++;selected='';paint();return true;}
     async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);if(outbox?.list){await refreshOutbox();startOutbox();}}

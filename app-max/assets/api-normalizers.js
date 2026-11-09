@@ -41,15 +41,19 @@
         result.push({ id: String(index), text: item, type: 'text' });
         return;
       }
+      const entryRef = text(item?.entryRef || item?.defectRef || item?.id).trim();
       const base = {
-        id: text(item?.entryRef || item?.defectRef || item?.id, String(index)),
+        id: entryRef || String(index),
+        entryRef,
+        hasServerEntryRef: Boolean(entryRef),
         clientEntryId: text(item?.clientEntryId),
         type: text(item?.type, 'text'),
         text: text(item?.text || item?.description || item?.title),
         createdAt: text(item?.createdAt || item?.date),
         author: text(item?.authorName || item?.author),
         file: normalizeFile(item?.file || (isObject(item?.media) ? item.media : item?.attachment)),
-        transcript: text(item?.transcript)
+        transcript: text(item?.transcript),
+        verified: bool(item?.verified ?? item?.checked, false)
       };
       if(base.type.includes('/'))base.type=/^video\//i.test(base.file?.mimeType||base.type)?'video':/^image\//i.test(base.file?.mimeType||base.type)?'photo':/^audio\//i.test(base.file?.mimeType||base.type)?'voice':base.file?'file':'text';
       const attachments = asArray(item?.attachments || item?.files || (Array.isArray(item?.media) ? item.media : []))

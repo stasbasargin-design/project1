@@ -434,10 +434,24 @@
               "type": "text",
               "text": "Люфт",
               "authorName": "Слесарь",
-              "createdAt": "2026-07-20T10:10:00+05:00"
+              "createdAt": "2026-07-20T10:10:00+05:00",
+              "verified": false
             }
           ]
         }
+      }
+    },
+    "/defects/entries/verify": {
+      "purpose": "Mark one defect-sheet entry as verified by the technologist",
+      "request": {
+        "orderRef": "ORDER_GUID",
+        "documentRef": "DEFECT_GUID",
+        "entryRef": "ENTRY_GUID",
+        "verified": true
+      },
+      "responseData": {
+        "entryRef": "ENTRY_GUID",
+        "verified": true
       }
     },
     "/defects/entries/add": {

@@ -15,7 +15,7 @@ function element(id) {
 const fields=[{id:'mileage',label:'Пробег',type:'number',required:true,value:100},
  {id:'engineHours',label:'Моточасы',type:'number',required:false,value:''},
  {id:'reason',label:'Дополнения к причине обращения',type:'textarea',required:false,value:''}];
-let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdEntryResponse=false, releaseEntryResponse, notifyEntryRequest, holdCompletionResponse=false, releaseCompletionResponse, notifyCompletionRequest;
+let failPhoto=true, photoRequired=true, acceptanceUpload404=false, holdEntryResponse=false, releaseEntryResponse, notifyEntryRequest, holdCompletionResponse=false, releaseCompletionResponse, notifyCompletionRequest, defectEntries=[];
 const order={orderRef:'test-order',orderNumber:'TEST-1',vehicle:{model:'Test truck',plate:'A123BC'},mileage:123456};
 const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams,AbortController,crypto:webcrypto,
  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
@@ -34,7 +34,12 @@ const context=vm.createContext({addEventListener(){},console,URL,URLSearchParams
     ok=!(body.entry.type==='photo'&&failPhoto); data={entry:{...body.entry,entryRef:'entry-1'}};
   }
   if(url.endsWith('/orders/get'))data={order};
-  if(url.endsWith('/defects/start'))data={documentRef:'def-1',entries:[]};
+  if(url.endsWith('/defects/start'))data={documentRef:'def-1',entries:defectEntries};
+  if(url.endsWith('/defects/entries/verify')){
+    const entry=defectEntries.find(item=>item.entryRef===body.entryRef);
+    if(entry)entry.verified=true;
+    data={entryRef:body.entryRef,verified:true};
+  }
   if(url.endsWith('/defects/entries/add')){ok=!(body.entry.type==='photo'&&failPhoto);data={entry:{...body.entry,entryRef:body.clientEntryId || 'entry-1'}};}
   if (url.endsWith('/defects/entries/add') && holdEntryResponse) {
     notifyEntryRequest?.();
@@ -60,7 +65,7 @@ const queueStore = {
 const createQueue = context.ITUS_OPERATION_QUEUE.create;
 context.ITUS_OPERATION_QUEUE.create = options => createQueue({...options, store:queueStore, delays:[0,0,0,0,0]});
 let source=fs.readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
-source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, commitMediaBatch, renderAcceptancePhoto, renderDefectSheet, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
+source=source.replace("  setAuth(readAuthFromContext(), 'max');",`  window.testApp = {state, currentOrder, startAcceptance, completeAcceptance, requestQualityControl, processProgress, acceptanceHasPhoto, validateProcess, renderSelectedCard, renderMpView, renderTechView, renderExecutorView, openDefectSheet, openAcceptancePhotoSheet, uploadDefectFile, uploadAcceptanceFile, sendDefectText, sendQueuedEntry, commitMediaBatch, renderAcceptancePhoto, renderDefectSheet, verifyDefectEntry, ensureDefectSheet, fileToPayload, renderMessages, errorDiagnostic, diagnosticReport, firstMainView};\n  setAuth(readAuthFromContext(), 'max');`);
 vm.runInContext(source,context);
 const app=context.testApp;
 app.state.userId='123';app.state.orders=[context.ITUS_API.mapOrder(order)];app.state.selectedOrderId='test-order';
@@ -111,6 +116,32 @@ process.answers.required='ok';
 assert.equal(app.processProgress(process,'_acceptance').done,2);
 await app.openDefectSheet();
 assert.doesNotMatch(element('sheetBody').innerHTML,/Добавить в дефектовку/);
+defectEntries=[{entryRef:'verify-entry',type:'text',text:'Проверить люфт',verified:false}];
+await app.openDefectSheet();
+app.state.view='tech';app.renderDefectSheet();
+assert.match(element('sheetBody').innerHTML,/data-action="verify-defect-entry"/);
+const verifyControl={checked:false,disabled:false,isConnected:true,setAttribute(){},removeAttribute(){}};
+const verifyCallsBefore=calls.filter(call=>call.url.endsWith('/defects/entries/verify')).length;
+const verifyFirst=app.verifyDefectEntry(0,verifyControl);
+const verifySecond=app.verifyDefectEntry(0,verifyControl);
+assert.equal(await verifySecond,false);
+assert.equal(await verifyFirst,true);
+assert.equal(calls.filter(call=>call.url.endsWith('/defects/entries/verify')).length,verifyCallsBefore+1);
+const verifyCall=calls.filter(call=>call.url.endsWith('/defects/entries/verify')).at(-1);
+assert.equal(verifyCall.body.orderRef,'test-order');
+assert.equal(verifyCall.body.documentRef,'def-1');
+assert.equal(verifyCall.body.entryRef,'verify-entry');
+assert.equal(verifyCall.body.verified,true);
+assert.equal(verifyControl.disabled,true);
+app.currentOrder()._defectSheet=null;await app.openDefectSheet();
+assert.equal(app.currentOrder()._defectSheet.entries[0].verified,true);
+assert.match(element('sheetBody').innerHTML,/checked disabled[^>]*>Проверено/);
+const reopenedDefects=calls.filter(call=>call.url.endsWith('/defects/start')).at(-1);
+assert.equal(reopenedDefects.body.orderRef,'test-order');
+assert.equal(Object.hasOwn(reopenedDefects.body,'verified'),false);
+app.state.view='mp';app.renderDefectSheet();
+assert.doesNotMatch(element('sheetBody').innerHTML,/data-action="verify-defect-entry"/);
+app.state.view='tech';
 const file={name:'test.png',type:'image/png',size:10};
 const retryStart=calls.filter(c=>c.url.endsWith('/defects/entries/add')).length;
 await assert.rejects(app.uploadDefectFile(file,'photo'),/Photo rejected/);
