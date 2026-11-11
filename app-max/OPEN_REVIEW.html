@@ -380,7 +380,7 @@ window.ITUS_CONFIG = {
 </script>
   <script>(function(root){
   'use strict';
-  if(root.ITUS_REVIEW_MODE)return;
+  if(root.ITUS_REVIEW_MODE||root.ITUS_VITE_DEV)return;
   const original=root.ITUS_CONFIG.ONE_C_API_BASE_URL;
   const prefix=String(original).replace(/\/api\/1c\/?$/,'');
   const selectionKey='itus.environment:'+prefix;

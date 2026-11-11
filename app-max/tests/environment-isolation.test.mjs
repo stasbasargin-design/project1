@@ -75,6 +75,14 @@ try{
   console.log('1C environments: distinct upstreams/credentials/media stores, late registration rejection, switched Push filtering and legacy queue paths passed');
 }finally{child.kill();await Promise.all([new Promise(r=>test.close(r)),new Promise(r=>production.close(r))]);await rm(folder,{recursive:true,force:true});}
 
+const development={ITUS_VITE_DEV:true,ITUS_CONFIG:{ONE_C_API_BASE_URL:'/api/1c'}};
+vm.runInNewContext(readFileSync(new URL('../assets/environments.js',import.meta.url),'utf8'),{window:development});
+assert.equal(development.ITUS_ENVIRONMENTS,undefined,'Vite keeps its existing test-only proxy without enabling unavailable server routes');
+assert.equal(development.ITUS_CONFIG.ONE_C_API_BASE_URL,'/api/1c');
+const vite=await import('../vite.config.js');
+const developmentPlugin=vite.default.plugins.find(p=>p.name==='itus-development-test-api');
+assert.equal(developmentPlugin.apply,'serve');
+assert.match(developmentPlugin.transformIndexHtml()[0].children,/ITUS_VITE_DEV=true/);
 const storage=new Map([['itus.maxUserId','111']]),nativeStates=[],clientCalls=[];
 let serverRevision=0;
 function client(){

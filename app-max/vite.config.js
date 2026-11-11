@@ -9,6 +9,12 @@ const ONE_C_SERVICE_PATH = '/aa6_ea_test9/ru/hs/max-service';
 export default defineConfig({
   base: "./",
   plugins: [{
+    name: 'itus-development-test-api',
+    apply: 'serve',
+    transformIndexHtml() {
+      return [{tag:'script',children:'window.ITUS_VITE_DEV=true;',injectTo:'head-prepend'}];
+    }
+  }, {
     name: 'itus-copy-runtime-files',
     configureServer(server) {
       server.middlewares.use(async(req,res,next)=>{
