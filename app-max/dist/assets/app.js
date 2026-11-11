@@ -6,7 +6,9 @@
 
   const API = window.ITUS_API;
   const FEATURES = window.ITUS_FEATURES;
-  const AUTH_STORAGE = window.ITUS_REVIEW_MODE ? 'itus.review.maxUserId' : 'itus.maxUserId';
+  const ENVIRONMENTS=window.ITUS_ENVIRONMENTS;
+  const AUTH_STORAGE = window.ITUS_REVIEW_MODE ? 'itus.review.maxUserId' : ENVIRONMENTS?.authKey||'itus.maxUserId';
+  const cacheOwner=()=>ENVIRONMENTS?.cacheOwner(state.userId)||state.userId;
   const $ = id => document.getElementById(id);
   const CONFIG = {
     apiBase: window.ITUS_CONFIG?.ONE_C_API_BASE_URL || '/api/1c',
@@ -23,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.5'
+    version: 'i-max-2.8.6'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -74,7 +76,7 @@
   let lastOrderQrValue = '';
   const longRunningActions = new Set([
     'media-device-reconnect',
-    'login', 'logout', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
+    'login', 'logout', 'switch-environment', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
     'refresh-orders', 'search-orders', 'select-order', 'load-order', 'submit-order-qr',
     'start-acceptance', 'complete-acceptance', 'choose-post', 'set-post', 'assign-executor', 'assign-other-executor', 'set-executor',
     'start-executor-work', 'complete-checklist', 'package-create', 'package-select', 'worktime-submit', 'package-start', 'package-pause', 'package-close',
@@ -97,7 +99,7 @@
   }
 
   const messenger = window.ITUS_MESSENGER?.create({
-    api:API,call:call1C,user:()=>state.user,cacheOwner:()=>state.userId,
+    api:API,call:call1C,user:()=>state.user,cacheOwner,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
     toast,pickFile:configureFilePicker,photo:choosePhoto,media:openMediaPicker,filePayload:fileToPayload,
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead,
@@ -163,7 +165,7 @@
     const max = window.WebApp || {};
     const telegram = window.Telegram?.WebApp || {};
     const user = max.initDataUnsafe?.user || telegram.initDataUnsafe?.user || max.user || {};
-    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem(AUTH_STORAGE) || '').trim();
+    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem(AUTH_STORAGE) || ENVIRONMENTS?.initialUserId() || '').trim();
   }
 
   function setAuth(id, mode) {
@@ -405,6 +407,7 @@
     const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
     try {
+      if(ENVIRONMENTS)await ENVIRONMENTS.load();
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
       assertSession(session);
       // Альфа-Авто может вернуть data как массив блоков: [{user:[...]},{availableTabs:[...]}].
@@ -501,6 +504,7 @@
   }
 
   function renderTabs() {
+    const badge=$('environmentBadge');if(badge)badge.textContent=ENVIRONMENTS?.label||'';
     const keys=Object.keys(state.views).filter(k=>k!=='clients'&&k!=='chat');
     if(state.views.clients||state.views.chat)keys.push('chat');
     $('tabs').innerHTML = keys.map(key => `<button class="tab ${state.view === key ? 'active' : ''}" data-action="view" data-view="${key}" title="${escAttr(VIEW_TITLES[key])}" aria-label="${escAttr(VIEW_TITLES[key])}"><img class="nav-icon" src="${NAV_ICONS[key]}" alt="" aria-hidden="true">${key === 'chat' ? `<span id="botUnread" class="chat-unread-dot" aria-label="Непрочитанные сообщения: ${Number(state.unreadMessages) || 0}" ${Number(state.unreadMessages) > 0 ? '' : 'hidden'}>${Number(state.unreadMessages) || ''}</span>` : ''}</button>`).join('');
@@ -548,6 +552,7 @@
   }
 
   function render() {
+    const badge=$('environmentBadge');if(badge)badge.textContent=ENVIRONMENTS?.label||'';
     document.body?.classList.toggle('messenger-view', state.view === 'chat' && Boolean(state.userId));
     if (state.view !== 'chat') messenger?.leave();
     if (!state.userId) return renderAuth();
@@ -1996,7 +2001,9 @@
     try {
       const subscription = await window.ITUS_WEB_PUSH.existing();
       if (!subscription || !owner || state.userId !== owner) return;
+      if(ENVIRONMENTS)await ENVIRONMENTS.begin(mediaClient(),{subscription:subscription.toJSON()});
       const response = await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
+      if(response?.data?.registered===true&&state.userId===owner&&ENVIRONMENTS)await ENVIRONMENTS.bind(mediaClient(),{subscription:subscription.toJSON()});
       if (state.userId === owner) webPushRegistered = response?.data?.registered === true;
     } catch { console.warn('Не удалось подтвердить Web Push в 1С; повторите подключение в настройках уведомлений.'); }
   }
@@ -2009,13 +2016,15 @@
     }
     const subscription = await window.ITUS_WEB_PUSH.subscribe();
     if (!owner || state.userId !== owner) throw new Error('Пользователь изменился. Повторите подключение Push.');
+    if(ENVIRONMENTS)await ENVIRONMENTS.begin(mediaClient(),{subscription:subscription.toJSON()});
     const response = await call1C('/notifications/push/subscribe', pushPayload(subscription), {silent:true});
     if (response?.data?.registered !== true) throw new Error('1С не подтвердила регистрацию Web Push');
     webPushRegistered = true;
+    if(ENVIRONMENTS)await ENVIRONMENTS.bind(mediaClient(),{subscription:subscription.toJSON()});
     enableSystemPreference();
     return subscription;
   }
-  async function unregisterWebPush() {
+  async function unregisterWebPush({destroy=true}={}) {
     webPushRegistered = false;
     if (!('serviceWorker' in navigator)) return;
     let subscription;
@@ -2024,7 +2033,7 @@
       subscription = await registration?.pushManager?.getSubscription();
       if (subscription && state.userId) await call1C('/notifications/push/unsubscribe', pushPayload(subscription), {silent:true});
     } catch (error) { console.warn('Push unsubscribe:',error.message); }
-    finally { try { await subscription?.unsubscribe(); } catch {} }
+    finally { if(destroy)try { await subscription?.unsubscribe(); } catch {} }
   }
   async function startNativePush() {
     const session=sessionSnapshot();
@@ -2035,9 +2044,12 @@
         onToken: async token => {
           if (!token) return;
           assertSession(session,session.scope);
+          if(ENVIRONMENTS)await ENVIRONMENTS.begin(mediaClient(session),{token});
           const response=await call1C('/notifications/push/subscribe', {platform:'android',token,userId:session.userId,
             clientInstanceId:pushClientInstanceId()}, {silent:true,session});
           if(response?.data?.registered!==true) throw new Error('1С не подтвердила регистрацию Android Push');
+          assertSession(session,session.scope);
+          if(ENVIRONMENTS)await ENVIRONMENTS.bind(mediaClient(session),{token});
           return true;
         }
       });
@@ -2093,6 +2105,7 @@
     return openPushTarget(target, {alreadyQueued:true});
   }
   async function openPushTarget(data, {alreadyQueued=false} = {}) {
+    if(ENVIRONMENTS&&!alreadyQueued&&!ENVIRONMENTS.accepts(data?.data||data))return false;
     const target = normalizePushTarget(data);
     if (!target) { toast('В Push-уведомлении нет корректной цели', true); return false; }
     if (!state.userId || !state.initialized) {
@@ -2107,6 +2120,10 @@
     try { await applyPushTarget(target); return true; }
     catch (error) { handledPushTargets.delete(key); toast(error.message || 'Не удалось открыть Push-уведомление', true); return false; }
   }
+  function localPushTarget(data){
+    if(!ENVIRONMENTS)return data;
+    return {...data,environment:ENVIRONMENTS.id,activationId:ENVIRONMENTS.activationId()};
+  }
 
   const nativeNotifications = window.ITUSNativeNotifications;
   const nativePush = () => window.ITUS_NATIVE_PUSH?.supported?.() ? window.ITUS_NATIVE_PUSH : null;
@@ -2117,8 +2134,8 @@
   }
   function enableSystemPreference() {
     if (notificationPermission() !== 'granted') return false;
-    localStorage.setItem('itus.notifications.'+state.userId,
-      JSON.stringify({...FEATURES.preferences(state.userId),system:true}));
+    localStorage.setItem('itus.notifications.'+cacheOwner(),
+      JSON.stringify({...FEATURES.preferences(cacheOwner()),system:true}));
     showNotificationSettings();
     toast('Уведомления разрешены');
     return true;
@@ -2128,7 +2145,7 @@
   });
 
   function showNotificationSettings() {
-    const prefs = FEATURES.preferences(state.userId);
+    const prefs = FEATURES.preferences(cacheOwner());
     const labels = {new_messages:'Новые сообщения бота',executor_assigned:'Назначение исполнителем',executor_changed:'Изменение исполнителя',task_assigned:'Новая задача',quality_control_requested:'Запрос выходного контроля'};
     const types = FEATURES.typesFor(state.user);
     const native = nativePush();
@@ -2167,7 +2184,7 @@
       const count = FEATURES.unread(data);
       if (count !== null && state.unreadRevision === unreadRevision) state.unreadMessages = count;
       state.notificationCursor = String(data.nextCursor || data.cursor || state.notificationCursor || '');
-      const prefs = FEATURES.preferences(userId);
+      const prefs = FEATURES.preferences(ENVIRONMENTS?.cacheOwner(userId)||userId);
       for (const raw of API.extractItems(response, ['events','notifications'])) {
         const type = normalizedNotificationType(raw.type || raw.eventType);
         if (!types.includes(type)) continue;
@@ -2205,7 +2222,7 @@
     finally { state.polling = false; }
   }
 
-  async function openQualityNotification(event) { return openPushTarget({...event,type:'quality_control_requested'}); }
+  async function openQualityNotification(event) { return openPushTarget(localPushTarget({...event,type:'quality_control_requested'})); }
 
   async function openNotification(eventId) {
     const event = state.notifications.find(item => item.eventId === eventId); if (!event) return;
@@ -2217,7 +2234,23 @@
   function showSettings() {
     const display=window.ITUS_DISPLAY;
     const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
-    showSheet('Настройки I-MAX', 'Параметры приложения', `${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
+    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+  }
+
+  async function switchEnvironment(){
+    const next=$('environmentChoice').value;
+    if(!ENVIRONMENTS||next===ENVIRONMENTS.id)return closeSheet();
+    await ENVIRONMENTS.load();
+    if(!ENVIRONMENTS.configuration()?.[next])throw new Error('Выбранная база пока не подключена на сервере');
+    const id=state.userId;
+    clearInterval(state.pollTimer);
+    await ENVIRONMENTS.pause(mediaClient());
+    loggingOut=true;setAuth(id,state.authMode);
+    messenger?.reset();mediaPicker?.dismiss?.({force:true});
+    await unregisterWebPush({destroy:false});
+    await window.ITUS_NATIVE_PUSH?.unregister?.().catch(()=>{});
+    ENVIRONMENTS.select(next,id);
   }
 
   function showMediaDeviceSettings() {
@@ -2226,6 +2259,7 @@
   }
 
   async function logout() {
+    if(ENVIRONMENTS)await ENVIRONMENTS.pause(mediaClient());
     const media=mediaClient();
     const mediaLogout=media?.revoke().catch(()=>{});
     loggingOut=true;
@@ -2316,9 +2350,18 @@
     return Object.keys(state.views).find(view => view !== 'clients' && view !== 'chat') || ((state.views.clients || state.views.chat) ? 'chat' : 'orders');
   }
 
+  function updateChromeSize(){
+    const chrome=document.querySelector('.app-chrome'),header=document.querySelector('.top');
+    if(chrome)document.documentElement.style.setProperty('--chrome-height',Math.ceil(chrome.getBoundingClientRect().height)+'px');
+    if(header)document.documentElement.style.setProperty('--header-height',Math.ceil(header.getBoundingClientRect().height)+'px');
+  }
+  updateChromeSize();
+  window.addEventListener('resize',updateChromeSize);
   if (typeof ResizeObserver !== 'undefined') {
     const header = document.querySelector('.top');
-    if (header) new ResizeObserver(() => document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`)).observe(header);
+    if (header) new ResizeObserver(updateChromeSize).observe(header);
+    const chrome=document.querySelector('.app-chrome');
+    if(chrome)new ResizeObserver(updateChromeSize).observe(chrome);
     const tabs=$('tabs');
     if (tabs) new ResizeObserver(() => document.documentElement.style.setProperty('--tabs-height',`${tabs.offsetHeight}px`)).observe(tabs);
   }
@@ -2377,13 +2420,14 @@
       if (action === 'manual-auth-qr') return await manualQr();
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return await toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return await initialize(); }
       if (action === 'settings') return await showSettings();
+      if (action === 'switch-environment') return await switchEnvironment();
       if (action === 'media-device-settings') return showMediaDeviceSettings();
       if (action === 'media-device-reconnect') {await mediaClient().connect({force:true});showMediaDeviceSettings();toast('Отправка файлов подключена');scheduleQueueResume();return;}
       if (action === 'notification-settings') return await showNotificationSettings();
       if (action === 'save-notifications') {
-        const prefs = FEATURES.preferences(state.userId);
+        const prefs = FEATURES.preferences(cacheOwner());
         document.querySelectorAll('[data-notification-pref]').forEach(input => prefs[input.dataset.notificationPref] = input.checked);
-        localStorage.setItem('itus.notifications.'+state.userId, JSON.stringify(prefs));
+        localStorage.setItem('itus.notifications.'+cacheOwner(), JSON.stringify(prefs));
         state.notifications = state.notifications.filter(e => prefs[e.type]);
         renderNotifications(); toast('Настройки уведомлений сохранены'); return;
       }
@@ -2480,7 +2524,7 @@
 
   $('closeSheetButton').addEventListener('click', closeSheet);
   $('overlay').addEventListener('click', event => { if (event.target === $('overlay')) closeSheet(); });
-  $('userPanel').addEventListener('click', () => state.userId ? showSettings() : null);
+  $('userPanel').addEventListener('click', () => showSettings());
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.initialized) {
       pollNotifications();
@@ -2504,20 +2548,20 @@
     return true;
   };
   window.ITUS_NATIVE_PUSH?.listen?.({
-    onNotification: event => { refreshOpenInternalChatFromPush(event); if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
+    onNotification: event => { if(ENVIRONMENTS&&!ENVIRONMENTS.accepts(event?.data))return;refreshOpenInternalChatFromPush(event); if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
     onAction: data => void openPushTarget(data),
     onError: error => console.warn('Native push:', error)
   });
   navigator.serviceWorker?.addEventListener?.('message', event => {
-    if (event.data?.type === 'itus-push') refreshOpenInternalChatFromPush(event.data.data);
+    if (event.data?.type === 'itus-push'&&(!ENVIRONMENTS||ENVIRONMENTS.accepts(event.data.data))) refreshOpenInternalChatFromPush(event.data.data);
   });
   if (!window.ITUS_NATIVE_PUSH?.supported?.()) {
     void window.ITUS_WEB_PUSH?.prepare().catch(() => {});
     const launch = new URL(window.location.href);
     if (launch.searchParams.get('push') === '1') {
-      const target = Object.fromEntries(['type','eventId','topicRef','topicId','orderRef','orderId'].map(key => [key,launch.searchParams.get(key) || '']));
+      const target = Object.fromEntries(['type','eventId','topicRef','topicId','orderRef','orderId','environment','activationId'].map(key => [key,launch.searchParams.get(key) || '']));
       void openPushTarget(target);
-      for (const key of ['push','type','eventId','topicRef','topicId','orderRef','orderId']) launch.searchParams.delete(key);
+      for (const key of ['push','type','eventId','topicRef','topicId','orderRef','orderId','environment','activationId']) launch.searchParams.delete(key);
       window.history.replaceState(null,'',launch.href);
     }
   }

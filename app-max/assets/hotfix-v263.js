@@ -2,7 +2,7 @@
   'use strict';
 
   const PREFIX = '[ITUS v2.6.3]';
-  const BOT_KEY = 'itus.max.botIds.v263';
+  const BOT_KEY = 'itus.max.botIds.v263'+(window.ITUS_ENVIRONMENTS?.id==='production'?':production':'');
   const LAST_UNREAD_KEY = 'itus.max.lastUnread.v263';
   const SW_URL = './notification-sw.js';
 
