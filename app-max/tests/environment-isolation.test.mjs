@@ -93,6 +93,11 @@ function client(){
   return {env:root.ITUS_ENVIRONMENTS,config:root.ITUS_CONFIG,reloaded:()=>reloaded};
 }
 const media={connect:async()=>{},headers:()=>({'X-ITUS-Device':'offline'})};
+const upgraded=client();assert.equal(upgraded.env.id,'production','new install/upgrade defaults to the real production 1C');
+assert.equal(upgraded.env.initialUserId(),'111','upgrade may reuse MAX ID only, not an old authenticated session');
+assert.match(upgraded.config.ONE_C_API_BASE_URL,/\/contours\/production\/api\/1c$/);
+assert.equal(client().env.initialUserId(),'','later reloads cannot restore a logged-out production user from test credentials');
+storage.set('itus.environment:https://imax.example/p/max-service','test');
 const firstClient=client();await firstClient.env.load();await firstClient.env.begin(media);await firstClient.env.bind(media,{token:'token'});
 const oldActivation=firstClient.env.activationId();
 assert.equal(firstClient.env.accepts({environment:'test',activationId:oldActivation}),true);

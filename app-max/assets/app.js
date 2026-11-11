@@ -165,7 +165,7 @@
     const max = window.WebApp || {};
     const telegram = window.Telegram?.WebApp || {};
     const user = max.initDataUnsafe?.user || telegram.initDataUnsafe?.user || max.user || {};
-    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem(AUTH_STORAGE) || '').trim();
+    return String(user.id || params.get('max_user_id') || params.get('maxUserId') || params.get('userId') || params.get('id') || localStorage.getItem(AUTH_STORAGE) || ENVIRONMENTS?.initialUserId() || '').trim();
   }
 
   function setAuth(id, mode) {

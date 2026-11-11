@@ -4,7 +4,10 @@
   const original=root.ITUS_CONFIG.ONE_C_API_BASE_URL;
   const prefix=String(original).replace(/\/api\/1c\/?$/,'');
   const selectionKey='itus.environment:'+prefix;
-  const chosen=root.localStorage.getItem(selectionKey)==='production'?'production':'test';
+  const savedChoice=root.localStorage.getItem(selectionKey);
+  const initialLegacyUser=savedChoice?'':root.localStorage.getItem('itus.maxUserId')||'';
+  const chosen=savedChoice==='test'?'test':'production';
+  if(!savedChoice)root.localStorage.setItem(selectionKey,chosen);
   const apiBase=chosen==='test'?original:prefix+'/contours/production/api/1c';
   const apiRoot=apiBase.replace(/\/api\/1c\/?$/,'');
   const authKey=chosen==='test'?'itus.maxUserId':'itus.maxUserId:production';
@@ -79,5 +82,5 @@
     if(event.key===selectionKey&&root.localStorage.getItem(selectionKey)!==chosen)root.location.reload();
     if(event.key===activationKey){try{const value=JSON.parse(event.newValue||'null');activation=value?.environment===chosen?value:null;}catch{activation=null;}}
   });
-  root.ITUS_ENVIRONMENTS={id:chosen,label:chosen==='test'?'ТЕСТОВАЯ 1С':'БОЕВАЯ 1С',authKey,cacheOwner:id=>!id?'':chosen==='test'?String(id):'production:'+id,activationId:()=>activation?.activationId||'',load,configuration:()=>configuration,begin,bind,pause,select,accepts,instance};
+  root.ITUS_ENVIRONMENTS={id:chosen,label:chosen==='test'?'ТЕСТОВАЯ 1С':'БОЕВАЯ 1С',authKey,initialUserId:()=>root.localStorage.getItem(authKey)||initialLegacyUser,cacheOwner:id=>!id?'':chosen==='test'?String(id):'production:'+id,activationId:()=>activation?.activationId||'',load,configuration:()=>configuration,begin,bind,pause,select,accepts,instance};
 })(window);

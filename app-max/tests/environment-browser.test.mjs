@@ -64,6 +64,8 @@ try{
     try{await wait('[data-action="msg-open"]');}catch(error){console.error(await evaluate('document.getElementById("app").textContent'),calls.map(c=>c.path));throw error;}
     await click('[data-action="msg-open"]');await wait('#msgDraft');await wait('.msg-text');await settle();return evaluate('document.querySelector(".msg-history").textContent');
   }
+  await send('Page.enable');
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:"if(!localStorage.getItem('itus.environment:'))localStorage.setItem('itus.environment:','test');"});
   await send('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/'});await wait('#authUserId');
   await evaluate('document.getElementById("authUserId").value="111"');await click('[data-action="login"]');await wait('#orderSearch');
   assert.ok((await openChat()).includes('test message'));
