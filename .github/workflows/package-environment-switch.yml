@@ -1,0 +1,83 @@
+name: Package I-MAX environment switch 2.8.6
+on:
+  push:
+    branches: [ci/environment-switch-286]
+    paths: [.github/workflows/package-environment-switch.yml]
+permissions:
+  contents: read
+env:
+  SOURCE_COMMIT: 9ea6ef349001deed2b487d46d6d652dbc5ad731f
+  IMAX_BUILD_SHA: 9ea6ef349001deed2b487d46d6d652dbc5ad731f
+  BASE_COMMIT: 705aa59ec19da2928dea32bc06d55713a93e0519
+  REQUIRE_BROWSER_TESTS: '1'
+jobs:
+  test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9ea6ef349001deed2b487d46d6d652dbc5ad731f
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+      - name: Verify source
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git merge-base "$BASE_COMMIT" HEAD)" = "$BASE_COMMIT"
+          CHROME="$(command -v google-chrome || command -v chromium)"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          name='app-max/package-lock.json'
+          before=json.loads(subprocess.check_output(['git','show',os.environ['BASE_COMMIT']+':'+name]))
+          after=json.loads(pathlib.Path(name).read_text())
+          assert after['version']=='2.8.6' and after['packages']['']['version']=='2.8.6'
+          after['version']=before['version'];after['packages']['']['version']=before['packages']['']['version']
+          assert after==before,'Dependency lock changed'
+          changed=subprocess.check_output(['git','diff','--name-only',os.environ['BASE_COMMIT'],'HEAD'],text=True).splitlines()
+          assert all(p.startswith('app-max/') and not p.lower().endswith('i-max-logo.png') for p in changed)
+          PY
+      - run: npm ci
+        working-directory: app-max
+      - run: npm test
+        working-directory: app-max
+      - run: npm run test:review
+        working-directory: app-max
+      - run: npm run build
+        working-directory: app-max
+      - name: Package exact test application
+        run: |
+          git diff --check
+          git diff --exit-code
+          mkdir test-artifact
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,zipfile
+          root=pathlib.Path('app-max');out=pathlib.Path('test-artifact');source=os.environ['SOURCE_COMMIT']
+          files=[*root.joinpath('dist').rglob('*'),*root.joinpath('assets').rglob('*')]
+          modules=['server.mjs','static-path.mjs','web-push.mjs','media-proxy.mjs','media-store.mjs','media-s3.mjs','media-jobs.mjs','media-service.mjs','media-downloads.mjs','media-metadata.mjs','write-ledger.mjs','one-c-environments.mjs','push-installations.mjs','package.json','package-lock.json','scripts/media-device-code.mjs']
+          files=sorted([p for p in files if p.is_file()]+[root/name for name in modules])
+          assert json.loads((root/'dist/build-info.json').read_text())=={'version':'2.8.6','commit':source}
+          assert not any(p.name.lower()=='i-max-logo.png' for p in files)
+          archive=out/f'I-MAX-test-2.8.6-{source}.zip'
+          manifest={'sourceCommit':source,'baseCommit':os.environ['BASE_COMMIT'],'version':'2.8.6','target':'max-test.ea-itus.ru','files':{}}
+          with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
+            for path in files:
+              relative=str(path.relative_to(root));data=path.read_bytes()
+              item=zipfile.ZipInfo(relative,(2026,11,11,0,0,0));item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=0o100644<<16
+              z.writestr(item,data)
+              manifest['files'][relative]={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+          (out/'BUILD_MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (out/'SHA256SUMS.txt').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
+          (out/'ENVIRONMENTS_1C_2.8.6.md').write_bytes((root/'docs/ENVIRONMENTS_1C_2.8.6.md').read_bytes())
+          PY
+          cat test-artifact/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-test-2.8.6-9ea6ef3
+          path: test-artifact/
+          retention-days: 30
+          if-no-files-found: error
