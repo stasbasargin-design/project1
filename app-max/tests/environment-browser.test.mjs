@@ -6,6 +6,7 @@ import {join,resolve,extname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../',import.meta.url)),calls=[],held=[];
+const nativeBridge=process.argv.includes('--native-bridge');
 const server=createServer(async(req,res)=>{
   const path=new URL(req.url,'http://local.test').pathname;
   if(path.includes('/api/')){
@@ -65,7 +66,9 @@ try{
     await click('[data-action="msg-open"]');await wait('#msgDraft');await wait('.msg-text');await settle();return evaluate('document.querySelector(".msg-history").textContent');
   }
   await send('Page.enable');
-  await send('Page.addScriptToEvaluateOnNewDocument',{source:"if(!localStorage.getItem('itus.environment:'))localStorage.setItem('itus.environment:','test');"});
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:nativeBridge?
+    "window.__ITUS_API_BASE__=location.origin+'/api/1c';window.__NATIVE_PUSH_CONTEXTS__=JSON.parse(localStorage.getItem('test.native.push-contexts')||'[]');window.Capacitor={isNativePlatform:()=>true,getPlatform:()=> 'android',Plugins:{Environment:{setPushContext:async value=>{window.__NATIVE_PUSH_CONTEXTS__.push(value);localStorage.setItem('test.native.push-contexts',JSON.stringify(window.__NATIVE_PUSH_CONTEXTS__))}}}};if(!localStorage.getItem('itus.environment:'+location.origin))localStorage.setItem('itus.environment:'+location.origin,'test');":
+    "if(!localStorage.getItem('itus.environment:'))localStorage.setItem('itus.environment:','test');"});
   await send('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/'});await wait('#authUserId');
   await evaluate('document.getElementById("authUserId").value="111"');await click('[data-action="login"]');await wait('#orderSearch');
   assert.ok((await openChat()).includes('test message'));
@@ -74,11 +77,16 @@ try{
   for(let n=0;n<100&&!held.length;n++)await new Promise(r=>setTimeout(r,50));assert.equal(held.length,1);
   const saved=await queues();assert.equal(saved.length,1);assert.equal(saved[0].requestId,calls.find(c=>c.path.endsWith('/files/send')).body.requestId);
   await switchTo('production','БОЕВАЯ 1С');
+  if(nativeBridge){
+    assert.equal(await evaluate('typeof Capacitor.registerPlugin'),'undefined');
+    assert.equal(await evaluate("JSON.stringify(__NATIVE_PUSH_CONTEXTS__.at(-1))"),JSON.stringify({environment:'test',enabled:false,activationId:''}));
+  }
   assert.deepEqual(await queues(),saved,'switch preserves original file and IDs');
   const productionHistory=await openChat();assert.ok(productionHistory.includes('production message'));assert.ok(!productionHistory.includes('test message'));
   assert.equal(calls.filter(c=>c.environment==='production'&&c.path.endsWith('/files/send')).length,0);
   await switchTo('test','ТЕСТОВАЯ 1С');assert.ok((await openChat()).includes('test message'));
+  if(nativeBridge)assert.equal(await evaluate("JSON.stringify(__NATIVE_PUSH_CONTEXTS__.at(-1))"),JSON.stringify({environment:'production',enabled:false,activationId:''}));
   assert.deepEqual(await queues(),saved);assert.equal(calls.filter(c=>c.environment==='production'&&c.path.endsWith('/files/send')).length,0);
-  console.log('Environment browser: test → production → test, same-ID chats separated and pending file retained with original IDs passed');
+  console.log((nativeBridge?'Android injected bridge':'Environment browser')+': test → production → test, same-ID chats separated and pending file retained with original IDs passed');
   await send('Browser.close');socket.close();
 }finally{socket?.close();child.kill();for(const response of held)response.destroy();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}

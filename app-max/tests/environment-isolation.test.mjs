@@ -85,11 +85,17 @@ assert.equal(developmentPlugin.apply,'serve');
 assert.match(developmentPlugin.transformIndexHtml()[0].children,/ITUS_VITE_DEV=true/);
 const storage=new Map([['itus.maxUserId','111']]),nativeStates=[],clientCalls=[];
 let serverRevision=0;
-function client(){
+function client(bridge='injected'){
   let reloaded=false;
+  const environmentPlugin={setPushContext:async value=>nativeStates.push(value)};
+  const capacitor={isNativePlatform:()=>true};
+  if(bridge==='injected')capacitor.Plugins={Environment:environmentPlugin};
+  if(bridge==='sdk')capacitor.registerPlugin=name=>{assert.equal(name,'Environment');return environmentPlugin;};
+  if(bridge==='broken')capacitor.Plugins={Environment:{}};
+  if(bridge==='storage-error')capacitor.Plugins={Environment:{setPushContext:async()=>{throw Error('Cannot save notification context');}}};
   const root={ITUS_CONFIG:{ONE_C_API_BASE_URL:'https://imax.example/p/max-service/api/1c',ONE_C_PUBLIC_BASE_URL:'https://1c.example/test'},crypto:webcrypto,AbortSignal,URL,
     localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
-    addEventListener(){},location:{reload(){reloaded=true;}},Capacitor:{isNativePlatform:()=>true,registerPlugin:()=>({setPushContext:async value=>nativeStates.push(value)})},
+    addEventListener(){},location:{reload(){reloaded=true;}},Capacitor:capacitor,
     fetch:async(url,options)=>{
       clientCalls.push(url);
       if(url.endsWith('/config'))return {ok:true,json:async()=>({success:true,data:{test:true,production:true,isolatedPush:true}})};
@@ -120,6 +126,11 @@ assert.equal(secondClient.env.accepts({environment:'test',activationId:oldActiva
 assert.equal(secondClient.env.accepts({environment:'production',activationId:secondClient.env.activationId()}),true);
 await secondClient.env.pause(media);secondClient.env.select('test','111');
 assert.equal(client().config.ONE_C_API_BASE_URL,firstClient.config.ONE_C_API_BASE_URL,'returning to test must preserve old queue namespace');
+await client('sdk').env.pause(media);
+assert.equal(nativeStates.at(-1).enabled,false,'SDK registration remains supported');
+for(const bridge of ['missing','broken'])await assert.rejects(client(bridge).env.pause(media),/Обновите APK для переключения уведомлений/);
+await assert.rejects(client('storage-error').env.pause(media),/Cannot save notification context/,'native persistence errors must block switching');
+console.log('Android environment bridge: injected Plugins without registerPlugin, SDK fallback, missing plugin and persistence failure passed');
 
 const notifications=[],handlers={};let workerState={environment:'production',activationId:'current',enabled:true};
 const indexedDB={open(){const request={};queueMicrotask(()=>{

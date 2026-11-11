@@ -20,8 +20,8 @@
   const platform=()=>native()?'android':'web';
   async function workerState(value){
     if(native()){
-      const plugin=root.Capacitor?.registerPlugin?.('Environment');
-      if(!plugin)throw Error('Обновите APK для переключения уведомлений');
+      const plugin=root.Capacitor?.Plugins?.Environment||root.Capacitor?.registerPlugin?.('Environment');
+      if(typeof plugin?.setPushContext!=='function')throw Error('Обновите APK для переключения уведомлений');
       await plugin.setPushContext(value);return;
     }
     if(!root.indexedDB)return;
