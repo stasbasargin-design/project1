@@ -2024,7 +2024,7 @@
     enableSystemPreference();
     return subscription;
   }
-  async function unregisterWebPush() {
+  async function unregisterWebPush({destroy=true}={}) {
     webPushRegistered = false;
     if (!('serviceWorker' in navigator)) return;
     let subscription;
@@ -2033,7 +2033,7 @@
       subscription = await registration?.pushManager?.getSubscription();
       if (subscription && state.userId) await call1C('/notifications/push/unsubscribe', pushPayload(subscription), {silent:true});
     } catch (error) { console.warn('Push unsubscribe:',error.message); }
-    finally { try { await subscription?.unsubscribe(); } catch {} }
+    finally { if(destroy)try { await subscription?.unsubscribe(); } catch {} }
   }
   async function startNativePush() {
     const session=sessionSnapshot();
@@ -2248,7 +2248,7 @@
     await ENVIRONMENTS.pause(mediaClient());
     loggingOut=true;setAuth(id,state.authMode);
     messenger?.reset();mediaPicker?.dismiss?.({force:true});
-    await unregisterWebPush();
+    await unregisterWebPush({destroy:false});
     await window.ITUS_NATIVE_PUSH?.unregister?.().catch(()=>{});
     ENVIRONMENTS.select(next,id);
   }

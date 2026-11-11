@@ -119,3 +119,11 @@ await deliver({environment:'test',activationId:'current'});await deliver({enviro
 await deliver({environment:'production',activationId:'current'});assert.equal(notifications.length,1);
 workerState={...workerState,enabled:false};await deliver({environment:'production',activationId:'current'});assert.equal(notifications.length,1);
 console.log('Environment client and Service Worker: distinct caches/auth, full restart, paused and stale Push suppression passed');
+const appSource=readFileSync(new URL('../assets/app.js',import.meta.url),'utf8');
+const unsubscribeSource=appSource.slice(appSource.indexOf('  async function unregisterWebPush('),appSource.indexOf('  async function startNativePush('));
+let removed=0,unregistered=0;
+const subscription={unsubscribe:async()=>{removed++;}};
+const unsubscribeContext=vm.createContext({webPushRegistered:true,navigator:{serviceWorker:{getRegistration:async()=>({pushManager:{getSubscription:async()=>subscription}})}},URL,document:{baseURI:'https://imax.example/'},state:{userId:'111'},call1C:async()=>{unregistered++;},pushPayload:()=>({}),console});
+vm.runInContext(unsubscribeSource,unsubscribeContext);
+await vm.runInContext('unregisterWebPush({destroy:false})',unsubscribeContext);assert.equal(unregistered,1);assert.equal(removed,0,'switch retains subscription for automatic binding in the selected database');
+await vm.runInContext('unregisterWebPush()',unsubscribeContext);assert.equal(removed,1,'logout destroys the subscription');
