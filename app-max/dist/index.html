@@ -17,6 +17,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <script>window.WebApp = window.WebApp || {ready(){},expand(){},close(){},platform:"web"};</script>
   <script src="./config/itus.config.js"></script>
+  <script src="./assets/environments.js"></script>
   <script src="./assets/display-settings.js"></script>
   <script src="./assets/api-normalizers.js"></script>
   <script src="./assets/review-features.js"></script>
@@ -33,14 +34,17 @@
 <body>
   <div class="brand-rail" aria-hidden="true"></div>
   <main class="phone">
+    <div class="app-chrome">
     <header class="top">
       <div class="logo"><img src="./assets/itus-logo.png" alt="Логотип I-MAX"></div>
       <div class="product">
         <h1>I-MAX</h1>
+        <span id="environmentBadge" class="environment-badge"></span>
       </div>
       <button class="user-panel" id="userPanel" type="button" aria-label="Профиль и подключение к 1С"></button>
     </header>
     <nav class="tabs" id="tabs" aria-label="Разделы приложения"></nav>
+    </div>
     <section id="notifications"></section>
     <section id="app" aria-live="polite"></section>
     <footer><span id="connectionStatus" class="connection-status" role="status" aria-live="polite">Связь с 1С ещё не проверена</span>I-MAX · данные, анкеты, документы и сообщения синхронизируются с 1С Альфа-Авто 6.1.</footer>

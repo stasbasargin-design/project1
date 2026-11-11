@@ -7,13 +7,15 @@ import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFragment } from 'parse5';
-import { webPushConfig, deliverWebPush } from './web-push.mjs';
+import { webPushConfig, deliverWebPush, validateSubscription } from './web-push.mjs';
 import {prepareVideoRequest, VIDEO_CONTENT_TYPE, cleanupStaleVideos} from './media-proxy.mjs';
 import {createMediaService} from './media-service.mjs';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {assertMediaIdentity} from './media-store.mjs';
 import {scanMediaJson} from './media-metadata.mjs';
+import {oneCEnvironments,environmentRoute,mediaEnvironment,upstreamHeaders} from './one-c-environments.mjs';
+import {PushInstallations} from './push-installations.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -53,6 +55,8 @@ const maxRequestBytes = Number(process.env.MAX_REQUEST_BYTES || 30 * 1024 * 1024
 const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowerCase() !== 'false';
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
+const connections=oneCEnvironments(process.env);
+const pushInstallations=process.env.PUSH_INSTALLATIONS_DIR?new PushInstallations(process.env.PUSH_INSTALLATIONS_DIR):null;
 const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
 const webPushContext = String(process.env.WEB_PUSH_CONTEXT || '').trim().toLowerCase();
 const capacitorOrigins = new Set(['https://localhost', 'capacitor://localhost']);
@@ -219,21 +223,37 @@ async function sendInternalPush(req, res, testOnly = false) {
     return;
   }
   try {
-    const result = await (await firebaseMessaging()).sendEachForMulticast({
-      tokens,
+    const environment=(req.itusConnection||connections.test).id;
+    const recipients=await Promise.all(tokens.map(async(token,index)=>({token,index,routing:pushInstallations?await pushInstallations.recipient('android',token,environment):environment==='test'?{legacy:true}:null})));
+    const legacy=recipients.filter(item=>item.routing?.legacy),managed=recipients.filter(item=>item.routing&&!item.routing.legacy);
+    const messaging=legacy.length||managed.length?await firebaseMessaging():null;
+    const responses=[];
+    if(legacy.length){
+    const result = await messaging.sendEachForMulticast({
+      tokens:legacy.map(item=>item.token),
       notification: { title, body },
       data,
       android: { priority: 'high', notification: { channelId: 'i-max-events', icon: 'ic_stat_imax', color: '#1565C0', sound: 'default' } }
     });
+    result.responses.forEach((response,index)=>responses.push({response,index:legacy[index].index}));
+    }
+    if(managed.length){
+      const result=await messaging.sendEach(managed.map(item=>{
+        const target={type:data.type||'',eventId:data.eventId||'',orderRef:data.orderRef||data.orderId||'',topicRef:data.topicRef||data.topicId||'',documentRef:data.documentRef||''};
+        return {token:item.token,data:{...target,...item.routing,itusTitle:truncateUtf8(title,180),itusBody:truncateUtf8(body,1600)},android:{priority:'high',ttl:3600000}};
+      }));
+      result.responses.forEach((response,index)=>responses.push({response,index:managed[index].index}));
+    }
+    const successCount=responses.filter(item=>item.response.success).length,failureCount=responses.length-successCount;
     const invalidTokenIndexes = [];
-    result.responses.forEach((item, index) => {
+    responses.forEach(({response:item,index}) => {
       const code = item.error?.code || '';
       if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token') invalidTokenIndexes.push(index);
     });
     // Do not log device tokens or request payloads. 1C owns the registry and
     // removes invalid tokens using only these response indexes/counts.
-    console.log(`[push] ${testOnly ? 'test' : 'event'} sent=${result.successCount} failed=${result.failureCount}`);
-    json(res, 200, { success: true, data: { sent: result.successCount, failed: result.failureCount, invalidTokenIndexes } });
+    console.log(`[push] ${testOnly ? 'test' : 'event'} sent=${successCount} failed=${failureCount}`);
+    json(res, 200, { success: true, data: { sent:successCount, failed:failureCount, skipped:tokens.length-responses.length, invalidTokenIndexes } });
   } catch (error) {
     const status = error?.code === 'FIREBASE_NOT_CONFIGURED' ? 503 : 502;
     console.error(`[push] delivery failed code=${asText(error?.code || 'FIREBASE_ERROR', 80)}`);
@@ -251,7 +271,23 @@ async function sendInternalWebPush(req, res) {
   const { title, body, data } = fitPushPayload(payload);
   const target = Object.fromEntries(['type', 'eventId', 'topicRef', 'topicId', 'orderRef', 'orderId'].filter(key => data[key]).map(key => [key, data[key]]));
   try {
-    const result = await deliverWebPush(payload.subscriptions, { title, body, data: target });
+    if(!Array.isArray(payload.subscriptions)||!payload.subscriptions.length||payload.subscriptions.length>50)throw Object.assign(Error('INVALID_SUBSCRIPTIONS'),{status:400});
+    try{for(const subscription of payload.subscriptions)validateSubscription(subscription,process.env.WEB_PUSH_ALLOWED_HOSTS);}catch{throw Object.assign(Error('INVALID_SUBSCRIPTION'),{status:400});}
+    if(new Set(payload.subscriptions.map(item=>item.endpoint)).size!==payload.subscriptions.length)throw Object.assign(Error('DUPLICATE_SUBSCRIPTION'),{status:400});
+    const environment=(req.itusConnection||connections.test).id;
+    const result={sent:0,failed:0,skipped:0,invalidSubscriptionIndexes:[],retryableSubscriptionIndexes:[],errors:[]};
+    for(let offset=0;offset<payload.subscriptions.length;offset+=5){
+    await Promise.all(payload.subscriptions.slice(offset,offset+5).map(async(subscription,slot)=>{
+      const index=offset+slot;
+      const routing=pushInstallations?await pushInstallations.recipient('web',subscription?.endpoint,environment):environment==='test'?{legacy:true}:null;
+      if(!routing){result.skipped++;return;}
+      const delivery=await deliverWebPush([subscription],{title,body,data:{...target,...(routing.legacy?{}:routing)}});
+      result.sent+=delivery.sent;result.failed+=delivery.failed;
+      if(delivery.invalidSubscriptionIndexes.length)result.invalidSubscriptionIndexes.push(index);
+      if(delivery.retryableSubscriptionIndexes.length)result.retryableSubscriptionIndexes.push(index);
+      result.errors.push(...delivery.errors.map(error=>({...error,index})));
+    }));
+    }
     console.log(`[web-push] sent=${result.sent} failed=${result.failed}`);
     json(res, 200, { success: true, data: result });
   } catch (error) {
@@ -262,6 +298,9 @@ async function sendInternalWebPush(req, res) {
 }
 
 async function proxy1C(req, res, pathname) {
+  const connection=req.itusConnection||connections.test;
+  const oneCTarget=connection.target,oneCToken=connection.token,oneCBasicUser=connection.basicUser,oneCBasicPassword=connection.basicPassword;
+  const mediaService=mediaServices[connection.id];
   allowCapacitorApiOrigin(req, res);
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { Allow: 'POST, OPTIONS' });
@@ -337,7 +376,7 @@ async function proxy1C(req, res, pathname) {
     }
     // Never trust a browser-provided context. Only the configured server contour
     // may label a Web Push registration for 1C selection.
-    if (webPushRegistration) headers['X-ITUS-Push-Context'] = webPushContext;
+    if (webPushRegistration) headers['X-ITUS-Push-Context'] = connection.id==='production'?'production':webPushContext;
     if(video)headers['Content-Length']=String(video.byteLength);
 
     if (logProxyRequests) {
@@ -406,8 +445,11 @@ function serveStatic(req, res, pathname) {
   createReadStream(filePath).pipe(res);
 }
 
-const mediaService=createMediaService({env:{...process.env,ONE_C_TARGET:oneCTarget},json,upstreamHeaders:()=>({'Content-Type':'application/json; charset=utf-8','Accept':'application/json',...(oneCToken?{'X-ITUS-Token':oneCToken}:{}),...(oneCBasicUser?{Authorization:`Basic ${Buffer.from(`${oneCBasicUser}:${oneCBasicPassword}`).toString('base64')}`}:{})}),log:event=>console.log(JSON.stringify(event))});
-void mediaService.init().catch(error=>console.error('Media buffer unavailable:',error.code||error.name));
+const mediaServices=Object.fromEntries(Object.values(connections).filter(Boolean).map(connection=>{
+  const service=createMediaService({env:mediaEnvironment(process.env,connection),json,upstreamHeaders:()=>upstreamHeaders(connection),log:event=>console.log(JSON.stringify({...event,environment:connection.id}))});
+  void service.init().catch(error=>console.error('Media buffer unavailable:',connection.id,error.code||error.name));
+  return [connection.id,service];
+}));
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const basePath = detectBasePath(req.headers.host, url.pathname);
@@ -415,8 +457,30 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(308, { Location: basePath + '/' + url.search });
     res.end(); return;
   }
-  const pathname = basePath !== '/' && url.pathname.startsWith(basePath + '/')
+  let pathname = basePath !== '/' && url.pathname.startsWith(basePath + '/')
     ? url.pathname.slice(basePath.length) : url.pathname;
+  const selected=environmentRoute(pathname,connections);
+  if(!selected){json(res,404,{success:false,error:{code:'ENVIRONMENT_UNAVAILABLE',message:'Подключение к 1С не настроено'}});return;}
+  pathname=selected.pathname;req.itusConnection=selected.connection;
+  if(url.pathname.includes('/contours/')&&!pathname.startsWith('/api/')&&pathname!=='/health'){json(res,404,{success:false});return;}
+  const mediaService=mediaServices[selected.connection.id];
+  if(pathname==='/api/environments/config'&&req.method==='GET'){
+    allowCapacitorApiOrigin(req,res);
+    json(res,200,{success:true,data:{test:true,production:Boolean(connections.production),isolatedPush:Boolean(pushInstallations)}});return;
+  }
+  if(pathname==='/api/push/installation'){
+    allowCapacitorApiOrigin(req,res);
+    if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
+    if(req.method!=='POST'){json(res,405,{success:false});return;}
+    try{
+      if(!pushInstallations)throw Object.assign(Error('Push isolation not configured'),{status:503});
+      const owner=await mediaService.device(req),input=JSON.parse((await readBody(req)).toString('utf8'));
+      if(!['begin','bind','pause'].includes(input.action))throw Object.assign(Error('Invalid Push action'),{status:400});
+      const result=await pushInstallations[input.action](owner.userId,selected.connection.id,input);
+      json(res,200,{success:true,data:result});
+    }catch(error){json(res,error.status||503,{success:false,error:{code:error.code||'PUSH_ISOLATION_UNAVAILABLE',message:'Не удалось подтвердить контур уведомлений'}});}
+    return;
+  }
   if(pathname.startsWith('/api/media/')){allowCapacitorApiOrigin(req,res);await mediaService.handle(req,res,pathname);return;}
   if (pathname === '/health') {
     json(res, 200, { success: true, service: 'ITUS', version: buildInfo.version, commit: buildInfo.commit, oneCTargetConfigured: Boolean(oneCTarget) });

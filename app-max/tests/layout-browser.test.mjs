@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 const browser=[process.env.CHROME_PATH,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser','C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean).find(existsSync);
 if(!browser)throw new Error('Layout browser test requires Chrome/Chromium/Edge; set CHROME_PATH.');
 const root=fileURLToPath(new URL('../',import.meta.url));
-const html=readFileSync(join(root,'index.html'),'utf8').replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script><script src="./config/itus.config.js">');
+const html=readFileSync(join(root,'index.html'),'utf8').replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script><script src="./config/itus.config.js">').replace('<script src="./assets/app.js">','<script>if(location.search.includes("loading-test")){const original=window.fetch;window.fetch=(url,options)=>String(url).endsWith("/auth/max")?new Promise(resolve=>{window.releaseLogin=()=>original(url,options).then(resolve);}):original(url,options);}</script><script src="./assets/app.js">');
 const artifactDir=process.env.LAYOUT_ARTIFACT_DIR&&resolve(process.env.LAYOUT_ARTIFACT_DIR);
 if(artifactDir)mkdirSync(artifactDir,{recursive:true});
 const server=createServer((req,res)=>{
@@ -45,6 +45,19 @@ try{
   const visibleNavigation=(m,label)=>{assert.equal(m.nav.display,'flex',label+' navigation hidden');assert.ok(m.nav.y>=m.header.bottom-1,label+' tabs overlap header');assert.ok(m.nav.bottom<=m.phone.bottom+1,label+' tabs below viewport');assert.ok(m.scrollWidth<=m.width+1,label+' horizontal document overflow');};
   await send('Page.enable');await send('Page.setLifecycleEventsEnabled',{enabled:true});await send('Network.enable');await send('Network.setBlockedURLs',{urls:['https://*']});
   const results=[];
+  for(const [width,safeTop] of [[320,0],[360,32],[393,48],[800,32]]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height:852,deviceScaleFactor:1,mobile:true});
+    await navigate(`http://127.0.0.1:${server.address().port}/?role=master&loading-test=1`);
+    await waitFor('.card.loading');
+    for(const size of ['normal','extra']){
+      await evaluate(`document.documentElement.style.setProperty('--safe-area-inset-top',${JSON.stringify(safeTop+'px')});ITUS_DISPLAY.set(${JSON.stringify(size)});`);
+      await settle();const initial=await snap();visibleNavigation(initial,'initial login '+width+' '+size);
+      assert.ok(initial.app.y>=initial.nav.bottom-1,'loading card overlaps navigation');
+      await screenshot('initial-login-'+width+'-'+size);results.push({label:'initial-login-'+width+'-'+size,initial});
+    }
+    await evaluate('releaseLogin()');await waitFor('#orderSearch');await settle();visibleNavigation(await snap(),'after login '+width);
+    await evaluate('ITUS_DISPLAY.set("normal")');
+  }
   for(const [width,height] of [[360,852],[393,852],[800,852],[1200,852],[852,393]]){
     const label=width+'x'+height;
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true});
