@@ -400,8 +400,8 @@ window.ITUS_CONFIG = {
   const platform=()=>native()?'android':'web';
   async function workerState(value){
     if(native()){
-      const plugin=root.Capacitor?.registerPlugin?.('Environment');
-      if(!plugin)throw Error('Обновите APK для переключения уведомлений');
+      const plugin=root.Capacitor?.Plugins?.Environment||root.Capacitor?.registerPlugin?.('Environment');
+      if(typeof plugin?.setPushContext!=='function')throw Error('Обновите APK для переключения уведомлений');
       await plugin.setPushContext(value);return;
     }
     if(!root.indexedDB)return;
@@ -12624,7 +12624,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.6'
+    version: 'i-max-2.8.7'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
