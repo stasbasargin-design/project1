@@ -6,8 +6,8 @@ on:
 permissions:
   contents: read
 env:
-  SOURCE_COMMIT: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
-  IMAX_BUILD_SHA: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
+  SOURCE_COMMIT: cb44f93d8a8ca9f5ca5e81fdbf469165098c02b0
+  IMAX_BUILD_SHA: cb44f93d8a8ca9f5ca5e81fdbf469165098c02b0
   BASE_COMMIT: bae5680cd09867f6f03d851d6dab3b20e6143090
   REQUIRE_BROWSER_TESTS: '1'
 jobs:
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
+          ref: cb44f93d8a8ca9f5ca5e81fdbf469165098c02b0
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -77,7 +77,7 @@ jobs:
           cat test-artifact/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: I-MAX-test-2.8.8-24eab2f
+          name: I-MAX-test-2.8.8-cb44f93
           path: test-artifact/
           retention-days: 30
           if-no-files-found: error
