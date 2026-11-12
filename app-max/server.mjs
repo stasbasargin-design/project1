@@ -16,6 +16,7 @@ import {assertMediaIdentity} from './media-store.mjs';
 import {scanMediaJson} from './media-metadata.mjs';
 import {oneCEnvironments,environmentRoute,mediaEnvironment,upstreamHeaders} from './one-c-environments.mjs';
 import {PushInstallations} from './push-installations.mjs';
+import {createDiagnostics} from './diagnostics-server.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distRoot = resolve(root, 'dist');
@@ -56,6 +57,7 @@ const logProxyRequests = String(process.env.LOG_PROXY_REQUESTS || 'true').toLowe
 const oneCBasicUser = String(process.env.ONE_C_BASIC_USER || '').trim();
 const oneCBasicPassword = String(process.env.ONE_C_BASIC_PASSWORD || '');
 const connections=oneCEnvironments(process.env);
+const diagnostics=createDiagnostics();
 const pushInstallations=process.env.PUSH_INSTALLATIONS_DIR?new PushInstallations(process.env.PUSH_INSTALLATIONS_DIR):null;
 const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
 const webPushContext = String(process.env.WEB_PUSH_CONTEXT || '').trim().toLowerCase();
@@ -97,7 +99,7 @@ function allowCapacitorApiOrigin(req, res) {
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Range, X-ITUS-Request-Id, X-ITUS-Token, X-ITUS-Device, X-ITUS-Retry');
-  res.setHeader('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges, X-ITUS-Diagnostics-Token');
   res.setHeader('Vary', 'Origin');
 }
 
@@ -391,9 +393,15 @@ async function proxy1C(req, res, pathname) {
       signal: controller.signal
     });
     const upstream=mediaEnvelope?await mediaService.write(suffix,mediaEnvelope,perform,{binaryDigest:video?.binaryDigest,manual:req.headers['x-itus-retry']==='checked'}):await perform();
+    let responseBody=upstream.body,diagnosticOutcome={};
+    if(diagnostics.enabled&&suffix==='/auth/max'&&upstream.status===200){
+      const decorated=await diagnostics.authResponse(upstream,body,connection.id);responseBody=decorated.body;
+      if(decorated.token)res.setHeader('X-ITUS-Diagnostics-Token',decorated.token);
+    }
     let responseBytes=0;
     if(metadataOnly&&upstream.status===200){
       const result=await scanMediaJson(upstream.body,{signal:controller.signal});responseBytes=result.upstreamBytes;
+      diagnosticOutcome={applicationSuccess:result.metadata?.success,code:result.metadata?.error?.code};
       res.setHeader('X-Content-Type-Options','nosniff');json(res,200,result.metadata);
     }else{
     res.writeHead(upstream.status, {
@@ -401,12 +409,17 @@ async function proxy1C(req, res, pathname) {
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff'
     });
-    await pipeline(Readable.fromWeb(upstream.body),new Transform({transform(chunk,_encoding,callback){responseBytes+=chunk.length;callback(null,chunk);}}),res);
+    const audit=diagnostics.enabled?diagnostics.observer():null;
+    const streams=[responseBody?.getReader?Readable.fromWeb(responseBody):responseBody,new Transform({transform(chunk,_encoding,callback){responseBytes+=chunk.length;callback(null,chunk);}})];
+    if(audit)streams.push(audit.stream);streams.push(res);await pipeline(...streams);
+    diagnosticOutcome=audit?.result()||{};
     }
+    diagnostics.observe(connection.id,suffix,upstream.status,Date.now()-startedAt,diagnosticOutcome);
     if(logProxyRequests)console.log(`[1С -> ИТУС] ${upstream.status} POST ${suffix} ${Date.now()-startedAt}ms${requestId?` requestId=${requestId}`:''} requestBytes=${video?.byteLength||body.length} responseBytes=${responseBytes}`);
   } catch (error) {
     const timeout = error?.name === 'AbortError';
     const tooLarge = error?.code === 'REQUEST_TOO_LARGE';
+    diagnostics.observe(connection.id,suffix,error.code==='ERR_STREAM_PREMATURE_CLOSE'||req.aborted?499:timeout?504:(error.status||502),Date.now()-startedAt,{code:diagnostics.codeOf(error)});
     console.error(`[Ошибка proxy 1С] POST ${suffix} ${Date.now() - startedAt}ms: ${String(error?.message || error)}${requestId ? ` requestId=${requestId}` : ''}`);
     if (tooLarge || binaryVideo) res.setHeader('Connection', 'close');
     if(res.headersSent){res.destroy();return;}
@@ -423,7 +436,7 @@ async function proxy1C(req, res, pathname) {
   }
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, privatePage=false) {
   const filePath = resolvePublicPath(staticRoot, pathname);
   if (!filePath) {
     json(res, 403, { success: false, error: { code: 'FORBIDDEN', message: 'Недопустимый путь' } });
@@ -436,7 +449,7 @@ function serveStatic(req, res, pathname) {
   const type = mime[extname(filePath).toLowerCase()] || 'application/octet-stream';
   res.writeHead(200, {
     'Content-Type': type,
-    'Cache-Control': 'no-cache',
+    'Cache-Control': privatePage?'no-store':'no-cache',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(self), microphone=(self)'
@@ -464,6 +477,7 @@ const server = http.createServer(async (req, res) => {
   pathname=selected.pathname;req.itusConnection=selected.connection;
   if(url.pathname.includes('/contours/')&&!pathname.startsWith('/api/')&&pathname!=='/health'){json(res,404,{success:false});return;}
   const mediaService=mediaServices[selected.connection.id];
+  if(await diagnostics.handle(req,res,pathname,{environment:selected.connection.id,basePath,json,servePanel:(request,response)=>serveStatic(request,response,'/diagnostics.html',true),allowOrigin:allowCapacitorApiOrigin}))return;
   if(pathname==='/api/environments/config'&&req.method==='GET'){
     allowCapacitorApiOrigin(req,res);
     json(res,200,{success:true,data:{test:true,production:Boolean(connections.production),isolatedPush:Boolean(pushInstallations)}});return;
