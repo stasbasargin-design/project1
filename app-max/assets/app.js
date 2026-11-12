@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.7'
+    version: 'i-max-2.8.8'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -74,6 +74,10 @@
   let orderQrScanner = null;
   let activeOrderQrSearch = null;
   let lastOrderQrValue = '';
+  window.ITUS_DIAGNOSTICS_CLIENT=window.ITUS_DIAGNOSTICS?.create({context:()=>({
+    userId:state.userId,generation:sessionGeneration,apiBase:CONFIG.apiBase,environment:ENVIRONMENTS?.id||'test',version:CONFIG.version,build:buildCommit,
+    ready:state.initialized,uiBlocked:Boolean(state.error),queue:{pending:state.queuedOperations.filter(x=>['pending','sending'].includes(x.status)).length,failed:state.queuedOperations.filter(x=>['invalid','failed','uncertain'].includes(x.status)).length}
+  })});
   const longRunningActions = new Set([
     'media-device-reconnect',
     'login', 'logout', 'switch-environment', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
@@ -184,6 +188,7 @@
     state.serviceBotId = '';
     if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
     else localStorage.removeItem(AUTH_STORAGE);
+    window.ITUS_DIAGNOSTICS_CLIENT?.activate();
   }
 
   function sessionSnapshot() {
@@ -328,6 +333,8 @@
   async function call1C(method, payload = {}, options = {}) {
     const session = options.session || sessionSnapshot();
     assertSession(session);
+    const diagnosticRequest=window.ITUS_DIAGNOSTICS_CLIENT?.start(method);
+    const diagnosticSuccess=(data,status=200)=>{window.ITUS_DIAGNOSTICS_CLIENT?.success(diagnosticRequest,status);return data;};
     window.ITUS_WORKTIME?.validateRequest(method, payload);
     const base = String(CONFIG.apiBase || '').replace(/\/+$/, '');
     if (!base) throw new Error('Не заполнен ONE_C_API_BASE_URL');
@@ -348,11 +355,11 @@
       if(options.envelopeContext&&media&&/\/(acceptance|defects)\/complete$/.test(method))await media.connect();
       if(file?.transport==='s3'){
         if(!media)throw Object.assign(new Error('Обновите приложение для отправки крупных файлов'),{code:'MEDIA_CLIENT_MISSING',status:503});
-        return await media.send(method,envelope,{signal:controller.signal,manual:options.manual});
+        return diagnosticSuccess(await media.send(method,envelope,{signal:controller.signal,manual:options.manual}));
       }
       if(options.envelopeContext && /\/(acceptance|defects)\/complete$/.test(method) && media?.connected()){
         const job=await media.completion(method,envelope,[],controller.signal);
-        return await media.wait(job,{signal:controller.signal,manual:options.manual});
+        return diagnosticSuccess(await media.wait(job,{signal:controller.signal,manual:options.manual}));
       }
       if(options.envelopeContext && media?.connected())Object.assign(headers,media.headers());
       const video=window.ITUS_VIDEO_TRANSPORT?.encode(method,{clientBotId:state.clientBotId,serviceBotId:state.serviceBotId,...envelope});
@@ -377,11 +384,13 @@
         throw Object.assign(new Error(message), { code: code || 'ONE_C_ERROR', status: response.status, details: err?.details });
       }
       connectionStatus('ok', window.ITUS_REVIEW_MODE ? 'Проверочный режим · без соединения с 1С' : `1С доступна · ${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}`);
-      return data;
+      if(method==='/auth/max')window.ITUS_DIAGNOSTICS_CLIENT?.acceptToken(response.headers?.get?.('X-ITUS-Diagnostics-Token'));
+      return diagnosticSuccess(data,response.status);
     } catch (error) {
       if (!sessionCurrent(session)) throw sessionError();
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
       error.diagnostic = errorDiagnostic(error, { route:method, requestId:headers['X-ITUS-Request-Id'] });
+      window.ITUS_DIAGNOSTICS_CLIENT?.failure(diagnosticRequest,error);
       connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
       if (!options.silent) toast(`1С: ${error.message}`, true);
       throw error;
@@ -446,7 +455,7 @@
       void syncExistingWebPush();
       await applyPendingPushTarget();
     } catch (error) {
-      if (sessionCurrent(session)) state.error = `Не удалось подключиться к 1С: ${error.message}`;
+      if (sessionCurrent(session)) {if(!error.diagnostic)window.ITUS_DIAGNOSTICS_CLIENT?.appFailure(error,'initialize');state.error = `Не удалось подключиться к 1С: ${error.message}`;}
     } finally {
       if (sessionCurrent(session)) { state.loading = false; render(); }
     }
@@ -2268,6 +2277,7 @@
     finally {
       messenger?.reset(); clearInterval(state.pollTimer); pendingPushTarget=null;handledPushTargets.clear();
       mediaPicker?.dismiss?.({force:true});
+      window.ITUS_DIAGNOSTICS_CLIENT?.logout();
       setAuth('','');
       Object.assign(state,{user:null,orders:[],selectedOrderId:'',initialized:false,loading:false,busy:false,error:'',notifications:[],notificationCursor:'',unreadMessages:null,lastUnreadMessages:null,seenEvents:new Set()});
       document.body?.classList.remove('messenger-view'); closeSheet(); loggingOut=false; render();

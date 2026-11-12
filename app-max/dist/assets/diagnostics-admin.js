@@ -1,0 +1,33 @@
+(function(){
+ 'use strict';
+ const $=id=>document.getElementById(id),labels={online:'На связи',starting:'Подключение','operation-error':'Ошибка операции','network-error':'Сетевой сбой','app-error':'Ошибка приложения',background:'В фоне','no-signal':'Нет свежих данных','signed-out':'Вышел из аккаунта'};
+ let data={devices:[],server:{minutes:[],errors:[]}},busy=false,currentDetail=null;
+ const date=value=>value?new Date(value).toLocaleString('ru-RU',{timeZone:'Asia/Yekaterinburg',hour12:false}):'—';
+ function node(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=String(text);if(className)e.className=className;return e;}
+ function append(parent,...children){for(const child of children)parent.append(child);return parent;}
+ function tag(text,kind){return node('span',text,'tag '+kind);}
+ function rows(){return data.devices.filter(r=>(!$('environment').value||r.environment===$('environment').value)&&(!$('platform').value||r.platform===$('platform').value)&&(!$('status').value||($('status').value==='error'?r.status.endsWith('error'):r.status===$('status').value))&&(! $('search').value||[r.name,r.userId,r.version].join(' ').toLocaleLowerCase('ru-RU').includes($('search').value.toLocaleLowerCase('ru-RU'))));}
+ function render(){
+  const records=rows().sort((a,b)=>Number(b.status.endsWith('error'))-Number(a.status.endsWith('error'))||a.name.localeCompare(b.name,'ru'));
+  $('total').textContent=records.length;$('online').textContent=records.filter(r=>r.status==='online').length;$('errors').textContent=records.filter(r=>r.status.endsWith('error')).length;$('stale').textContent=records.filter(r=>r.status==='no-signal').length;
+  $('devices').replaceChildren();$('empty').hidden=records.length>0;
+  for(const r of records){
+   const tr=node('tr'),identity=node('td');append(identity,node('strong',r.name),node('small','MAX '+r.userId),node('small',(r.platform==='android'?'Android APK':'Web / PWA')+' · '+r.browser+(r.os?' · '+r.os:'')));
+   const version=append(node('td'),node('strong',r.version),tag(r.environment==='production'?'Боевая':'Тестовая',r.environment));
+   const status=append(node('td'),tag(labels[r.status]||r.status,r.status),node('small',r.lastError?date(r.lastError.at)+' · '+r.lastError.code:'Ошибок не зарегистрировано'));
+   const last=append(node('td'),node('span',date(r.lastSeen)),node('small',r.visibility==='hidden'?'Приложение в фоне':'Приложение открыто'));
+   const api=append(node('td'),node('span',r.lastSuccess?`${r.lastSuccess.durationMs} мс · ${date(r.lastSuccess.at)}`:'Ещё нет подтверждения'),node('small',r.lastRequest?.route||'—'));
+   const queue=append(node('td'),node('span','Ожидает: '+r.queue.pending),node('small','С ошибкой: '+r.queue.failed));
+   const control=node('td'),button=node('button','Подробнее');button.addEventListener('click',()=>void detail(r.id));control.append(button);append(tr,identity,version,status,last,api,queue,control);$('devices').append(tr);
+  }
+  const minutes=data.server.minutes.filter(r=>!$('environment').value||r.environment===$('environment').value),count=minutes.reduce((n,r)=>n+r.count,0),failed=minutes.reduce((n,r)=>n+r.failed,0),application=minutes.reduce((n,r)=>n+r.applicationErrors,0),time=minutes.reduce((n,r)=>n+r.totalMs,0);
+  $('serverSummary').replaceChildren(...[`${count} запросов`,`${failed} HTTP 5xx`,`${application} ошибок внутри JSON`,`${count?Math.round(time/count):0} мс — среднее время`].map(x=>node('span',x)));
+  const errors=data.server.errors.filter(r=>!$('environment').value||r.environment===$('environment').value).slice(-10).reverse();$('serverErrors').replaceChildren(...errors.map(r=>append(node('div',undefined,'server-error'),node('span',date(r.at)+' · HTTP '+r.status+' · '+r.code+' · '+r.durationMs+' мс'),node('code',r.route))));
+ }
+ async function request(path){const response=await fetch(new URL(path,document.baseURI),{cache:'no-store',credentials:'same-origin'});if(!response.ok)throw Error(response.status===401?'Требуется вход администратора. Обновите страницу.':response.status===429?'Слишком много попыток входа. Повторите позже.':'Панель временно недоступна. Последние данные сохранены на экране.');const value=await response.json();if(!value.success)throw Error('Не удалось получить диагностику');return value.data;}
+ async function refresh(){if(busy)return;busy=true;$('refresh').disabled=true;try{data=await request('./api/devices');$('banner').hidden=true;$('refreshTime').textContent='Обновлено '+date(data.now);render();}catch(error){$('banner').textContent=error.message;$('banner').hidden=false;}finally{busy=false;$('refresh').disabled=false;}}
+ async function detail(id){try{const r=await request('./api/devices/'+id);currentDetail=r;$('detailTitle').textContent=r.name;$('detailInfo').replaceChildren(...[`MAX ${r.userId} · ${r.platform} · ${r.browser}`,`${r.version} · ${r.environment==='production'?'Боевая 1С':'Тестовая 1С'}`,`Статус: ${labels[r.status]}`,`Последний контакт: ${date(r.lastSeen)}`,`Последний успех 1С: ${date(r.lastSuccess?.at)}`,`Ошибок принято: ${r.errorCount}`].map(x=>node('div',x)));$('events').replaceChildren(...r.events.slice().reverse().map(e=>append(node('div',undefined,'event'),node('strong',date(e.at)+' · '+e.kind),node('code',e.route+' · HTTP '+e.status+' · '+e.code),node('small',e.durationMs+' мс'+(e.file?' · '+e.file+':'+e.line:'')))));if(!r.events.length)$('events').append(node('p','Ошибок и переходов состояния пока нет.'));$('details').showModal();}catch(error){$('banner').textContent=error.message;$('banner').hidden=false;}}
+ $('refresh').addEventListener('click',()=>void refresh());for(const id of ['environment','platform','status'])$(id).addEventListener('change',render);$('search').addEventListener('input',render);$('closeDetails').addEventListener('click',()=>$('details').close());
+ $('copyReport').addEventListener('click',async()=>{if(!currentDetail)return;const r=currentDetail;const text=['I-MAX: диагностика устройства',`MAX: ${r.userId}`,`Версия: ${r.version}`,`Сборка: ${r.build}`,`Платформа: ${r.platform} / ${r.browser}`,`Контур: ${r.environment}`,`Последний контакт: ${r.lastSeen}`,...r.events.slice(-20).map(e=>`${e.at} ${e.kind} ${e.route} HTTP ${e.status} ${e.code} ${e.durationMs}ms`)].join('\n');try{await navigator.clipboard.writeText(text);$('copyReport').textContent='Отчёт скопирован';setTimeout(()=>$('copyReport').textContent='Скопировать технический отчёт',2000);}catch{$('copyReport').textContent='Копирование недоступно в этом браузере';}});
+ setInterval(()=>{if(!document.hidden)void refresh();},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refresh();});void refresh();
+})();
