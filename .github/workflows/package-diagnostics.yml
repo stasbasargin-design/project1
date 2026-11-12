@@ -1,0 +1,83 @@
+name: Package I-MAX diagnostics 2.8.8
+on:
+  push:
+    branches: [ci/diagnostics-test-288]
+    paths: [.github/workflows/package-diagnostics.yml]
+permissions:
+  contents: read
+env:
+  SOURCE_COMMIT: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
+  IMAX_BUILD_SHA: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
+  BASE_COMMIT: bae5680cd09867f6f03d851d6dab3b20e6143090
+  REQUIRE_BROWSER_TESTS: '1'
+jobs:
+  test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 24eab2f35723a6c61072ae50841b1fa3ae42c5b9
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app-max/package-lock.json
+      - name: Verify source
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(git merge-base "$BASE_COMMIT" HEAD)" = "$BASE_COMMIT"
+          CHROME="$(command -v google-chrome || command -v chromium)"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          name='app-max/package-lock.json'
+          before=json.loads(subprocess.check_output(['git','show',os.environ['BASE_COMMIT']+':'+name]))
+          after=json.loads(pathlib.Path(name).read_text())
+          assert after['version']=='2.8.8' and after['packages']['']['version']=='2.8.8'
+          after['version']=before['version'];after['packages']['']['version']=before['packages']['']['version']
+          assert after==before,'Dependency lock changed'
+          changed=subprocess.check_output(['git','diff','--name-only',os.environ['BASE_COMMIT'],'HEAD'],text=True).splitlines()
+          assert all(p.startswith('app-max/') and not p.lower().endswith('i-max-logo.png') for p in changed)
+          PY
+      - run: npm ci
+        working-directory: app-max
+      - run: npm test
+        working-directory: app-max
+      - run: npm run test:review
+        working-directory: app-max
+      - run: npm run build
+        working-directory: app-max
+      - name: Package exact test application
+        run: |
+          git diff --check
+          git diff --exit-code
+          mkdir test-artifact
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,zipfile
+          root=pathlib.Path('app-max');out=pathlib.Path('test-artifact');source=os.environ['SOURCE_COMMIT']
+          files=[*root.joinpath('dist').rglob('*'),*root.joinpath('assets').rglob('*')]
+          modules=['server.mjs','static-path.mjs','web-push.mjs','media-proxy.mjs','media-store.mjs','media-s3.mjs','media-jobs.mjs','media-service.mjs','media-downloads.mjs','media-metadata.mjs','write-ledger.mjs','one-c-environments.mjs','push-installations.mjs','diagnostics-server.mjs','package.json','package-lock.json','scripts/media-device-code.mjs']
+          files=sorted([p for p in files if p.is_file()]+[root/name for name in modules])
+          assert json.loads((root/'dist/build-info.json').read_text())=={'version':'2.8.8','commit':source}
+          assert not any(p.name.lower()=='i-max-logo.png' for p in files)
+          archive=out/f'I-MAX-test-2.8.8-{source}.zip'
+          manifest={'sourceCommit':source,'baseCommit':os.environ['BASE_COMMIT'],'version':'2.8.8','target':'max-test.ea-itus.ru','files':{}}
+          with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
+            for path in files:
+              relative=str(path.relative_to(root));data=path.read_bytes()
+              item=zipfile.ZipInfo(relative,(2026,11,11,0,0,0));item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=0o100644<<16
+              z.writestr(item,data)
+              manifest['files'][relative]={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+          (out/'BUILD_MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (out/'SHA256SUMS.txt').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
+          (out/'DIAGNOSTICS_2.8.8.md').write_bytes((root/'docs/DIAGNOSTICS_2.8.8.md').read_bytes())
+          PY
+          cat test-artifact/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: I-MAX-test-2.8.8-24eab2f
+          path: test-artifact/
+          retention-days: 30
+          if-no-files-found: error
