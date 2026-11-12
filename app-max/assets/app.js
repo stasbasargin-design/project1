@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.8'
+    version: 'i-max-2.8.9'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -78,6 +78,12 @@
     userId:state.userId,generation:sessionGeneration,apiBase:CONFIG.apiBase,environment:ENVIRONMENTS?.id||'test',version:CONFIG.version,build:buildCommit,
     ready:state.initialized,uiBlocked:Boolean(state.error),queue:{pending:state.queuedOperations.filter(x=>['pending','sending'].includes(x.status)).length,failed:state.queuedOperations.filter(x=>['invalid','failed','uncertain'].includes(x.status)).length}
   })});
+  window.ITUS_CONNECTION_CLIENT=window.ITUS_CONNECTION?.create({
+    context:()=>({userId:state.userId,generation:sessionGeneration,scope:CONFIG.apiBase+'|'+state.userId}),
+    recover:recoverConnectionReads,
+    onNetwork:network=>window.ITUS_DIAGNOSTICS_CLIENT?.networkChanged(network),
+    onRecovery:event=>window.ITUS_DIAGNOSTICS_CLIENT?.recovery(event)
+  });
   const longRunningActions = new Set([
     'media-device-reconnect',
     'login', 'logout', 'switch-environment', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
@@ -189,6 +195,7 @@
     if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
     else localStorage.removeItem(AUTH_STORAGE);
     window.ITUS_DIAGNOSTICS_CLIENT?.activate();
+    window.ITUS_CONNECTION_CLIENT?.activate();
   }
 
   function sessionSnapshot() {
@@ -366,7 +373,9 @@
       if((envelope.file?.contentBlob || envelope.entry?.file?.contentBlob) && !video)throw Object.assign(new Error('Обновите приложение: транспорт видео ещё не загружен'),{code:'VIDEO_TRANSPORT_UNAVAILABLE',status:400});
       timer=setTimeout(()=>controller.abort(),video?20*60*1000:CONFIG.timeoutMs);
       if(video)headers['Content-Type']=video.contentType;
-      const response = await fetch(base + method, { method: 'POST', headers, body: video?.body || JSON.stringify(envelope), signal: controller.signal });
+      const requestOptions={method:'POST',headers,body:video?.body||JSON.stringify(envelope),signal:controller.signal};
+      const connection=window.ITUS_CONNECTION_CLIENT;
+      const response = await (connection?.supports(method)&&!video?connection.request(method,base+method,requestOptions):fetch(base+method,requestOptions));
       const raw = (await readApiResponse(response,method,payload)).replace(/^\uFEFF/, '');
       assertSession(session);
       let data;
@@ -391,7 +400,9 @@
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
       error.diagnostic = errorDiagnostic(error, { route:method, requestId:headers['X-ITUS-Request-Id'] });
       window.ITUS_DIAGNOSTICS_CLIENT?.failure(diagnosticRequest,error);
-      connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
+      window.ITUS_CONNECTION_CLIENT?.failed(method,error);
+      if(error.status>0)connectionStatus('ok',`1С ответила · ошибка операции HTTP ${error.status}`);
+      else connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
       if (!options.silent) toast(`1С: ${error.message}`, true);
       throw error;
     } finally {
@@ -411,7 +422,7 @@
     }
   }
 
-  async function initialize() {
+  async function initialize({readOnlyRecovery=false}={}) {
     if (!state.userId) return render();
     const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
@@ -449,16 +460,38 @@
       await refreshQueuedOperations();
       assertSession(session);
       state.initialized = true;
-      scheduleQueueResume();
+      if(!readOnlyRecovery)scheduleQueueResume();
       startPolling();
       void startNativePush();
       void syncExistingWebPush();
-      await applyPendingPushTarget();
+      if(!readOnlyRecovery)await applyPendingPushTarget();
     } catch (error) {
       if (sessionCurrent(session)) {if(!error.diagnostic)window.ITUS_DIAGNOSTICS_CLIENT?.appFailure(error,'initialize');state.error = `Не удалось подключиться к 1С: ${error.message}`;}
     } finally {
-      if (sessionCurrent(session)) { state.loading = false; render(); }
+      if (sessionCurrent(session)) {
+        state.loading=false;
+        if(readOnlyRecovery&&!state.error&&state.view==='chat'&&messenger){renderUser();renderTabs();renderNotifications();await messenger.recoverVisibleReads();}
+        else render();
+      }
     }
+  }
+
+  async function recoverConnectionReads() {
+    if(!state.userId||state.loading)return false;
+    const session=sessionSnapshot();
+    if(!state.initialized||state.error){
+      await initialize({readOnlyRecovery:true});assertSession(session);
+      if(state.error||!state.initialized)throw Object.assign(new Error('Ожидаем восстановления подключения'),{code:'NETWORK_RECOVERY_PENDING'});
+      return true;
+    }
+    if(!$('overlay').classList.contains('hidden')||state.busy){
+      await call1C('/orders/list',{status:'active'},{silent:true});assertSession(session);return true;
+    }
+    await loadOrders(false);assertSession(session);
+    if(state.view==='chat')return messenger?.recoverVisibleReads?.();
+    const editing=document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]');
+    if($('overlay').classList.contains('hidden')&&!editing&&!state.busy)render();
+    return true;
   }
 
   async function loadOrders(notify = true) {
@@ -2536,6 +2569,7 @@
   $('overlay').addEventListener('click', event => { if (event.target === $('overlay')) closeSheet(); });
   $('userPanel').addEventListener('click', () => showSettings());
   document.addEventListener('visibilitychange', () => {
+    if(window.ITUS_CONNECTION_CLIENT?.native)return;
     if (!document.hidden && state.initialized) {
       pollNotifications();
       void messenger?.refreshVisibleInternalThread?.();

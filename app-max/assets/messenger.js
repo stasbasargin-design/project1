@@ -209,7 +209,7 @@
       const oldTop=history.scrollTop,nearBottom=history.scrollHeight-history.scrollTop-history.clientHeight<80;
       history.innerHTML=historyHtml();history.scrollTop=bottom||nearBottom?history.scrollHeight:oldTop;return true;
     }
-    async function loadList(s=source){
+    async function loadList(s=source,{recovery=false}={}){
       if(!permitted(s)||listBusy[s])return;const generation=epoch;listBusy[s]=true;listError[s]='';paint();
       try{
         const response=await call(endpoints(s)+(s==='clients'?'/topics/list':'/groups/list'),s==='clients'?{status:'active'}:{},{silent:true});
@@ -218,7 +218,7 @@
         if(s==='staff'&&!records.staff.some(x=>x.shiftGroup))listError.staff='1С не вернула обязательную группу «Передача смены»';
         loaded[s]=true;
         if(source===s&&selected&&!records[s].some(x=>x.ref===selected))selected='';
-      }catch(e){if(epoch===generation)listError[s]=s==='staff'&&e.status===404?'В 1С не настроен метод сотрудников и группы чата: /internal-chat/groups/list.':e.message;}
+      }catch(e){if(epoch===generation)listError[s]=s==='staff'&&e.status===404?'В 1С не настроен метод сотрудников и группы чата: /internal-chat/groups/list.':e.message;if(recovery)throw e;}
       finally{if(epoch===generation){listBusy[s]=false;paint();}}
     }
     async function loadContacts(){
@@ -245,7 +245,7 @@
       item.unread = remainingUnread;
       options.onRead?.({source:s,ref:id,previousUnread,remainingUnread,totalUnread:data.unreadMessagesCount});
     }
-    async function loadMessages(s,id,{refresh=false}={}){
+    async function loadMessages(s,id,{refresh=false,recovery=false}={}){
       const k=key(s,id);if(!permitted(s)||busy[k])return;
       const generation=epoch,threadSelectionEpoch=selectionEpoch;busy[k]=true;
       await restoreThread(k);
@@ -270,13 +270,13 @@
           const last=cache[k].at(-1);if(last){item.lastMessage=last.text||(last.attachments.length?'Вложение':'');item.updatedAt=last.createdAt||item.updatedAt;}
           if(Number.isFinite(data.unreadCount))item.unread=data.unreadCount;
         }
-        if(visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
-      }catch(e){if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id))errors[k]=e.message;}
+        if(!recovery&&visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
+      }catch(e){if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id))errors[k]=e.message;if(recovery)throw e;}
       finally{
         busy[k]=false;
         if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id)&&!paintHistory({bottom:true}))paint();
         const refreshAgain=refreshPending[k];delete refreshPending[k];
-        if(refreshAgain&&isVisibleThread(s,id))void loadMessages(s,id,{refresh:true});
+        if(refreshAgain&&isVisibleThread(s,id))void loadMessages(s,id,{refresh:true,recovery});
       }
     }
     async function open(id){
@@ -496,8 +496,18 @@
       return true;
     }
     function refreshVisibleInternalThread(){return refreshInternalThreadFromPush(source==='staff'?selected:'');}
+    async function recoverVisibleReads(){
+      if(!visible||document.hidden)return true;
+      const generation=epoch,s=source,id=selected;
+      if(listBusy[s]||(id&&busy[key(s,id)]))return false;
+      await loadList(s,{recovery:true});
+      if(generation!==epoch)return false;
+      if(id&&selected===id)await loadMessages(s,id,{refresh:true,recovery:true});
+      return true;
+    }
     return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,refreshOutbox,confirmedOutbox,
       refreshInternalThreadFromPush,refreshVisibleInternalThread,
+      recoverVisibleReads,
       leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
       reset(){void clearPersistentCache();epoch++;selectionEpoch++;outboxRevision++;outboxItems=[];outboxRunning=null;outboxRerun=false;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}

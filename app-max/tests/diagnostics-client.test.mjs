@@ -17,6 +17,10 @@ client.acceptToken(token('111','test'));assert.equal(client.inspect().authentica
 const success=client.start('/orders/list');now+=25;client.success(success,200);
 const failed=client.start('/worktime/packages/list');now+=15;client.failure(failed,{status:200,code:'VALIDATION_ERROR',message:'NEVER_SEND_PRIVATE_MESSAGE',details:{token:'NEVER_SEND_SECRET'}});
 assert.equal(await client.flush(),true);assert.equal(calls.at(-1).body.lastRequest.ok,false);assert.equal(calls.at(-1).body.lastRequest.status,200);assert.equal(calls.at(-1).body.lastSuccess.ok,true);assert.equal(calls.at(-1).body.events.length,1);assert.equal(calls.at(-1).body.queue.pending,2);assert.equal(JSON.stringify(calls).includes('NEVER_SEND'),false);
+let network={type:'wifi',validated:true};root.ITUS_CONNECTION_CLIENT={snapshot:()=>network,supports:()=>true,recovering:()=>false};
+const migration=client.start('/internal-chat/groups/list');network={type:'cellular',validated:false,vpn:true};client.failure(migration,{code:'NETWORK_DNS'});now+=5000;await client.flush();
+const migrated=calls.at(-1).body.events.find(e=>e.code==='NETWORK_DNS');assert.equal(migrated.networkFrom,'wifi');assert.equal(migrated.network,'cellular');assert.equal(migrated.transport,'native');assert.equal(migrated.networkValidated,false);assert.equal(migrated.networkVpn,true);
+const waiting=client.start('/orders/list');now+=16000;await client.flush();assert.equal(calls.at(-1).body.pending[0].route,'/orders/list');assert.equal(calls.at(-1).body.pending[0].elapsedMs,16000);client.success(waiting,200);delete root.ITUS_CONNECTION_CLIENT;
 now+=5000;online=false;
 for(let n=0;n<70;n++)client.failure(client.start('/orders/get'),new TypeError('Failed to fetch NEVER_SEND_PASSWORD'));
 assert.equal(client.inspect().buffered,50);assert.equal(await client.flush(),false);const before=calls.length;client.destroy();client=make();assert.equal(client.inspect().buffered,50,'survives reopen');assert.equal(calls.length,before);

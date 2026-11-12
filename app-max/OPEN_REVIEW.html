@@ -443,7 +443,8 @@ window.ITUS_CONFIG = {
     activation=null;root.localStorage.removeItem(activationKey);
   }
   async function load(){
-    const response=await root.fetch(prefix+'/api/environments/config',{cache:'no-store',signal:AbortSignal.timeout(12000)});
+    const options={cache:'no-store',signal:AbortSignal.timeout(12000)};
+    const response=await (root.ITUS_CONNECTION_CLIENT?.native?root.ITUS_CONNECTION_CLIENT.metadata(prefix+'/api/environments/config',options):root.fetch(prefix+'/api/environments/config',options));
     const result=await response.json();if(!response.ok||!result.success)throw Error('Не удалось проверить подключение к 1С');
     configuration=result.data;
     if(!configuration[chosen])throw Error('Выбранная база 1С пока не подключена на сервере');
@@ -467,6 +468,92 @@ window.ITUS_CONFIG = {
 </script>
   <script>(function(root){
  'use strict';
+ const READS=new Set(['/auth/max','/ping','/orders/list','/orders/get','/orders/search','/notifications/poll','/internal-chat/groups/list','/internal-chat/contacts/list','/internal-chat/messages/list','/clients/topics/list','/clients/messages/list']);
+ const transient=error=>!error?.status||[408,429,502,503,504].includes(error.status);
+ function create({context,recover,onNetwork=()=>{},onRecovery=()=>{},now=Date.now,setTimeout:delay=root.setTimeout?.bind(root),clearTimeout:cancel=root.clearTimeout?.bind(root)}={}){
+  if(root.ITUS_REVIEW_MODE||root.ITUS_VITE_DEV)return null;
+  const cap=root.Capacitor;
+  const plugin=(cap?.isNativePlatform?.()||cap?.getPlatform?.()==='android')?(cap?.Plugins?.Connection||(cap?.isPluginAvailable?.('Connection')?cap.registerPlugin?.('Connection'):null)):null;
+  if(typeof plugin?.read!=='function')return {native:false,supports:()=>false,snapshot:()=>null,activate(){},failed(){},recovering:()=>false};
+  let network={type:'unknown'},timer=null,job=null,attempt=0,destroyed=false,currentScope='',recoveryRequired=false,blockedUntil=0;
+  const active=new Map(),removers=[];
+  const scope=()=>{const c=context();return c?.userId?String(c.scope)+'|'+String(c.generation):'';};
+  const visible=()=>!root.document?.hidden;
+  const alive=key=>!destroyed&&key&&scope()===key;
+  function schedule(wait=1000){
+   if(destroyed||!scope()||!visible()||network.connected===false)return;
+   recoveryRequired=true;if(timer||job)return;
+   const key=scope();timer=delay(()=>{timer=null;if(alive(key))void run(key);},Math.max(wait,blockedUntil-now()));
+  }
+  async function run(key){
+   if(job||!alive(key)||!visible())return;
+   const task=(async()=>{
+    onRecovery({stage:'recovering',attempt:attempt+1});
+    try{
+     const result=await recover();if(!alive(key))return;
+     if(result===false){blockedUntil=now()+1000;return;}
+     recoveryRequired=false;attempt=0;onRecovery({stage:'restored'});
+    }catch(error){
+     if(!alive(key)||error?.code==='SESSION_CHANGED')return;
+     onRecovery({stage:'failed',code:error?.code||'NETWORK_IO'});
+     if(transient(error)){attempt++;blockedUntil=now()+[1000,3000,7000,15000,30000,60000][Math.min(attempt-1,5)];}
+     else recoveryRequired=false;
+    }
+   })();job={key,task};try{await task;}finally{if(job?.task===task)job=null;if(scope()&&recoveryRequired)schedule(1000);}
+  }
+  function update(value={}){
+   const previous=network;network={type:['wifi','cellular','ethernet','none','unknown'].includes(value.type)?value.type:'unknown',connected:value.connected,validated:value.validated,metered:value.metered,vpn:value.vpn===true,generation:value.generation};
+   const changed=previous.type!==network.type||previous.connected!==network.connected||previous.validated!==network.validated||previous.generation!==network.generation;
+   if(changed)onNetwork({...network,previousType:previous.type});
+   if(value.reason==='resume'||changed){attempt=0;blockedUntil=0;schedule();}
+  }
+  function activate(){
+   const next=scope();if(next===currentScope)return;
+   currentScope=next;recoveryRequired=false;attempt=0;blockedUntil=0;if(timer)cancel(timer);timer=null;
+   for(const [id,record] of active)if(record.scope!==next)void plugin.cancel?.({id,reason:'REQUEST_ABORTED'}).catch(()=>{});
+  }
+  async function request(method,url,options){
+   if(!READS.has(method)&&!['/api/environments/config','/api/diagnostics/events'].includes(method))throw Object.assign(Error('Транспорт чтения не поддерживает эту операцию'),{code:'NATIVE_ROUTE_REJECTED',status:400});
+   activate();const key=scope();if(!key)throw Object.assign(Error('Пользователь изменился'),{code:'SESSION_CHANGED'});
+   if(options.signal?.aborted)throw new DOMException('Aborted','AbortError');
+   const id=root.crypto.randomUUID(),record={scope:key};active.set(id,record);
+   const abort=()=>{void plugin.cancel?.({id,reason:'REQUEST_ABORTED'}).catch(()=>{});};options.signal?.addEventListener('abort',abort,{once:true});
+   let abortReject;const aborted=new Promise((_,reject)=>{abortReject=()=>reject(new DOMException('Aborted','AbortError'));options.signal?.addEventListener('abort',abortReject,{once:true});});
+   try{
+    const native=plugin.read({id,url,body:options.body,headers:options.headers,maxBytes:/\/(messages\/list|orders\/(list|get))$/.test(method)?4*1024*1024:16*1024*1024});
+    const result=await Promise.race([native,aborted]);
+    if(!alive(key))throw Object.assign(Error('Пользователь изменился'),{code:'SESSION_CHANGED'});
+    if(result.id!==id)throw Object.assign(Error('Получен ответ от прежнего запроса'),{code:'NETWORK_STALE_RESPONSE'});
+    if(result.network)network={...network,...result.network};
+    return new Response(result.body||null,{status:result.status,headers:result.headers});
+   }catch(error){
+    if(error.data?.network)network={...network,...error.data.network};
+    if(error.code==='REQUEST_ABORTED')throw new DOMException('Aborted','AbortError');
+    if(error.code==='ONE_C_RESPONSE_TOO_LARGE')error.status=413;
+    if(/^NATIVE_/.test(error.code||''))error.status=400;
+    const messages={NETWORK_DNS:'Не удалось определить адрес сервера. Восстанавливаем связь…',NETWORK_TLS:'Не удалось установить защищённое соединение',NETWORK_CHANGED:'Сеть изменилась. Восстанавливаем связь…',NETWORK_OFFLINE:'Нет доступного подключения к интернету',NETWORK_CONNECT:'Сервер недоступен через текущую сеть',NETWORK_TIMEOUT:'Сервер не ответил вовремя. Восстанавливаем связь…',NETWORK_IO:'Соединение прервано. Восстанавливаем связь…'};
+    if(messages[error.code])error.message=messages[error.code];
+    throw error;
+   }finally{active.delete(id);options.signal?.removeEventListener('abort',abort);options.signal?.removeEventListener('abort',abortReject);}
+  }
+  function listen(target,event,fn){target?.addEventListener?.(event,fn);removers.push(()=>target?.removeEventListener?.(event,fn));}
+  listen(root.document,'visibilitychange',()=>{if(visible()){attempt=0;blockedUntil=0;void plugin.status?.().then(update).catch(()=>{});schedule();}else{if(timer)cancel(timer);timer=null;}});
+  listen(root,'online',()=>{attempt=0;blockedUntil=0;schedule();});
+  void plugin.status?.().then(update).catch(()=>{});
+  const listener=plugin.addListener?.('connectionChanged',update);
+  return {native:true,supports:method=>READS.has(method),request,snapshot:()=>({...network}),activate,
+   metadata:async(url,options)=>{try{return await request('/api/environments/config',url,{...options,body:'{}',headers:{}});}catch(error){if(transient(error))schedule(1500);throw error;}},
+   telemetry:(url,options)=>request('/api/diagnostics/events',url,options),
+   failed(method,error){if(READS.has(method)&&transient(error)&&error?.code!=='SESSION_CHANGED')schedule(1500);},
+   recovering:()=>recoveryRequired||Boolean(job),
+   destroy(){destroyed=true;if(timer)cancel(timer);for(const remove of removers)remove();void Promise.resolve(listener).then(x=>x?.remove()).catch(()=>{});for(const id of active.keys())void plugin.cancel?.({id,reason:'REQUEST_ABORTED'}).catch(()=>{});}
+  };
+ }
+ root.ITUS_CONNECTION={create,readRoutes:()=>[...READS]};
+})(window);
+</script>
+  <script>(function(root){
+ 'use strict';
  const route=value=>/^\/(?:auth|orders|notifications|internal-chat|clients|defects|acceptance|worktime|workshop|quality|checklists|posts|executors|service)(?:\/[a-z][a-z0-9-]{0,30}){1,3}$/.test(String(value||''))?String(value):'/other';
  const code=error=>{
   if(/^[A-Z][A-Z0-9_/-]{0,63}$/.test(error?.code||''))return error.code;
@@ -486,7 +573,11 @@ window.ITUS_CONFIG = {
   const uuid=()=>root.crypto.randomUUID();
   let installationId;try{installationId=storage.getItem('itus.diagnostics.installation');}catch{}
   if(!/^[-a-f0-9]{32,36}$/i.test(installationId||'')){installationId=uuid();try{storage.setItem('itus.diagnostics.installation',installationId);}catch{}}
-  const states=new Map();let active=null,flushJob=null,flushTimer=null,failures=0,nextAttempt=0,destroyed=false;
+  const states=new Map(),requests=new Map();let active=null,flushJob=null,flushTimer=null,failures=0,nextAttempt=0,destroyed=false;
+  const networkSnapshot=()=>{
+   const native=root.ITUS_CONNECTION_CLIENT?.snapshot?.(),type=native?.type||root.navigator?.connection?.type;
+   return {network:['wifi','cellular','ethernet','none','unknown'].includes(type)?type:'unknown',networkValidated:typeof native?.validated==='boolean'?native.validated:null,networkMetered:typeof native?.metered==='boolean'?native.metered:null,networkVpn:native?.vpn===true};
+  };
   function current(){
    const c=context();if(!c?.userId)return null;
    const key='itus.diagnostics:'+String(c.apiBase)+'|'+String(c.userId);
@@ -507,7 +598,7 @@ window.ITUS_CONFIG = {
   function enqueue(kind,details={}){
    const item=current();if(!item)return;
    const file=String(details.file||'').split('/').pop().split('?')[0];
-   item.state.events.push({id:uuid(),kind,at:new Date(now()).toISOString(),route:route(details.route),status:Number(details.status)||0,code:details.code||'STATE_CHANGED',durationMs:Math.max(0,Math.round(details.durationMs||0)),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(file)?file:'',line:Math.max(0,Math.round(details.line||0))});
+   item.state.events.push({id:uuid(),kind,at:new Date(now()).toISOString(),route:route(details.route),status:Number(details.status)||0,code:details.code||'STATE_CHANGED',durationMs:Math.max(0,Math.round(details.durationMs||0)),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(file)?file:'',line:Math.max(0,Math.round(details.line||0)),...networkSnapshot(),networkFrom:details.networkFrom||'',transport:details.transport||'',visibility:root.document?.hidden?'hidden':'visible'});
    item.state.events=item.state.events.slice(-50);save(item);schedule();
   }
   function schedule(){if(!flushTimer&&!destroyed)flushTimer=delay?.(()=>{flushTimer=null;void flush();},2000);}
@@ -516,12 +607,14 @@ window.ITUS_CONFIG = {
    if(flushJob)return flushJob;
    const item=current();if(!item?.state.token||!send)return false;
    const {c,state}=item,events=state.events.slice(0,20),token=state.token;
-   const payload={installationId,...system(),version:c.version,build:c.build,ready:c.ready===true,uiBlocked:c.uiBlocked===true,signedOut:state.signedOut===true,queue:c.queue||{},lastRequest:state.lastRequest,lastSuccess:state.lastSuccess,events};
+   const pending=[...requests.values()].filter(r=>r.key===item.key&&r.generation===c.generation).slice(-8).map(r=>({route:r.route,elapsedMs:Math.max(0,now()-r.started),...r.network,transport:r.transport}));
+   const payload={installationId,...system(),...networkSnapshot(),version:c.version,build:c.build,ready:c.ready===true,uiBlocked:c.uiBlocked===true,signedOut:state.signedOut===true,queue:c.queue||{},lastRequest:state.lastRequest,lastSuccess:state.lastSuccess,routes:state.routes||[],pending,recovering:root.ITUS_CONNECTION_CLIENT?.recovering?.()===true,events};
    const controller=new AbortController(),timer=delay?.(()=>controller.abort(),5000);
    const job=(async()=>{
     try{
      const endpoint=String(c.apiBase).replace(/\/api\/1c\/?$/,'')+'/api/diagnostics/events';
-     const response=await send(endpoint,{method:'POST',headers:{'Content-Type':'application/json','X-ITUS-Diagnostics-Token':token},body:JSON.stringify(payload),signal:controller.signal,keepalive:true});
+     const options={method:'POST',headers:{'Content-Type':'application/json','X-ITUS-Diagnostics-Token':token},body:JSON.stringify(payload),signal:controller.signal,keepalive:true};
+     const response=await (root.ITUS_CONNECTION_CLIENT?.native?root.ITUS_CONNECTION_CLIENT.telemetry(endpoint,options):send(endpoint,options));
      if(!response.ok){if(response.status===401&&state.token===token){delete state.token;save(item);}throw Error('COLLECTOR_REJECTED');}
      const result=await response.json();if(result.success!==true||!Array.isArray(result.data?.accepted))throw Error('COLLECTOR_REJECTED');
      const acknowledged=new Set(result.data.accepted);state.events=state.events.filter(e=>!acknowledged.has(e.id));save(item);failures=0;nextAttempt=now()+2000;
@@ -539,12 +632,14 @@ window.ITUS_CONFIG = {
     item.state.token=token;item.state.signedOut=false;save(item);nextAttempt=0;failures=0;schedule();
    }catch{}
   }
-  const start=method=>{const item=current();return item?{key:item.key,generation:item.c.generation,route:route(method),started:now()}:null;};
+  const start=method=>{const item=current();if(!item)return null;const request={id:uuid(),key:item.key,generation:item.c.generation,route:route(method),started:now(),network:networkSnapshot(),transport:root.ITUS_CONNECTION_CLIENT?.supports?.(method)?'native':'webview'};requests.set(request.id,request);if(requests.size>32)requests.delete(requests.keys().next().value);return request;};
   function result(request,ok,status,error){
+   if(request)requests.delete(request.id);
    const item=current();if(!request||!item||item.key!==request.key||item.c.generation!==request.generation||error?.code==='SESSION_CHANGED')return;
-   const value={route:request.route,ok,status:Number(status)||0,code:ok?'':code(error),durationMs:Math.max(0,now()-request.started),at:new Date(now()).toISOString()};
+   const value={route:request.route,ok,status:Number(status)||0,code:ok?'':code(error),durationMs:Math.max(0,now()-request.started),at:new Date(now()).toISOString(),...networkSnapshot(),networkFrom:request.network.network,transport:request.transport};
    item.state.lastRequest=value;if(ok)item.state.lastSuccess=value;
-   else enqueue(value.status?'api-error':'network-error',value);
+   item.state.routes=[...(item.state.routes||[]).filter(x=>x.route!==value.route),value].slice(-16);save(item);
+   if(!ok)enqueue(value.status?'api-error':'network-error',value);
   }
   function appFailure(error,phase){enqueue('app-error',{code:code(error),file:String(error?.stack||'').match(/([a-zA-Z0-9_.-]+\.js):\d+/)?.[1]||'',route:phase==='initialize'?'/auth/max':'/other'});}
   const listeners=[];
@@ -560,6 +655,8 @@ window.ITUS_CONFIG = {
   listen(root.document,'visibilitychange',safe(()=>{enqueue(root.document.hidden?'background':'foreground');void flush();}));
   const heartbeat=interval?.(safe(()=>{if(!root.document?.hidden)void flush();}),30000);heartbeat?.unref?.();
   return {start:safe(start),success:safe((request,status=200)=>result(request,true,status)),failure:safe((request,error)=>result(request,false,error?.status,error)),acceptToken:safe(acceptToken),appFailure:safe(appFailure),flush,
+   networkChanged:safe(value=>enqueue('network-change',{code:'NETWORK_CHANGED',networkFrom:value.previousType})),
+   recovery:safe(value=>enqueue('recovery',{code:value.stage==='restored'?'RECOVERY_COMPLETE':value.stage==='failed'?'RECOVERY_FAILED':'RECOVERY_START'})),
    activate:safe(()=>{const item=current();if(item){item.state.signedOut=false;schedule();}}),
    logout:safe(()=>{const item=current();if(!item)return;enqueue('logout');item.state.signedOut=true;const job=flush();void job.finally(()=>{delete item.state.token;save(item);});return job;}),
    inspect:safe(()=>{const item=current();return {buffered:item?.state.events.length||0,authenticated:Boolean(item?.state.token),nextAttempt};}),
@@ -1641,7 +1738,7 @@ window.ITUS_CONFIG = {
       const oldTop=history.scrollTop,nearBottom=history.scrollHeight-history.scrollTop-history.clientHeight<80;
       history.innerHTML=historyHtml();history.scrollTop=bottom||nearBottom?history.scrollHeight:oldTop;return true;
     }
-    async function loadList(s=source){
+    async function loadList(s=source,{recovery=false}={}){
       if(!permitted(s)||listBusy[s])return;const generation=epoch;listBusy[s]=true;listError[s]='';paint();
       try{
         const response=await call(endpoints(s)+(s==='clients'?'/topics/list':'/groups/list'),s==='clients'?{status:'active'}:{},{silent:true});
@@ -1650,7 +1747,7 @@ window.ITUS_CONFIG = {
         if(s==='staff'&&!records.staff.some(x=>x.shiftGroup))listError.staff='1С не вернула обязательную группу «Передача смены»';
         loaded[s]=true;
         if(source===s&&selected&&!records[s].some(x=>x.ref===selected))selected='';
-      }catch(e){if(epoch===generation)listError[s]=s==='staff'&&e.status===404?'В 1С не настроен метод сотрудников и группы чата: /internal-chat/groups/list.':e.message;}
+      }catch(e){if(epoch===generation)listError[s]=s==='staff'&&e.status===404?'В 1С не настроен метод сотрудников и группы чата: /internal-chat/groups/list.':e.message;if(recovery)throw e;}
       finally{if(epoch===generation){listBusy[s]=false;paint();}}
     }
     async function loadContacts(){
@@ -1677,7 +1774,7 @@ window.ITUS_CONFIG = {
       item.unread = remainingUnread;
       options.onRead?.({source:s,ref:id,previousUnread,remainingUnread,totalUnread:data.unreadMessagesCount});
     }
-    async function loadMessages(s,id,{refresh=false}={}){
+    async function loadMessages(s,id,{refresh=false,recovery=false}={}){
       const k=key(s,id);if(!permitted(s)||busy[k])return;
       const generation=epoch,threadSelectionEpoch=selectionEpoch;busy[k]=true;
       await restoreThread(k);
@@ -1702,13 +1799,13 @@ window.ITUS_CONFIG = {
           const last=cache[k].at(-1);if(last){item.lastMessage=last.text||(last.attachments.length?'Вложение':'');item.updatedAt=last.createdAt||item.updatedAt;}
           if(Number.isFinite(data.unreadCount))item.unread=data.unreadCount;
         }
-        if(visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
-      }catch(e){if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id))errors[k]=e.message;}
+        if(!recovery&&visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
+      }catch(e){if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id))errors[k]=e.message;if(recovery)throw e;}
       finally{
         busy[k]=false;
         if(epoch===generation&&selectionEpoch===threadSelectionEpoch&&isVisibleThread(s,id)&&!paintHistory({bottom:true}))paint();
         const refreshAgain=refreshPending[k];delete refreshPending[k];
-        if(refreshAgain&&isVisibleThread(s,id))void loadMessages(s,id,{refresh:true});
+        if(refreshAgain&&isVisibleThread(s,id))void loadMessages(s,id,{refresh:true,recovery});
       }
     }
     async function open(id){
@@ -1928,8 +2025,18 @@ window.ITUS_CONFIG = {
       return true;
     }
     function refreshVisibleInternalThread(){return refreshInternalThreadFromPush(source==='staff'?selected:'');}
+    async function recoverVisibleReads(){
+      if(!visible||document.hidden)return true;
+      const generation=epoch,s=source,id=selected;
+      if(listBusy[s]||(id&&busy[key(s,id)]))return false;
+      await loadList(s,{recovery:true});
+      if(generation!==epoch)return false;
+      if(id&&selected===id)await loadMessages(s,id,{refresh:true,recovery:true});
+      return true;
+    }
     return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,refreshOutbox,confirmedOutbox,
       refreshInternalThreadFromPush,refreshVisibleInternalThread,
+      recoverVisibleReads,
       leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
       reset(){void clearPersistentCache();epoch++;selectionEpoch++;outboxRevision++;outboxItems=[];outboxRunning=null;outboxRerun=false;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
       async notify(event){if(event.type==='new_messages'){loaded.clients=false;loaded.staff=false;/* список обновится при открытии, чтобы не грузить чат на каждом пинге */}}
@@ -12728,7 +12835,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.8'
+    version: 'i-max-2.8.9'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -12781,6 +12888,12 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     userId:state.userId,generation:sessionGeneration,apiBase:CONFIG.apiBase,environment:ENVIRONMENTS?.id||'test',version:CONFIG.version,build:buildCommit,
     ready:state.initialized,uiBlocked:Boolean(state.error),queue:{pending:state.queuedOperations.filter(x=>['pending','sending'].includes(x.status)).length,failed:state.queuedOperations.filter(x=>['invalid','failed','uncertain'].includes(x.status)).length}
   })});
+  window.ITUS_CONNECTION_CLIENT=window.ITUS_CONNECTION?.create({
+    context:()=>({userId:state.userId,generation:sessionGeneration,scope:CONFIG.apiBase+'|'+state.userId}),
+    recover:recoverConnectionReads,
+    onNetwork:network=>window.ITUS_DIAGNOSTICS_CLIENT?.networkChanged(network),
+    onRecovery:event=>window.ITUS_DIAGNOSTICS_CLIENT?.recovery(event)
+  });
   const longRunningActions = new Set([
     'media-device-reconnect',
     'login', 'logout', 'switch-environment', 'submit-auth-qr', 'enable-system-notifications', 'enable-web-push', 'test-1c', 'retry-init', 'retry-failed-operation', 'open-operation-report', 'show-operation-queue',
@@ -12892,6 +13005,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
     else localStorage.removeItem(AUTH_STORAGE);
     window.ITUS_DIAGNOSTICS_CLIENT?.activate();
+    window.ITUS_CONNECTION_CLIENT?.activate();
   }
 
   function sessionSnapshot() {
@@ -13069,7 +13183,9 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       if((envelope.file?.contentBlob || envelope.entry?.file?.contentBlob) && !video)throw Object.assign(new Error('Обновите приложение: транспорт видео ещё не загружен'),{code:'VIDEO_TRANSPORT_UNAVAILABLE',status:400});
       timer=setTimeout(()=>controller.abort(),video?20*60*1000:CONFIG.timeoutMs);
       if(video)headers['Content-Type']=video.contentType;
-      const response = await fetch(base + method, { method: 'POST', headers, body: video?.body || JSON.stringify(envelope), signal: controller.signal });
+      const requestOptions={method:'POST',headers,body:video?.body||JSON.stringify(envelope),signal:controller.signal};
+      const connection=window.ITUS_CONNECTION_CLIENT;
+      const response = await (connection?.supports(method)&&!video?connection.request(method,base+method,requestOptions):fetch(base+method,requestOptions));
       const raw = (await readApiResponse(response,method,payload)).replace(/^\uFEFF/, '');
       assertSession(session);
       let data;
@@ -13094,7 +13210,9 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       if (error.name === 'AbortError') error = Object.assign(new Error('Истекло время ожидания ответа 1С'), { code: 'TIMEOUT' });
       error.diagnostic = errorDiagnostic(error, { route:method, requestId:headers['X-ITUS-Request-Id'] });
       window.ITUS_DIAGNOSTICS_CLIENT?.failure(diagnosticRequest,error);
-      connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
+      window.ITUS_CONNECTION_CLIENT?.failed(method,error);
+      if(error.status>0)connectionStatus('ok',`1С ответила · ошибка операции HTTP ${error.status}`);
+      else connectionStatus('error', navigator.onLine === false ? 'Нет подключения к интернету' : 'Последний запрос к 1С не выполнен');
       if (!options.silent) toast(`1С: ${error.message}`, true);
       throw error;
     } finally {
@@ -13114,7 +13232,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     }
   }
 
-  async function initialize() {
+  async function initialize({readOnlyRecovery=false}={}) {
     if (!state.userId) return render();
     const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
@@ -13152,16 +13270,38 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
       await refreshQueuedOperations();
       assertSession(session);
       state.initialized = true;
-      scheduleQueueResume();
+      if(!readOnlyRecovery)scheduleQueueResume();
       startPolling();
       void startNativePush();
       void syncExistingWebPush();
-      await applyPendingPushTarget();
+      if(!readOnlyRecovery)await applyPendingPushTarget();
     } catch (error) {
       if (sessionCurrent(session)) {if(!error.diagnostic)window.ITUS_DIAGNOSTICS_CLIENT?.appFailure(error,'initialize');state.error = `Не удалось подключиться к 1С: ${error.message}`;}
     } finally {
-      if (sessionCurrent(session)) { state.loading = false; render(); }
+      if (sessionCurrent(session)) {
+        state.loading=false;
+        if(readOnlyRecovery&&!state.error&&state.view==='chat'&&messenger){renderUser();renderTabs();renderNotifications();await messenger.recoverVisibleReads();}
+        else render();
+      }
     }
+  }
+
+  async function recoverConnectionReads() {
+    if(!state.userId||state.loading)return false;
+    const session=sessionSnapshot();
+    if(!state.initialized||state.error){
+      await initialize({readOnlyRecovery:true});assertSession(session);
+      if(state.error||!state.initialized)throw Object.assign(new Error('Ожидаем восстановления подключения'),{code:'NETWORK_RECOVERY_PENDING'});
+      return true;
+    }
+    if(!$('overlay').classList.contains('hidden')||state.busy){
+      await call1C('/orders/list',{status:'active'},{silent:true});assertSession(session);return true;
+    }
+    await loadOrders(false);assertSession(session);
+    if(state.view==='chat')return messenger?.recoverVisibleReads?.();
+    const editing=document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]');
+    if($('overlay').classList.contains('hidden')&&!editing&&!state.busy)render();
+    return true;
   }
 
   async function loadOrders(notify = true) {
@@ -15239,6 +15379,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
   $('overlay').addEventListener('click', event => { if (event.target === $('overlay')) closeSheet(); });
   $('userPanel').addEventListener('click', () => showSettings());
   document.addEventListener('visibilitychange', () => {
+    if(window.ITUS_CONNECTION_CLIENT?.native)return;
     if (!document.hidden && state.initialized) {
       pollNotifications();
       void messenger?.refreshVisibleInternalThread?.();

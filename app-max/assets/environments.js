@@ -63,7 +63,8 @@
     activation=null;root.localStorage.removeItem(activationKey);
   }
   async function load(){
-    const response=await root.fetch(prefix+'/api/environments/config',{cache:'no-store',signal:AbortSignal.timeout(12000)});
+    const options={cache:'no-store',signal:AbortSignal.timeout(12000)};
+    const response=await (root.ITUS_CONNECTION_CLIENT?.native?root.ITUS_CONNECTION_CLIENT.metadata(prefix+'/api/environments/config',options):root.fetch(prefix+'/api/environments/config',options));
     const result=await response.json();if(!response.ok||!result.success)throw Error('Не удалось проверить подключение к 1С');
     configuration=result.data;
     if(!configuration[chosen])throw Error('Выбранная база 1С пока не подключена на сервере');
