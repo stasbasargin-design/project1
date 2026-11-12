@@ -19,7 +19,11 @@
   const uuid=()=>root.crypto.randomUUID();
   let installationId;try{installationId=storage.getItem('itus.diagnostics.installation');}catch{}
   if(!/^[-a-f0-9]{32,36}$/i.test(installationId||'')){installationId=uuid();try{storage.setItem('itus.diagnostics.installation',installationId);}catch{}}
-  const states=new Map();let active=null,flushJob=null,flushTimer=null,failures=0,nextAttempt=0,destroyed=false;
+  const states=new Map(),requests=new Map();let active=null,flushJob=null,flushTimer=null,failures=0,nextAttempt=0,destroyed=false;
+  const networkSnapshot=()=>{
+   const native=root.ITUS_CONNECTION_CLIENT?.snapshot?.(),type=native?.type||root.navigator?.connection?.type;
+   return {network:['wifi','cellular','ethernet','none','unknown'].includes(type)?type:'unknown',networkValidated:typeof native?.validated==='boolean'?native.validated:null,networkMetered:typeof native?.metered==='boolean'?native.metered:null,networkVpn:native?.vpn===true};
+  };
   function current(){
    const c=context();if(!c?.userId)return null;
    const key='itus.diagnostics:'+String(c.apiBase)+'|'+String(c.userId);
@@ -40,7 +44,7 @@
   function enqueue(kind,details={}){
    const item=current();if(!item)return;
    const file=String(details.file||'').split('/').pop().split('?')[0];
-   item.state.events.push({id:uuid(),kind,at:new Date(now()).toISOString(),route:route(details.route),status:Number(details.status)||0,code:details.code||'STATE_CHANGED',durationMs:Math.max(0,Math.round(details.durationMs||0)),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(file)?file:'',line:Math.max(0,Math.round(details.line||0))});
+   item.state.events.push({id:uuid(),kind,at:new Date(now()).toISOString(),route:route(details.route),status:Number(details.status)||0,code:details.code||'STATE_CHANGED',durationMs:Math.max(0,Math.round(details.durationMs||0)),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(file)?file:'',line:Math.max(0,Math.round(details.line||0)),...networkSnapshot(),networkFrom:details.networkFrom||'',transport:details.transport||'',visibility:root.document?.hidden?'hidden':'visible'});
    item.state.events=item.state.events.slice(-50);save(item);schedule();
   }
   function schedule(){if(!flushTimer&&!destroyed)flushTimer=delay?.(()=>{flushTimer=null;void flush();},2000);}
@@ -49,12 +53,14 @@
    if(flushJob)return flushJob;
    const item=current();if(!item?.state.token||!send)return false;
    const {c,state}=item,events=state.events.slice(0,20),token=state.token;
-   const payload={installationId,...system(),version:c.version,build:c.build,ready:c.ready===true,uiBlocked:c.uiBlocked===true,signedOut:state.signedOut===true,queue:c.queue||{},lastRequest:state.lastRequest,lastSuccess:state.lastSuccess,events};
+   const pending=[...requests.values()].filter(r=>r.key===item.key&&r.generation===c.generation).slice(-8).map(r=>({route:r.route,elapsedMs:Math.max(0,now()-r.started),...r.network,transport:r.transport}));
+   const payload={installationId,...system(),...networkSnapshot(),version:c.version,build:c.build,ready:c.ready===true,uiBlocked:c.uiBlocked===true,signedOut:state.signedOut===true,queue:c.queue||{},lastRequest:state.lastRequest,lastSuccess:state.lastSuccess,routes:state.routes||[],pending,recovering:root.ITUS_CONNECTION_CLIENT?.recovering?.()===true,events};
    const controller=new AbortController(),timer=delay?.(()=>controller.abort(),5000);
    const job=(async()=>{
     try{
      const endpoint=String(c.apiBase).replace(/\/api\/1c\/?$/,'')+'/api/diagnostics/events';
-     const response=await send(endpoint,{method:'POST',headers:{'Content-Type':'application/json','X-ITUS-Diagnostics-Token':token},body:JSON.stringify(payload),signal:controller.signal,keepalive:true});
+     const options={method:'POST',headers:{'Content-Type':'application/json','X-ITUS-Diagnostics-Token':token},body:JSON.stringify(payload),signal:controller.signal,keepalive:true};
+     const response=await (root.ITUS_CONNECTION_CLIENT?.native?root.ITUS_CONNECTION_CLIENT.telemetry(endpoint,options):send(endpoint,options));
      if(!response.ok){if(response.status===401&&state.token===token){delete state.token;save(item);}throw Error('COLLECTOR_REJECTED');}
      const result=await response.json();if(result.success!==true||!Array.isArray(result.data?.accepted))throw Error('COLLECTOR_REJECTED');
      const acknowledged=new Set(result.data.accepted);state.events=state.events.filter(e=>!acknowledged.has(e.id));save(item);failures=0;nextAttempt=now()+2000;
@@ -72,12 +78,14 @@
     item.state.token=token;item.state.signedOut=false;save(item);nextAttempt=0;failures=0;schedule();
    }catch{}
   }
-  const start=method=>{const item=current();return item?{key:item.key,generation:item.c.generation,route:route(method),started:now()}:null;};
+  const start=method=>{const item=current();if(!item)return null;const request={id:uuid(),key:item.key,generation:item.c.generation,route:route(method),started:now(),network:networkSnapshot(),transport:root.ITUS_CONNECTION_CLIENT?.supports?.(method)?'native':'webview'};requests.set(request.id,request);if(requests.size>32)requests.delete(requests.keys().next().value);return request;};
   function result(request,ok,status,error){
+   if(request)requests.delete(request.id);
    const item=current();if(!request||!item||item.key!==request.key||item.c.generation!==request.generation||error?.code==='SESSION_CHANGED')return;
-   const value={route:request.route,ok,status:Number(status)||0,code:ok?'':code(error),durationMs:Math.max(0,now()-request.started),at:new Date(now()).toISOString()};
+   const value={route:request.route,ok,status:Number(status)||0,code:ok?'':code(error),durationMs:Math.max(0,now()-request.started),at:new Date(now()).toISOString(),...networkSnapshot(),networkFrom:request.network.network,transport:request.transport};
    item.state.lastRequest=value;if(ok)item.state.lastSuccess=value;
-   else enqueue(value.status?'api-error':'network-error',value);
+   item.state.routes=[...(item.state.routes||[]).filter(x=>x.route!==value.route),value].slice(-16);save(item);
+   if(!ok)enqueue(value.status?'api-error':'network-error',value);
   }
   function appFailure(error,phase){enqueue('app-error',{code:code(error),file:String(error?.stack||'').match(/([a-zA-Z0-9_.-]+\.js):\d+/)?.[1]||'',route:phase==='initialize'?'/auth/max':'/other'});}
   const listeners=[];
@@ -93,6 +101,8 @@
   listen(root.document,'visibilitychange',safe(()=>{enqueue(root.document.hidden?'background':'foreground');void flush();}));
   const heartbeat=interval?.(safe(()=>{if(!root.document?.hidden)void flush();}),30000);heartbeat?.unref?.();
   return {start:safe(start),success:safe((request,status=200)=>result(request,true,status)),failure:safe((request,error)=>result(request,false,error?.status,error)),acceptToken:safe(acceptToken),appFailure:safe(appFailure),flush,
+   networkChanged:safe(value=>enqueue('network-change',{code:'NETWORK_CHANGED',networkFrom:value.previousType})),
+   recovery:safe(value=>enqueue('recovery',{code:value.stage==='restored'?'RECOVERY_COMPLETE':value.stage==='failed'?'RECOVERY_FAILED':'RECOVERY_START'})),
    activate:safe(()=>{const item=current();if(item){item.state.signedOut=false;schedule();}}),
    logout:safe(()=>{const item=current();if(!item)return;enqueue('logout');item.state.signedOut=true;const job=flush();void job.finally(()=>{delete item.state.token;save(item);});return job;}),
    inspect:safe(()=>{const item=current();return {buffered:item?.state.events.length||0,authenticated:Boolean(item?.state.token),nextAttempt};}),

@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(EnvironmentPlugin.class);
+        registerPlugin(ConnectionPlugin.class);
         super.onCreate(savedInstanceState);
         // AndroidX connects this lifecycle-aware callback to predictive Back on API 33+.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {

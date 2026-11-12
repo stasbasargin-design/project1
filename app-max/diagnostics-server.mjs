@@ -22,13 +22,17 @@ async function verifyPassword(password,encoded){
  return equal((await derive(password,salt,32)).toString('base64url'),value);
 }
 const codeOf=error=>safeCode(error?.code||error?.cause?.code||'PROXY_ERROR');
+function networkFields(value={}){
+ const type=x=>['wifi','cellular','ethernet','none','unknown'].includes(x)?x:'unknown';
+ return {network:type(value.network),networkFrom:value.networkFrom?type(value.networkFrom):'',networkValidated:typeof value.networkValidated==='boolean'?value.networkValidated:null,networkMetered:typeof value.networkMetered==='boolean'?value.networkMetered:null,networkVpn:value.networkVpn===true,transport:['native','webview'].includes(value.transport)?value.transport:''};
+}
 function boundedTime(value,now){const time=Date.parse(value);return new Date(Number.isFinite(time)&&time>=now-7*DAY&&time<=now+60000?time:now).toISOString();}
-function requestSummary(value,now){if(!value||typeof value!=='object')return null;return {route:diagnosticRoute(value.route),status:numeric(value.status,599),ok:value.ok===true,code:value.ok===true?'':safeCode(value.code),durationMs:numeric(value.durationMs,1200000),at:boundedTime(value.at,now)};}
+function requestSummary(value,now){if(!value||typeof value!=='object')return null;return {route:diagnosticRoute(value.route),status:numeric(value.status,599),ok:value.ok===true,code:value.ok===true?'':safeCode(value.code),durationMs:numeric(value.durationMs,1200000),at:boundedTime(value.at,now),...networkFields(value)};}
 function eventSummary(value,now){
  if(!value||!/^[-a-f0-9]{32,36}$/i.test(value.id||''))return null;
- const kinds=['api-error','network-error','app-error','resource-error','offline','online','background','foreground','logout'];
+ const kinds=['api-error','network-error','app-error','resource-error','offline','online','background','foreground','logout','network-change','recovery'];
  if(!kinds.includes(value.kind))return null;
- return {id:value.id,kind:value.kind,at:boundedTime(value.at,now),route:diagnosticRoute(value.route),status:numeric(value.status,599),code:safeCode(value.code),durationMs:numeric(value.durationMs,1200000),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(value.file||'')?value.file:'',line:numeric(value.line,1000000)};
+ return {id:value.id,kind:value.kind,at:boundedTime(value.at,now),route:diagnosticRoute(value.route),status:numeric(value.status,599),code:safeCode(value.code),durationMs:numeric(value.durationMs,1200000),file:/^[a-zA-Z0-9_.-]{1,80}\.js$/.test(value.file||'')?value.file:'',line:numeric(value.line,1000000),...networkFields(value),visibility:value.visibility==='hidden'?'hidden':'visible'};
 }
 export function diagnosticDeviceStatus(record,now=Date.now()){
  const age=now-Date.parse(record.lastSeen);
@@ -36,8 +40,16 @@ export function diagnosticDeviceStatus(record,now=Date.now()){
  if(record.signedOut)return 'signed-out';
   if(record.visibility==='hidden')return 'background';
  if(record.uiBlocked)return 'app-error';
+ if(record.recovering)return 'recovering';
+ if(record.pending?.some(value=>value.elapsedMs+Math.max(0,age)>15000))return 'waiting';
+ const failed=(record.routes||[]).find(value=>value.ok===false&&now-Date.parse(value.at)<900000);
+ if(failed)return failed.status>0?'operation-error':'network-error';
  if(record.lastRequest?.ok===false)return record.lastRequest.status>0?'operation-error':'network-error';
  return record.ready?'online':'starting';
+}
+export function diagnosticDeviceView(record,now=Date.now()){
+ const {seen,events=[],...row}=record;
+ return {...row,status:diagnosticDeviceStatus(record,now),recentErrorCount:events.filter(e=>e.kind.endsWith('error')&&now-Date.parse(e.at)<900000).length,lastError:[...events].reverse().find(e=>e.kind.endsWith('error'))||null};
 }
 
 export function createDiagnostics({env=process.env,clock=Date.now}={}){
@@ -101,7 +113,7 @@ export function createDiagnostics({env=process.env,clock=Date.now}={}){
    if(!devices.has(key)&&devices.size>=2000)throw failure('DIAGNOSTICS_CAPACITY',503);
    const old=devices.get(key)||{events:[],seen:[],errorCount:0};
    const events=input.events.map(event=>eventSummary(event,now)).filter(Boolean),seen=new Set(old.seen||[]),fresh=events.filter(event=>{if(seen.has(event.id))return false;seen.add(event.id);return true;});
-   const record={id:key,userId:identity.userId,name:identity.name,environment:identity.environment,platform:input.platform,browser:['Yandex','Safari','Chrome','Edge','WebView','Other'].includes(input.browser)?input.browser:'Other',os:/^(Android|iOS|Windows|macOS|Linux)( \d{1,2})?$/.test(input.os||'')?input.os:'',version:/^(?:i-max-)?\d+\.\d+\.\d+(?:-[a-z0-9-]+)?$/.test(input.version||'')?input.version:'unknown',build:/^[a-f0-9]{40}$/i.test(input.build||'')?input.build:'',lastSeen:new Date(now).toISOString(),visibility:input.visibility==='hidden'?'hidden':'visible',ready:input.ready===true,uiBlocked:input.uiBlocked===true,signedOut:input.signedOut===true,network:['wifi','cellular','ethernet','none','unknown'].includes(input.network)?input.network:'unknown',queue:{pending:numeric(input.queue?.pending,100000),failed:numeric(input.queue?.failed,100000)},lastRequest:requestSummary(input.lastRequest,now)||old.lastRequest||null,lastSuccess:requestSummary(input.lastSuccess,now)||old.lastSuccess||null,errorCount:(old.errorCount||0)+fresh.filter(e=>e.kind.endsWith('error')).length,events:[...(old.events||[]),...fresh].slice(-50),seen:[...seen].slice(-256)};
+   const record={id:key,userId:identity.userId,name:identity.name,environment:identity.environment,platform:input.platform,browser:['Yandex','Safari','Chrome','Edge','WebView','Other'].includes(input.browser)?input.browser:'Other',os:/^(Android|iOS|Windows|macOS|Linux)( \d{1,2})?$/.test(input.os||'')?input.os:'',version:/^(?:i-max-)?\d+\.\d+\.\d+(?:-[a-z0-9-]+)?$/.test(input.version||'')?input.version:'unknown',build:/^[a-f0-9]{40}$/i.test(input.build||'')?input.build:'',lastSeen:new Date(now).toISOString(),visibility:input.visibility==='hidden'?'hidden':'visible',ready:input.ready===true,uiBlocked:input.uiBlocked===true,signedOut:input.signedOut===true,...networkFields(input),recovering:input.recovering===true,routes:Array.isArray(input.routes)?input.routes.slice(-16).map(x=>requestSummary(x,now)).filter(Boolean):[],pending:Array.isArray(input.pending)?input.pending.slice(-8).map(x=>({route:diagnosticRoute(x.route),elapsedMs:numeric(x.elapsedMs,1200000),...networkFields(x)})):[],queue:{pending:numeric(input.queue?.pending,100000),failed:numeric(input.queue?.failed,100000)},lastRequest:requestSummary(input.lastRequest,now)||old.lastRequest||null,lastSuccess:requestSummary(input.lastSuccess,now)||old.lastSuccess||null,errorCount:(old.errorCount||0)+fresh.filter(e=>e.kind.endsWith('error')).length,events:[...(old.events||[]),...fresh].slice(-50),seen:[...seen].slice(-256)};
    await atomic(join(directory,'devices',key+'.json'),record);devices.set(key,record);
    if(now-lastPrune>3600000){lastPrune=now;for(const [id,row] of devices)if(now-Date.parse(row.lastSeen)>30*DAY){devices.delete(id);void unlink(join(directory,'devices',id+'.json')).catch(()=>{});}}
    return {accepted:events.map(e=>e.id),serverTime:record.lastSeen};
@@ -133,11 +145,11 @@ export function createDiagnostics({env=process.env,clock=Date.now}={}){
    if(path==='/diagnostics'){res.writeHead(308,{Location:(basePath==='/'?'':basePath)+'/diagnostics/'});res.end();return true;}
    if(path==='/diagnostics/'||path==='/diagnostics.html'){servePanel(req,res);return true;}
    if(path==='/diagnostics/api/devices'){
-    const rows=[...devices.values()].map(({seen,events,...row})=>({...row,status:diagnosticDeviceStatus(row,clock()),lastError:[...events].reverse().find(e=>e.kind.endsWith('error'))||null}));
+    const rows=[...devices.values()].map(row=>diagnosticDeviceView(row,clock()));
     json(res,200,{success:true,data:{devices:rows,server:{minutes:[...serverMinutes.values()],errors:serverErrors},now:new Date(clock()).toISOString(),retentionDays:30}});return true;
    }
    const detail=path.match(/^\/diagnostics\/api\/devices\/([a-f0-9]{64})$/);
-   if(detail&&devices.has(detail[1])){const {seen,...row}=devices.get(detail[1]);json(res,200,{success:true,data:{...row,status:diagnosticDeviceStatus(row,clock())}});return true;}
+   if(detail&&devices.has(detail[1])){const record=devices.get(detail[1]);json(res,200,{success:true,data:{...diagnosticDeviceView(record,clock()),events:record.events}});return true;}
    throw failure('NOT_FOUND',404);
   }catch(error){json(res,error.status||503,{success:false,error:{code:error.status?error.code:'DIAGNOSTICS_UNAVAILABLE'}});return true;}
  }
