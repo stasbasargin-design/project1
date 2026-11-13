@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.0'
+    version: 'i-max-2.9.1'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -121,6 +121,7 @@
   let orderSelectionRevision=0,orderLoadingRef='';
   let sheetRevision = 0;
   let sheetOrder = null;
+  window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT=window.ITUS_DOCUMENT_MEDIA_VIEWER?.create();
 
   function sheetContext(order = currentOrder()) {
     return {revision:sheetRevision, session:sessionSnapshot(), order, ref:order?.orderRef || order?.id || ''};
@@ -161,6 +162,56 @@
   const currentOrder = () => state.orders.find(o => o.id === state.selectedOrderId) || state.orders[0] || null;
   const statusClass = value => /разреш|готов|заверш|закрыт|выполн/i.test(value) ? 'ok' : (/отклон|ошиб|нельзя/i.test(value) ? 'bad' : (/контрол|ожид|прием|приём|перерыв/i.test(value) ? 'warn' : ''));
 
+  window.ITUS_DEFECT_FORWARD_CLIENT=window.ITUS_DEFECT_FORWARDING?.create({
+    id:requestId,toast,
+    context:()=>{
+      const order=currentOrder(),sheet=order?._defectSheet;
+      if(state.view!=='mp'||!state.views.clients||!sheet?.documentRef)return null;
+      return {session:sessionSnapshot(),orderRef:order.orderRef||order.id,orderNumber:order.num,documentRef:sheet.documentRef,entries:sheet.entries||[]};
+    },
+    valid:context=>sessionCurrent(context.session)&&state.view==='mp'&&Boolean(state.views.clients)
+      &&context.orderRef===(currentOrder()?.orderRef||currentOrder()?.id)&&context.documentRef===currentOrder()?._defectSheet?.documentRef,
+    topics:async context=>{
+      const result=await call1C('/clients/topics/list',{status:'active'},{silent:true,session:context.session});
+      return API.extractItems(result,['topics']).filter(topic=>String(topic?.topicRef||topic?.topicId||topic?.ref||topic?.id||'').trim()).map(API.normalizeTopic);
+    },
+    photo:prepareForwardPhoto,
+    enqueue:async(context,items,target)=>{
+      assertSession(context.session,context.session.scope);
+      return messenger.enqueueForwardBatch(items,{source:'clients',ref:target.ref});
+    }
+  });
+
+  async function prepareForwardPhoto(context,entry,signal,clientFileId){
+    assertSession(context.session,context.session.scope);
+    const check=()=>{assertSession(context.session,context.session.scope);if(signal.aborted)throw new DOMException('Aborted','AbortError');};
+    const file=entry.file;let blob=file.contentBlob,url='';check();
+    if(!blob&&file.contentBase64){
+      const raw=atob(String(file.contentBase64).replace(/^data:[^,]*,/,'').replace(/\s/g,''));
+      blob=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:file.mimeType||'image/jpeg'});
+    }
+    if(!blob){
+      if(file.fileRef){
+        const media=mediaClient(context.session);if(!media)throw Error('Подключение файлов недоступно');
+        const result=await media.attachment('/defects/start',{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,
+          orderRef:context.orderRef,orderId:context.orderRef,documentRef:context.documentRef,existingDocumentRef:context.documentRef,
+          attachmentRef:file.fileRef,entryRef:entry.entryRef||entry.id,requestId:requestId()},file.sizeBytes);check();url=result.url;
+      }else url=String(file.downloadUrl||'');
+      if(!url)throw Error('1С не вернула ссылку или идентификатор выбранного фото');
+      const parsed=new URL(url,location.href);if(!['https:','http:'].includes(parsed.protocol))throw Error('Недопустимая ссылка фотографии');
+      const controller=new AbortController(),abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});
+      const timer=setTimeout(abort,CONFIG.timeoutMs);
+      try{check();const response=await fetch(parsed.href,{signal:controller.signal,credentials:'omit'});if(!response.ok)throw Error(`Не удалось получить выбранное фото: HTTP ${response.status}`);blob=await response.blob();}
+      finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
+    }
+    check();if(!blob?.size)throw Error('Выбранная фотография пуста');
+    // Forward the saved original bytes. Do not compress a document photo again.
+    const payload={fileName:file.fileName||'Фото дефекта.jpg',mimeType:file.mimeType||blob.type||'image/jpeg',sizeBytes:blob.size,clientFileId};
+    if(blob.size>10*1024*1024)return {...payload,contentBlob:blob,transport:'s3'};
+    const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);});
+    check();return {...payload,contentBase64:String(data).split(',')[1]};
+  }
+
   function toast(message, error = false) {
     const element = $('toast');
     element.textContent = message;
@@ -171,6 +222,8 @@
   }
 
   function showSheet(title, hint, html) {
+    window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.close({restorePosition:false});
+    window.ITUS_DEFECT_FORWARD_CLIENT?.close();
     sheetRevision++;
     sheetOrder = currentOrder();
     $('sheetTitle').textContent = title;
@@ -181,6 +234,8 @@
 
   function closeSheet() {
     if (mediaPicker?.dismiss?.() === false) return false;
+    window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.close({restorePosition:false});
+    window.ITUS_DEFECT_FORWARD_CLIENT?.close();
     sheetRevision++;
     sheetOrder = null;
     orderQrScanner?.stop?.();
@@ -1700,6 +1755,7 @@
     const order = currentOrder(), sheet = order?._defectSheet;
     if (!sheet) return;
     const entries = sheet.entries || [];
+    const forwarding=state.view==='mp'&&state.views.clients?window.ITUS_DEFECT_FORWARD_CLIENT:null;
     const entryHtml = entries.length ? entries.map((entry, index) => {
       const file = entry.file;
       const imageSource = entry.type === 'photo' || /^image\//i.test(file?.mimeType || '') ? defectImageSource(file) : '';
@@ -1709,12 +1765,14 @@
       const verification = state.view === 'tech'
         ? `<label class="setting-row defect-entry-verification"><input type="checkbox" data-action="verify-defect-entry" data-index="${index}" ${entry.verified ? 'checked disabled' : ''}${entry.hasServerEntryRef ? '' : ' disabled'}>Проверено</label>`
         : '';
-      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}${verification}</div>`;
+      const selection=forwarding?.eligible(entry)?`<label class="defect-forward-choice"><input type="checkbox" data-action="select-defect-forward" data-index="${index}"${forwarding.isSelected(index)?' checked':''}>Выбрать для пересылки клиенту</label>`:'';
+      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}${verification}${selection}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
     const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
     const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
-    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div><label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
+    const forwardToolbar=forwarding?`<div class="defect-forward-toolbar"><span data-defect-forward-count>Выбрано записей: ${forwarding.count()}</span><button class="primary" data-action="defect-forward"${forwarding.count()?'':' disabled'}>Переслать клиенту</button></div>`:'';
+    showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div>${forwardToolbar}<label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }
 
   async function openDefectSheet() {
@@ -1747,13 +1805,13 @@
     } finally { pendingDefectVerifications.delete(key); }
   }
 
-  async function openDefectMedia(index) {
+  async function openDefectMedia(index,returnFocus) {
     const context=sheetContext(),session=context.session;
     const entry = currentOrder()?._defectSheet?.entries?.[index], file = entry?.file;
     if (!file) return;
     const mime = file.mimeType || 'application/octet-stream';
-    let url = file.downloadUrl;
-    if(!url && file.contentBlob) url=URL.createObjectURL(file.contentBlob);
+    let url = file.downloadUrl,ownedUrl=false;
+    if(!url && file.contentBlob){url=URL.createObjectURL(file.contentBlob);ownedUrl=true;}
     if(!url&&!file.contentBase64&&file.fileRef){
       const media=mediaClient(session);
       if(!media)return toast('Обновите приложение для открытия файла',true);
@@ -1765,11 +1823,12 @@
         const raw = atob(file.contentBase64.replace(/^data:[^,]*,/, ''));
         const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
         url = URL.createObjectURL(new Blob([bytes], {type:mime}));
+        ownedUrl=true;
       } catch { return toast('Не удалось открыть вложение', true); }
     }
     if (!url) return toast('1С не передала ссылку или содержимое файла', true);
-    if (/^image\//.test(mime)) showSheet('Фото дефекта', file.fileName, `<img src="${esc(url)}" alt="${esc(file.fileName)}" style="max-width:100%;border-radius:12px">`);
-    else if (/^video\//.test(mime)) showSheet('Видео дефекта', file.fileName, `<video controls playsinline preload="metadata" src="${esc(url)}" style="width:100%;border-radius:12px"></video>`);
+    if(!sheetCurrent(context)){if(ownedUrl)URL.revokeObjectURL(url);return;}
+    if (/^(image|video)\//.test(mime)) window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.open({url,mimeType:mime,fileName:file.fileName,ownedUrl,returnFocus});
     else { const link=document.createElement('a'); link.href=url; link.download=file.fileName||'attachment'; link.target='_blank'; link.click(); }
   }
 
@@ -2558,7 +2617,9 @@
       if (action === 'acceptance-photo' || action === 'acceptance-video') return await openMediaPicker({ type:'acceptance' });
       if (action === 'defect-photo' || action === 'defect-video') return await openMediaPicker({ type:'defect' });
       if (action === 'send-defect-text') return await sendDefectText();
-      if (action === 'defect-media') return await openDefectMedia(Number(button.dataset.index));
+      if (action === 'defect-media') return await openDefectMedia(Number(button.dataset.index),button);
+      if (action === 'select-defect-forward') return window.ITUS_DEFECT_FORWARD_CLIENT?.toggle(Number(button.dataset.index),button.checked);
+      if (action === 'defect-forward') return window.ITUS_DEFECT_FORWARD_CLIENT?.open();
       if (action === 'verify-defect-entry') return await verifyDefectEntry(Number(button.dataset.index),button);
       if (action === 'complete-defect-sheet') return await completeDefectSheet();
       if (action === 'load-client-topics') return await loadClientTopics();
@@ -2609,6 +2670,8 @@
 
   window.ITUS_BACK = () => {
     if (window.ITUS_APP_UPDATE_CLIENT?.back()) return true;
+    if (window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.back()) return true;
+    if (window.ITUS_DEFECT_FORWARD_CLIENT?.back()) return true;
     if (closeFocusedEditor()) return true;
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
     if (messenger?.back?.()) return true;
