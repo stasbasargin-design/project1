@@ -158,4 +158,40 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
   assert.equal(f.store.records.size,1,'only the held file should remain');
   gate.resolve();await until(()=>f.store.records.size===0);
 }
-console.log('Chat outbox: durable complete batch, restore, stable IDs, 422 report/retry, owner isolation, independent text lane and error propagation passed');
+// Defect forwarding reuses the ordinary client outbox. All selected messages
+// must be durable before transport; a repeated click keeps exactly those IDs.
+{
+  const gate=defer(),calls=[],store=memoryStore();
+  const f=fixture({store,sender:async operation=>{calls.push(clone(operation));assert.equal(store.records.size,2);await gate.promise;return {success:true};}});
+  const items=[{kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'},
+    {kind:'photo',file:{fileName:'original.png',mimeType:'image/png',sizeBytes:1,contentBase64:'YQ==',clientFileId:'original-copy'},clientMessageId:'forward-photo',requestId:'request-photo'}];
+  const original=clone(items);
+  await f.messenger.enqueueForwardBatch(items,target);await until(()=>calls.length===2);
+  await f.messenger.enqueueForwardBatch(items,target);
+  assert.equal(store.records.size,2);assert.equal(calls.length,2);
+  assert.deepEqual(items,original);
+  assert.deepEqual(calls.map(x=>x.method).sort(),['/clients/files/send','/clients/messages/send']);
+  assert.ok(calls.every(x=>x.body.topicRef==='topic'&&x.documentKey==='chat:clients:topic'));
+  assert.equal(calls.find(x=>x.body.file).body.file.contentBase64,'YQ==');
+  assert.deepEqual(calls.map(x=>x.requestId).sort(),['request-photo','request-text']);
+  gate.resolve();await until(()=>store.records.size===0);
+}
+{
+  const f=fixture();
+  const item={kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'};
+  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'staff',ref:'staff'}));
+  await assert.rejects(f.messenger.enqueueForwardBatch([item,item],target));
+  await assert.rejects(f.messenger.enqueueForwardBatch([{...item,text:''}],target));
+  assert.equal(f.store.records.size,0,'invalid forwarding cannot partially enqueue');
+}
+{
+  const gate=defer();let sent=0;
+  const f=fixture({sender:async()=>{sent++;return {success:true};}});
+  const prepare=f.outbox.prepareBatch;
+  f.outbox.prepareBatch=async values=>{await gate.promise;return prepare(values);};
+  const pending=f.messenger.enqueueForwardBatch([{kind:'text',text:'Old owner',clientMessageId:'old-owner',requestId:'old-request'}],target);
+  f.messenger.reset();f.state.userId='b';f.state.generation++;gate.resolve();
+  await assert.rejects(pending,error=>error.code==='SESSION_CHANGED');
+  assert.equal(sent,0);assert.ok([...f.store.records.values()].every(x=>x.scope.endsWith('|a')),'saved operations remain scoped to the original owner');
+}
+console.log('Chat outbox: durable complete batch, restore, stable IDs, 422 report/retry, owner isolation, independent text lane, selected defect forwarding and error propagation passed');
