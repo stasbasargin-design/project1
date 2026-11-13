@@ -2,7 +2,7 @@ import './assets/worktime.js';
 import { resolvePublicPath } from './static-path.mjs';
 import http from 'node:http';
 import dns from 'node:dns';
-import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,53 @@ const pushInternalToken = String(process.env.PUSH_INTERNAL_TOKEN || '').trim();
 const webPushContext = String(process.env.WEB_PUSH_CONTEXT || '').trim().toLowerCase();
 const capacitorOrigins = new Set(['https://localhost', 'capacitor://localhost']);
 const webPushRegistrationRoutes = new Set(['/notifications/push/subscribe', '/notifications/push/unsubscribe']);
+
+// APK releases live outside the deployed application, queues and 1C contours.
+// Only the release operator can write this directory. No upload/admin HTTP route.
+const androidUpdatesDir = resolve(process.env.APP_UPDATES_DIR || join(root, '..',
+  webPushContext === 'test' ? 'itus-max-updates-test' : 'itus-max-updates'));
+function androidRelease() {
+  let raw;
+  try {
+    const path = join(androidUpdatesDir, 'latest.json');
+    if (lstatSync(androidUpdatesDir).isSymbolicLink() || lstatSync(path).isSymbolicLink() || statSync(path).size > 32768) throw Error('Invalid manifest');
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) { if (error.code === 'ENOENT') return {enabled:false}; throw error; }
+  if (raw.enabled === false) return {enabled:false};
+  if (raw.schema !== 1 || raw.packageName !== 'ru.eazia.imax' || !/^\d+\.\d+\.\d+$/.test(raw.version)
+    || !Number.isSafeInteger(raw.versionCode) || raw.versionCode < 1 || raw.versionCode > 2100000000
+    || raw.fileName !== `I-MAX-${raw.version}.apk` || !/^[a-f0-9]{64}$/.test(raw.sha256)
+    || !/^[a-f0-9]{64}$/.test(raw.signerSha256) || !/^[a-f0-9]{40}$/.test(raw.commit)
+    || !Number.isSafeInteger(raw.bytes) || raw.bytes < 1 || raw.bytes > 256*1024*1024
+    || raw.minSdk !== 24 || !Array.isArray(raw.notes) || raw.notes.length > 8
+    || raw.notes.some(note => typeof note !== 'string' || note.length > 400)) throw Error('Invalid release');
+  const file = join(androidUpdatesDir, raw.fileName), stats = lstatSync(file);
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.size !== raw.bytes) throw Error('Incomplete APK');
+  return {enabled:true,schema:1,packageName:raw.packageName,version:raw.version,versionCode:raw.versionCode,
+    fileName:raw.fileName,sha256:raw.sha256,signerSha256:raw.signerSha256,commit:raw.commit,
+    bytes:raw.bytes,minSdk:24,notes:raw.notes};
+}
+async function serveAndroidUpdate(req,res,pathname) {
+  if (!pathname.startsWith('/updates/android/')) return false;
+  if (!['GET','HEAD'].includes(req.method)) { json(res,405,{success:false,error:{code:'METHOD_NOT_ALLOWED'}});return true; }
+  try {
+    const release = androidRelease();
+    if (pathname === '/updates/android/latest.json') {
+      const data=Buffer.from(JSON.stringify(release));
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Content-Length':data.length,'X-Content-Type-Options':'nosniff'});
+      res.end(req.method === 'HEAD' ? undefined : data);return true;
+    }
+    if (!release.enabled || pathname !== '/updates/android/'+release.fileName) { json(res,404,{success:false});return true; }
+    res.writeHead(200,{'Content-Type':'application/vnd.android.package-archive','Content-Length':release.bytes,
+      'Content-Disposition':`attachment; filename="${release.fileName}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});
+    if (req.method === 'HEAD') res.end();
+    else await pipeline(createReadStream(join(androidUpdatesDir,release.fileName)),res);
+  } catch {
+    if (!res.headersSent) json(res,503,{enabled:false,error:{code:'UPDATE_UNAVAILABLE'}});
+    else res.destroy();
+  }
+  return true;
+}
 
 // Some VPS resolvers publish an unreachable IPv6 address before the working IPv4
 // address. Prefer IPv4 without disabling IPv6 for installations where it works.
@@ -472,6 +519,7 @@ const server = http.createServer(async (req, res) => {
   }
   let pathname = basePath !== '/' && url.pathname.startsWith(basePath + '/')
     ? url.pathname.slice(basePath.length) : url.pathname;
+  if(await serveAndroidUpdate(req,res,pathname))return;
   const selected=environmentRoute(pathname,connections);
   if(!selected){json(res,404,{success:false,error:{code:'ENVIRONMENT_UNAVAILABLE',message:'Подключение к 1С не настроено'}});return;}
   pathname=selected.pathname;req.itusConnection=selected.connection;

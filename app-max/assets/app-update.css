@@ -1,0 +1,3 @@
+.app-update-dialog{box-sizing:border-box;width:min(92vw,460px);max-height:85vh;max-height:85dvh;padding:0;border:1px solid #d4dbe3;border-radius:20px;color:#27313a;background:#fff;box-shadow:0 12px 45px #0004;overflow:auto}
+.app-update-dialog::backdrop{background:#17202b99}
+.app-update-content{padding:22px}.app-update-content h2{font-size:1.25rem;margin:0 0 12px}.app-update-content p,.app-update-content li{line-height:1.45;overflow-wrap:anywhere}.app-update-content ul:empty{display:none}.app-update-content progress{width:100%;height:12px;accent-color:#b92824}.app-update-actions{display:grid;gap:10px;margin-top:16px}.app-update-actions button{min-height:46px;width:100%}
