@@ -109,6 +109,23 @@
       const operations=await outbox.prepareBatch(definitions);ensureOutboxSession(session,scope);
       await refreshOutbox();startOutbox();return operations;
     }
+    async function enqueueForwardBatch(items,target){
+      if(!outbox?.prepareBatch)throw new Error('Постоянная очередь чатов недоступна');
+      const s='clients',id=String(target?.ref||''),session=epoch,scope=outboxScope();
+      if(!id||(target.source&&target.source!=='clients')||!permitted(s)||!Array.isArray(items)||!items.length)throw new Error('Нет доступа к выбранному клиентскому чату');
+      ensureOutboxSession(session,scope);
+      const seen=new Set(),definitions=items.map(item=>{
+        const clientMessageId=String(item.clientMessageId||''),requestId=String(item.requestId||'');
+        if(!clientMessageId||!requestId||seen.has(clientMessageId)||!['text','photo'].includes(item.kind))throw new Error('Некорректный пакет пересылки');
+        seen.add(clientMessageId);
+        if(item.kind==='text'&&!String(item.text||'').trim()||item.kind==='photo'&&!item.file)throw new Error('Пустая запись для пересылки');
+        const file=item.kind==='photo';
+        return {id:`${scope}:chat:${clientMessageId}`,scope,kind:'chat',documentKey:`chat:${s}:${id}`,method:'/clients'+(file?'/files/send':'/messages/send'),requestId,
+          body:{...params(s,id),clientMessageId,...(file?{kind:'photo',file:item.file}:{text:String(item.text)})}};
+      });
+      const operations=await outbox.prepareBatch(definitions);ensureOutboxSession(session,scope);
+      await refreshOutbox();startOutbox();return operations;
+    }
     function sortedMessages(messages){return messages.map((message,index)=>({message,index})).sort((a,b)=>{
       const at=Date.parse(a.message.createdAt),bt=Date.parse(b.message.createdAt);
       if(Number.isFinite(at)&&Number.isFinite(bt)&&at!==bt)return at-bt;
@@ -150,6 +167,22 @@
       shell.style.setProperty('--messenger-viewport-height',height+'px');
       shell.style.setProperty('--messenger-viewport-top',Math.max(0,Number(viewport?.offsetTop || 0))+'px');
       shell.classList?.toggle('messenger-compact',height<560);
+      resizeDraft();
+    }
+    function resizeDraft(){
+      const input=document.getElementById('msgDraft');
+      if(!input?.style||!root.getComputedStyle)return;
+      const history=document.querySelector('.msg-history'),top=history?.scrollTop||0;
+      const atBottom=!history||history.scrollHeight-top-history.clientHeight<80;
+      const style=root.getComputedStyle(input),number=value=>parseFloat(value)||0;
+      const line=number(style.lineHeight)||number(style.fontSize)*1.4;
+      const padding=number(style.paddingTop)+number(style.paddingBottom),border=number(style.borderTopWidth)+number(style.borderBottomWidth);
+      const minimum=Math.max(44,line+padding+border);
+      const maximum=Math.max(minimum,Math.min(line*6+padding+border,Math.max(0,Number(root.visualViewport?.height||root.innerHeight))*.33));
+      input.style.maxHeight=maximum+'px';input.style.height='auto';input.style.overflowY='hidden';
+      input.style.height=Math.max(minimum,Math.min(maximum,input.scrollHeight+border))+'px';
+      input.style.overflowY=input.scrollHeight>input.clientHeight+1?'auto':'hidden';
+      if(history)history.scrollTop=atBottom?history.scrollHeight:top;
     }
     root.addEventListener('resize',resize);root.addEventListener('orientationchange',resize);root.visualViewport?.addEventListener('resize',resize);root.visualViewport?.addEventListener('scroll',resize);
     function listHtml(){
@@ -473,7 +506,7 @@
     }
     document.addEventListener('input',e=>{
       if(!visible)return;
-      if(e.target.id==='msgDraft')drafts[selectedKey()]=e.target.value;
+      if(e.target.id==='msgDraft'){drafts[selectedKey()]=e.target.value;resizeDraft();}
       if(e.target.id==='msgSearch'){query=e.target.value;const list=document.querySelector('.msg-thread-list');if(list)list.innerHTML=listHtml();}
     });
     document.addEventListener('keydown',e=>{
@@ -505,7 +538,7 @@
       if(id&&selected===id)await loadMessages(s,id,{refresh:true,recovery:true});
       return true;
     }
-    return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,refreshOutbox,confirmedOutbox,
+    return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,enqueueForwardBatch,refreshOutbox,confirmedOutbox,
       refreshInternalThreadFromPush,refreshVisibleInternalThread,
       recoverVisibleReads,
       leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
