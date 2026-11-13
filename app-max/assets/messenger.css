@@ -53,7 +53,7 @@ body.messenger-view .messenger-compact .tab{height:46px;min-height:46px}
 .msg-compose{display:flex;align-items:flex-end;flex-shrink:0;gap:8px;padding:10px 14px;border-top:1px solid #d6dce4;background:#fff}
 .msg-compose>button{flex:0 0 44px;border-radius:50%;font-size:1.625rem}
 .msg-compose .msg-send{background:#b92824;color:white;font-size:1.375rem}
-#msgDraft{margin:0;resize:none;min-height:44px;max-height:120px;height:64px;border:1px solid #cbd2db;border-radius:14px;font-size:1rem;padding:10px;flex:1}
+#msgDraft{margin:0;resize:none;min-height:44px;max-height:200px;height:44px;line-height:1.4;overflow-y:hidden;border:1px solid #cbd2db;border-radius:14px;font-size:1rem;padding:10px;flex:1;min-width:0}
 .msg-empty{color:#526070;padding:24px;text-align:center}.msg-empty button{display:block;margin:8px auto;border:1px solid #b92824;border-radius:8px;padding:6px 14px}
 .msg-placeholder{margin:auto;text-align:center;padding:30px;color:#536273}.msg-placeholder>span{font-size:2rem;font-weight:800;color:#b92824;letter-spacing:.15em}
 .msg-placeholder h2{font-size:1.25rem;color:#253444}.msg-error{flex-shrink:0;max-height:20%;overflow:auto;overflow-wrap:anywhere;padding:10px 16px;background:#fff0eb;color:#9c2520;font-size:0.875rem}
