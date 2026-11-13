@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.8.9'
+    version: 'i-max-2.9.0'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -83,6 +83,28 @@
     recover:recoverConnectionReads,
     onNetwork:network=>window.ITUS_DIAGNOSTICS_CLIENT?.networkChanged(network),
     onRecovery:event=>window.ITUS_DIAGNOSTICS_CLIENT?.recovery(event)
+  });
+  const appUpdater=window.ITUS_APP_UPDATE_CLIENT=window.ITUS_APP_UPDATE?.create({
+    shouldCheck:()=>Boolean(state.userId),
+    canPrompt:()=>Boolean(state.userId&&!state.loading&&!state.busy
+      &&!pendingActions.size&&$('overlay').classList.contains('hidden')
+      &&!document.querySelector('[data-process-input],[data-process-answer],#defectText')
+      &&!['msgDraft','clientMessage','chatMessage'].some(id=>String($(id)?.value||'').trim())
+      &&!document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')),
+    canInstall:async()=>{
+      // Conservative gate: installation must not interrupt a request, pending
+      // outbox operation or an editor. Never drain, replay, cancel or clear it.
+      if(state.loading||state.busy||queueResumeJob||sessionRequests.size||pendingActions.size
+        ||!$('overlay').classList.contains('hidden')
+        ||document.querySelector('[data-process-input],[data-process-answer],#defectText')
+        ||['msgDraft','clientMessage','chatMessage'].some(id=>String($(id)?.value||'').trim()))return false;
+      if(state.userId&&operationQueue){
+        try{const operations=await operationQueue.list(sessionSnapshot().scope);
+          if(operations.some(item=>['pending','sending'].includes(item.status)))return false;
+        }catch{return false;}
+      }
+      return !state.loading&&!state.busy&&!queueResumeJob&&!sessionRequests.size&&!pendingActions.size;
+    }
   });
   const longRunningActions = new Set([
     'media-device-reconnect',
@@ -426,6 +448,7 @@
     if (!state.userId) return render();
     const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
+    void appUpdater?.check();
     try {
       if(ENVIRONMENTS)await ENVIRONMENTS.load();
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
@@ -2277,7 +2300,7 @@
     const display=window.ITUS_DISPLAY;
     const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
     const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
-    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid"><button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid">${appUpdater?'<button data-action="check-app-update">Проверить обновление I-MAX</button>':''}<button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
   }
 
   async function switchEnvironment(){
@@ -2463,6 +2486,7 @@
       if (action === 'manual-auth-qr') return await manualQr();
       if (action === 'submit-auth-qr') { const id = parseQr($('qrValue')?.value); if (!/^\d+$/.test(id)) return await toast('QR не содержит корректный числовой ID', true); setAuth(id, 'qr'); closeSheet(); return await initialize(); }
       if (action === 'settings') return await showSettings();
+      if (action === 'check-app-update') {closeSheet();return appUpdater?.show();}
       if (action === 'switch-environment') return await switchEnvironment();
       if (action === 'media-device-settings') return showMediaDeviceSettings();
       if (action === 'media-device-reconnect') {await mediaClient().connect({force:true});showMediaDeviceSettings();toast('Отправка файлов подключена');scheduleQueueResume();return;}
@@ -2584,6 +2608,7 @@
   }
 
   window.ITUS_BACK = () => {
+    if (window.ITUS_APP_UPDATE_CLIENT?.back()) return true;
     if (closeFocusedEditor()) return true;
     if (!$('overlay').classList.contains('hidden')) { closeSheet(); return true; }
     if (messenger?.back?.()) return true;
