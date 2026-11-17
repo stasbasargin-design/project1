@@ -133,7 +133,7 @@ export function createMediaService({env=process.env,upstreamHeaders,json,log=()=
     }catch(error){if(!res.headersSent)json(res,error.status||502,{success:false,error:{code:error.code||'MEDIA_SERVICE_ERROR',message:error.status&&error.status<500?error.message:'Не удалось выполнить операцию с буфером файлов'}});}
     return true;
   }
-  return {init,handle,device,
+  return {init,handle,device,authorize,
     async write(route,envelope,send,options){
       if(!enabled||!WRITE_ROUTES.has(route)||!/^\d{1,30}$/.test(String(envelope?.userId||'')))return send();
       if(!ready)throw mediaError('Журнал отправки пока недоступен',503,'WRITE_LEDGER_NOT_READY');

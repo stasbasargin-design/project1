@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.1'
+    version: 'i-max-2.9.2'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -85,7 +85,7 @@
     onRecovery:event=>window.ITUS_DIAGNOSTICS_CLIENT?.recovery(event)
   });
   const appUpdater=window.ITUS_APP_UPDATE_CLIENT=window.ITUS_APP_UPDATE?.create({
-    shouldCheck:()=>Boolean(state.userId),
+    shouldCheck:()=>Boolean(state.userId&&state.updateCheckReady),
     canPrompt:()=>Boolean(state.userId&&!state.loading&&!state.busy
       &&!pendingActions.size&&$('overlay').classList.contains('hidden')
       &&!document.querySelector('[data-process-input],[data-process-answer],#defectText')
@@ -105,6 +105,10 @@
       }
       return !state.loading&&!state.busy&&!queueResumeJob&&!sessionRequests.size&&!pendingActions.size;
     }
+  });
+  window.ITUS_CHAT_PREFERENCES_CLIENT=window.ITUS_CHAT_PREFERENCES?.create({
+    context:()=>({...sessionSnapshot(),userId:state.userId,apiBase:CONFIG.apiBase}),media:mediaClient,
+    onChange:()=>messenger?.preferencesChanged?.()
   });
   const longRunningActions = new Set([
     'media-device-reconnect',
@@ -133,6 +137,7 @@
 
   const messenger = window.ITUS_MESSENGER?.create({
     api:API,call:call1C,user:()=>state.user,cacheOwner,
+    chatCapabilities:()=>state.chatCapabilities||{},chatPreferences:()=>window.ITUS_CHAT_PREFERENCES_CLIENT,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
     toast,pickFile:configureFilePicker,photo:choosePhoto,media:openMediaPicker,filePayload:fileToPayload,
     closeSheet,sheet:showSheet,settings:showNotificationSettings,onRead:messagesRead,
@@ -256,6 +261,7 @@
   }
 
   function setAuth(id, mode) {
+    state.updateCheckReady=false;
     sessionGeneration++;
     orderSelectionRevision++;orderLoadingRef='';
     for (const controller of sessionRequests) controller.abort();
@@ -269,6 +275,7 @@
     // Bot IDs belong to the authenticated session; never carry them across logins.
     state.clientBotId = '';
     state.serviceBotId = '';
+    state.chatCapabilities = {replies:false,reactions:false};
     if (state.userId) localStorage.setItem(AUTH_STORAGE, state.userId);
     else localStorage.removeItem(AUTH_STORAGE);
     window.ITUS_DIAGNOSTICS_CLIENT?.activate();
@@ -503,7 +510,6 @@
     if (!state.userId) return render();
     const session = sessionSnapshot();
     state.loading = true; state.error = ''; render();
-    void appUpdater?.check();
     try {
       if(ENVIRONMENTS)await ENVIRONMENTS.load();
       const auth = await call1C('/auth/max', authPayload(), { silent: true });
@@ -532,6 +538,10 @@
       else if (CONFIG.enforceTabs) {
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
+      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:authData.chatCapabilities?.internal?.reactions===true};
+      state.updateCheckReady=true;
+      void appUpdater?.check({login:!readOnlyRecovery});
+      void window.ITUS_CHAT_PREFERENCES_CLIENT?.load();
       if (!Object.keys(state.views).length) { state.initialized = true; return; }
       void mediaClient(session)?.connect().catch(error=>{if(sessionCurrent(session))console.warn('Media session:',error.code||'MEDIA_UNAVAILABLE');});
       await loadOrders(false);
@@ -2288,6 +2298,7 @@
 
   async function pollNotifications() {
     const types = FEATURES.typesFor(state.user);
+    if(state.views.chat&&state.chatCapabilities?.reactions)types.push('message_reaction_changed');
     if (!state.userId || !state.initialized || !types.length || state.polling) return;
     const userId = state.userId;
     const unreadRevision = state.unreadRevision;
@@ -2310,6 +2321,7 @@
       state.notificationCursor = String(data.nextCursor || data.cursor || state.notificationCursor || '');
       const prefs = FEATURES.preferences(ENVIRONMENTS?.cacheOwner(userId)||userId);
       for (const raw of API.extractItems(response, ['events','notifications'])) {
+        if(raw.type==='message_reaction_changed'&&state.views.chat&&state.chatCapabilities?.reactions){await messenger?.notify(raw);continue;}
         const type = normalizedNotificationType(raw.type || raw.eventType);
         if (!types.includes(type)) continue;
         const event = {eventId:String(raw.eventId || raw.id || JSON.stringify(raw)), type,
@@ -2323,7 +2335,7 @@
         state.seenEvents.add(event.eventId);
         if (state.seenEvents.size > 2000) state.seenEvents.delete(state.seenEvents.values().next().value);
         await messenger?.notify(event);
-        if (!prefs[type]) continue;
+        if (!prefs[type]||window.ITUS_CHAT_PREFERENCES_CLIENT?.suppress({...raw,...event.payload,type:raw.type||raw.eventType})) continue;
         state.notifications.unshift(event);
         state.notifications = state.notifications.slice(0,100);
         if (document.hidden && prefs.system && nativeNotifications && nativeNotifications.permission() === 'granted') {
@@ -2492,7 +2504,7 @@
   }
 
   window.addEventListener('offline', () => connectionStatus('error', 'Нет подключения к интернету'));
-  window.addEventListener('online', () => { connectionStatus('', 'Интернет восстановлен · ожидаем ответа 1С'); scheduleQueueResume(); });
+  window.addEventListener('online', () => { void window.ITUS_CHAT_PREFERENCES_CLIENT?.load(); connectionStatus('', 'Интернет восстановлен · ожидаем ответа 1С'); scheduleQueueResume(); });
 
   document.addEventListener('focusin', event => {
     if (event.target.id === 'orderSearch') {
@@ -2680,7 +2692,7 @@
     return true;
   };
   window.ITUS_NATIVE_PUSH?.listen?.({
-    onNotification: event => { if(ENVIRONMENTS&&!ENVIRONMENTS.accepts(event?.data))return;refreshOpenInternalChatFromPush(event); if (!document.hidden) toast(event?.title || 'Новое уведомление'); },
+    onNotification: event => { if(ENVIRONMENTS&&!ENVIRONMENTS.accepts(event?.data))return;refreshOpenInternalChatFromPush(event); if (!document.hidden&&!window.ITUS_CHAT_PREFERENCES_CLIENT?.suppress(event?.data)) toast(event?.title || 'Новое уведомление'); },
     onAction: data => void openPushTarget(data),
     onError: error => console.warn('Native push:', error)
   });

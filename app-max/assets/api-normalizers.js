@@ -284,6 +284,10 @@
       side: direction === 'outgoing' || direction === 'mine' || x.isMine ? 'mine' : (direction === 'system' ? 'system' : 'theirs'),
       attachments: normalizeMedia(x.attachments || x.files),
       status,
+      replyToMessageRef:text(x.replyToMessageRef || x.replyTo?.messageRef),
+      replyTo:isObject(x.replyTo)?{messageRef:text(x.replyTo.messageRef),author:text(x.replyTo.authorName || x.replyTo.author),text:text(x.replyTo.text),fileName:text(x.replyTo.fileName)}:null,
+      reactions:asArray(x.reactions).filter(r=>isObject(r)&&typeof r.emoji==='string'&&Number.isSafeInteger(r.count)&&r.count>0).map(r=>({emoji:r.emoji,count:r.count})),
+      myReaction:text(x.myReaction),
       poll
     };
   }
@@ -295,6 +299,7 @@
       title: text(x.title || x.clientName || x.counterpartyName || x.fullName || x.displayName || x.name, `Тема ${index + 1}`),
       subtitle: text(x.subtitle || x.contactName || x.description),
       lastMessage: text(x.lastMessage?.text || x.lastMessage || x.preview),
+      createdAt:text(x.createdAt),lastMessageAt:text(x.lastMessageAt || x.lastMessage?.createdAt),updatedAt:text(x.updatedAt),
       unread: Number(x.unreadCount || x.unread || 0),
       common: x.isCommon === true || x.common === true || x.general === true || x.isGeneral === true || /^(common|general)$/i.test(text(x.chatType || x.groupType || x.type)),
       orderRef: text(x.orderRef || x.orderId),
