@@ -27,6 +27,18 @@
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
     const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    function updateLastMessage(item,message,s,attachmentFallback='Вложение'){
+      if(!item||!message)return;
+      if(s==='clients'){
+        const known=Date.parse(item.lastMessageAt),incoming=Date.parse(message.createdAt);
+        // A partial or stale history response must not replace the newer
+        // last-message metadata returned by the client topic list.
+        if(Number.isFinite(known)&&(!Number.isFinite(incoming)||incoming<known))return;
+      }
+      item.lastMessage=message.text||attachmentFallback;
+      item.lastMessageAt=message.createdAt||item.lastMessageAt;
+      item.updatedAt=message.createdAt||item.updatedAt;
+    }
     const outbox=options.outbox;
     const outboxScope=()=>String(outbox?.scope?.() || '');
     const chatThread=operation=>({source:operation.method.startsWith('/clients/')?'clients':'staff',ref:String(operation.body?.topicRef||operation.body?.topicId||operation.body?.groupRef||operation.body?.groupId||'')});
@@ -59,7 +71,7 @@
       if(data.message&&typeof data.message==='object'){
         const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,status:data.message.status||'sent'},Date.now());
         cache[k]=mergeMessages(cache[k],[message]);void persistThread(k);
-        const item=records[thread.source].find(item=>item.ref===thread.ref);if(item){item.lastMessage=message.text||'Вложение';item.lastMessageAt=message.createdAt;item.updatedAt=message.createdAt;}
+        updateLastMessage(records[thread.source].find(item=>item.ref===thread.ref),message,thread.source);
       }
       if(isVisibleThread(thread.source,thread.ref)){
         if(busy[k])refreshPending[k]=true;
@@ -196,7 +208,7 @@
       items=root.ITUS_CHAT_POLICY&&section!=='contacts'?root.ITUS_CHAT_POLICY.sortTopics(items,source):[...items].sort(section==='contacts'?(a,b)=>a.title.localeCompare(b.title,'ru'):(a,b)=>Number(Boolean(b.common))-Number(Boolean(a.common)) || Number(Boolean(b.shiftGroup))-Number(Boolean(a.shiftGroup)) || (Date.parse(b.updatedAt)||0)-(Date.parse(a.updatedAt)||0));
       if(listError[source])return `<div class="msg-empty">${escape(listError[source])}<button data-action="msg-refresh">Повторить</button></div>`;
       if(!items.length)return `<div class="msg-empty">${listBusy[source]||listBusy.contacts?'Загрузка…':q?'Ничего не найдено':section==='contacts'&&source==='staff'?'Нет доступных авторизованных сотрудников':'Нет доступных переписок'}</div>`;
-      return items.map(item=>`<button class="msg-thread ${item.ref===selected?'selected':''} ${item.common?'common':''}" data-action="msg-open" data-ref="${escape(item.ref)}"><span class="msg-avatar">${escape(initials(item.title))}</span><span class="msg-thread-body"><span class="msg-thread-top"><strong>${escape(item.title)}${chatPreferences()?.status(source,item.ref).muted?'<span aria-label="Уведомления отключены"> 🔕</span>':''}${item.common?'<span class="msg-common-badge">Общий чат</span>':''}</strong><time>${escape(time(item.lastMessageAt||item.createdAt||item.updatedAt))}</time></span><span class="msg-thread-bottom"><span>${escape(section==='contacts'?(item.subtitle||'Открыть переписку'):(item.lastMessage||item.subtitle||'Нет сообщений'))}</span>${item.unread>0?`<b class="msg-count">${item.unread}</b>`:''}</span></span></button>`).join('');
+      return items.map(item=>`<button class="msg-thread ${item.ref===selected?'selected':''} ${item.common?'common':''}" data-action="msg-open" data-ref="${escape(item.ref)}"><span class="msg-avatar">${escape(initials(item.title))}</span><span class="msg-thread-body"><span class="msg-thread-top"><strong>${escape(item.title)}${chatPreferences()?.status(source,item.ref).muted?'<span aria-label="Уведомления отключены"> 🔕</span>':''}${item.common?'<span class="msg-common-badge">Общий чат</span>':''}</strong><time>${escape(time(source==='clients'?item.lastMessageAt:item.lastMessageAt||item.createdAt||item.updatedAt))}</time></span><span class="msg-thread-bottom"><span>${escape(section==='contacts'?(item.subtitle||'Открыть переписку'):(item.lastMessage||item.subtitle||'Нет сообщений'))}</span>${item.unread>0?`<b class="msg-count">${item.unread}</b>`:''}</span></span></button>`).join('');
     }
     function fileHtml(file,mi,fi){
       const mime=file.mimeType||'',video=/^video\//.test(mime),image=/^image\//.test(mime);
@@ -349,7 +361,7 @@
         const data=response.data||response;
         const item=records[s].find(x=>x.ref===id);
         if(item){
-          const last=cache[k].at(-1);if(last){item.lastMessage=last.text||(last.attachments.length?'Вложение':'');item.lastMessageAt=last.createdAt||item.lastMessageAt;item.updatedAt=last.createdAt||item.updatedAt;}
+          const last=cache[k].at(-1);if(last)updateLastMessage(item,last,s,last.attachments.length?'Вложение':'');
           if(Number.isFinite(data.unreadCount))item.unread=data.unreadCount;
         }
         if(!recovery&&visible && !document.hidden && source===s&&selected===id)await markRead(s,id,cache[k]);
@@ -420,7 +432,7 @@
           // and refresh the light history where 1C supplies the real author.
           const message=api.normalizeMessage({...data.message,direction:'outgoing',isMine:true,status:data.message.status||'sent'},Date.now());
           cache[k]=mergeMessages((cache[k]||[]).filter(x=>x.id!==message.id),[message]);void persistThread(k);
-          const item=records[s].find(x=>x.ref===id);if(item){item.lastMessage=message.text||'Вложение';item.lastMessageAt=message.createdAt;item.updatedAt=message.createdAt;}
+          updateLastMessage(records[s].find(x=>x.ref===id),message,s);
           if(!message.authorKnown)await loadMessages(s,id,{refresh:true});
         }else await loadMessages(s,id,{refresh:true});
         clearReply(s,id,reply);finishAttempt(s,id,signature);toast('Отправлено');

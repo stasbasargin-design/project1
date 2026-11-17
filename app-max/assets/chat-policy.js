@@ -11,9 +11,12 @@
     return source?thread(source,data.topicRef||data.topicId||data.groupRef||data.groupId||''):null;
   }
   const stamp=value=>{const result=Date.parse(value);return Number.isFinite(result)?result:0;};
-  const activity=item=>Math.max(stamp(item.lastMessageAt),stamp(item.createdAt))||stamp(item.updatedAt);
+  // A client thread moves only when its latest message changes. Creation,
+  // read receipts and generic record updates must not raise it in the list.
+  const activity=item=>{const value=Date.parse(item.lastMessageAt);return Number.isFinite(value)?value:-Infinity;};
+  const staffActivity=item=>Math.max(stamp(item.lastMessageAt),stamp(item.createdAt))||stamp(item.updatedAt);
   function sortTopics(items,source){return items.map((value,index)=>({value,index})).sort((a,b)=>
     (source==='staff'?(Number(Boolean(b.value.common))-Number(Boolean(a.value.common))||Number(Boolean(b.value.shiftGroup))-Number(Boolean(a.value.shiftGroup))):0)
-    ||activity(b.value)-activity(a.value)||a.index-b.index).map(x=>x.value);}
+    ||(source==='clients'?activity(b.value)-activity(a.value):staffActivity(b.value)-staffActivity(a.value))||a.index-b.index).map(x=>x.value);}
   root.ITUS_CHAT_POLICY=Object.freeze({emojis,thread,pushThread,sortTopics,activity});
 })(typeof window==='undefined'?globalThis:window);

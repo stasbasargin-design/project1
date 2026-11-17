@@ -22,7 +22,12 @@ try{
   await restarted.setMuted('111','test',{source:'clients',ref:'same-ref',muted:false});assert.ok(await restarted.recipient('web','endpoint-one','test',{type:'new_messages',topicRef:'same-ref'}));
   await assert.rejects(registry.setMuted('111','test',{source:'unknown',ref:'x',muted:true}));
   const ordered=policy.sortTopics([{ref:'old',lastMessageAt:'2026-01-01T12:00:00Z'},{ref:'new-client',createdAt:'2026-02-01T12:00:00Z'},{ref:'recent-message',lastMessageAt:'2026-03-01T12:00:00Z'},{ref:'no-date'},{ref:'other-no-date'}],'clients');
-  assert.deepEqual(ordered.map(x=>x.ref),['recent-message','new-client','old','no-date','other-no-date']);
+  assert.deepEqual(ordered.map(x=>x.ref),['recent-message','old','new-client','no-date','other-no-date']);
+  const same='2026-03-01T12:00:00Z';
+  const strict=policy.sortTopics([{ref:'creation-only',createdAt:'2099-01-01'},{ref:'update-only',updatedAt:'2099-01-01'},
+    {ref:'equal-first',lastMessageAt:same,createdAt:'2020-01-01'},{ref:'invalid',lastMessageAt:'not-a-date',updatedAt:'2099-01-01'},
+    {ref:'equal-second',lastMessageAt:same,createdAt:'2099-01-01'},{ref:'old',lastMessageAt:'1970-01-01T00:00:00Z'},{ref:'empty',lastMessageAt:null}],'clients');
+  assert.deepEqual(strict.map(x=>x.ref),['equal-first','equal-second','old','creation-only','update-only','invalid','empty'],'only last-message dates rank clients, including stable ties and unknown dates');
   assert.equal(policy.sortTopics([{ref:'last',lastMessageAt:'2027-01-01'},{ref:'common',common:true}],'staff')[0].ref,'common');
   assert.equal(policy.sortTopics([{ref:'read-receipt',lastMessageAt:'2026-01-01',updatedAt:'2028-01-01'},{ref:'message',lastMessageAt:'2027-01-01'}],'clients')[0].ref,'message','read/status changes cannot outrank an actual newer message');
   assert.equal(policy.pushThread({type:'defect_complete',topicRef:'same-ref'}),null);
