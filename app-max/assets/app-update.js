@@ -53,11 +53,11 @@
       if(!canPrompt()){if(!timer)timer=root.setTimeout(()=>{timer=null;prompt();},5000);return;}
       show();
     }
-    async function check({manual=false}={}){
+    async function check({manual=false,login=false}={}){
       if(closed||(!manual&&!shouldCheck()))return;
       if(job){if(manual)show();return job;}
       if(['downloading','ready','permission','installer'].includes(stage)){if(manual)show();return info;}
-      if(!manual&&lastCheck&&now()-lastCheck<6*60*60*1000)return info;
+      if(!manual&&!login&&lastCheck&&now()-lastCheck<6*60*60*1000)return info;
       lastCheck=now();checking=true;stage='checking';error='';if(manual)show();
       const task=(async()=>{
         try{info=await plugin.check();stage=info?.available?'available':'current';if(manual)show();else prompt();return info;}

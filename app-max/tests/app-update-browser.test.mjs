@@ -39,6 +39,8 @@ try{
   assert.equal(await evaluate('__updates.checks'),0,'no update/identity calls before login');
   await evaluate('document.getElementById("authUserId").value="111"');await click('[data-action="login"]');await wait('document.querySelector("#orderSearch")');await wait('document.querySelector("#appUpdateDialog[open]")');
   assert.equal(await evaluate('__updates.checks'),1);assert.equal(await evaluate('Boolean(window.UNSAFE)'),false);assert.equal(await evaluate('document.querySelector("#appUpdateDialog img")!==null'),false,'release notes are plain text');
+  await evaluate('ITUS_APP_UPDATE_CLIENT.check()');assert.equal(await evaluate('__updates.checks'),1,'ordinary resume retains bounded polling');
+  await evaluate('ITUS_APP_UPDATE_CLIENT.check({login:true})');assert.equal(await evaluate('__updates.checks'),2,'each successful authorization bypasses the six-hour resume interval');
   await evaluate('__updateNotes.splice(0,1,"Обновление приложения напрямую с Timeweb")');
   await click('[data-update-primary]');await click('[data-update-primary]');assert.equal(await evaluate('__updates.downloads'),1,'double click joins one download');
   await evaluate('__updateProgress({received:512,total:1024})');assert.equal(await evaluate('document.querySelector("#appUpdateDialog progress").value'),50);

@@ -11,6 +11,8 @@ const entries=Array.from({length:36},(_,i)=>({entryRef:'entry-'+i,type:'text',te
 entries.splice(1,0,{entryRef:'photo-entry',type:'photo',text:'',file:{fileRef:'photo-ref',fileName:'original.png',mimeType:'image/png',sizeBytes:Buffer.from(image,'base64').length}});
 entries.splice(2,0,{entryRef:'video-entry',type:'video',file:{fileRef:'video-ref',fileName:'sample.mp4',mimeType:'video/mp4',contentBase64:'AAAA',sizeBytes:3}});
 const order={orderRef:'order-one',orderNumber:'Synthetic order',defectDocumentRef:'defect-one'};
+const history=Array.from({length:55},(_,i)=>({messageRef:'message-'+i,text:'Synthetic history line '+i,authorName:'Synthetic author',createdAt:'2026-11-13T08:'+String(i).padStart(2,'0')+':00Z'}));
+const staffHistory=history.map(x=>({...x})),reactionResponses=[];let muted=[],latestClient='client-two';
 const server=createServer(async(req,res)=>{
   const path=new URL(req.url,'http://synthetic.invalid').pathname;
   if(path==='/api/media/download/'+'b'.repeat(48)){res.setHeader('Content-Type','image/png');res.end(Buffer.from(image,'base64'));return;}
@@ -19,17 +21,30 @@ const server=createServer(async(req,res)=>{
     calls.push({path,body});let data={};
     if(path.endsWith('/environments/config'))data={test:true,production:true,isolatedPush:true};
     else if(path.endsWith('/push/web/config')||path.endsWith('/push/installation'))data={enabled:false};
-    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat']};
+    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
     else if(path.endsWith('/orders/list'))data={orders:[order]};
     else if(path.endsWith('/orders/get'))data={order};
     else if(path.endsWith('/defects/start'))data={documentRef:'defect-one',entries};
-    else if(path.endsWith('/topics/list'))data={topics:[{topicRef:'client-one',title:'Synthetic client one',orderRef:order.orderRef,orderNumber:order.orderNumber},{topicRef:'client-two',title:'Synthetic client two'}]};
+    else if(path.endsWith('/topics/list'))data={topics:[{topicRef:'client-one',title:'Synthetic client one',orderRef:order.orderRef,orderNumber:order.orderNumber,lastMessageAt:latestClient==='client-one'?'2026-12-01T10:00:00Z':'2026-11-01T10:00:00Z'},{topicRef:'client-two',title:'Synthetic client two',createdAt:'2026-11-17T10:00:00Z'}]};
     else if(path.endsWith('/groups/list'))data={groups:[{groupRef:'staff-one',title:'Передача смены',isCommon:true}]};
-    else if(path.endsWith('/messages/list'))data={messages:Array.from({length:55},(_,i)=>({messageRef:'message-'+i,text:'Synthetic history line '+i,authorName:'Synthetic author',createdAt:'2026-11-13T08:'+String(i).padStart(2,'0')+':00Z'}))};
+    else if(path.endsWith('/messages/list'))data={messages:path.includes('/internal-chat/')?staffHistory:history};
     else if(path.endsWith('/contacts/list'))data={contacts:[]};
     else if(path.endsWith('/media/session'))data={token:'a'.repeat(64),expires:Date.now()+3600000};
     else if(path.endsWith('/media/attachment'))data={ticket:'b'.repeat(48)};
     else if(path.endsWith('/notifications/poll'))data={events:[],unreadCount:0};
+    else if(path.endsWith('/push/chat-preferences')){
+      if(req.method==='POST'){muted=muted.filter(x=>x.source!==body.source||x.ref!==body.ref);if(body.muted)muted.push({source:body.source,ref:body.ref});}
+      data={muted};
+    }
+    else if(path.endsWith('/internal-chat/messages/react')){
+      const message=staffHistory.find(x=>x.messageRef===body.messageRef);message.myReaction=body.emoji;message.reactions=body.emoji?[{emoji:body.emoji,count:1}]:[];
+      reactionResponses.push({res,data:{messageRef:body.messageRef,myReaction:message.myReaction,reactions:message.reactions}});return;
+    }
+    else if(path.endsWith('/internal-chat/messages/send')){
+      const original=staffHistory.find(x=>x.messageRef===body.replyToMessageRef);
+      const message={messageRef:'synthetic-reply',authorName:'Synthetic employee',text:body.text,createdAt:'2026-11-17T11:00:00Z',replyToMessageRef:body.replyToMessageRef,replyTo:original?{messageRef:original.messageRef,authorName:original.authorName,text:original.text}:undefined};
+      if(!staffHistory.some(x=>x.messageRef===message.messageRef))staffHistory.push(message);data={message};
+    }
     else if(/\/(files|messages)\/send$/.test(path)){held.push(res);return;}
     res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data}));return;
   }
@@ -59,7 +74,12 @@ try{
   // preserve its DOM node, caret and a history position away from the bottom.
   await click('[data-view="chat"]');await wait('document.querySelector("[data-action=msg-source]")');
   for(const source of ['staff','clients']){
-    await click('[data-action="msg-source"][data-source="'+source+'"]');await wait('document.querySelector("[data-action=msg-open]")');await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await wait('document.querySelectorAll(".msg-bubble").length>10');
+    await click('[data-action="msg-source"][data-source="'+source+'"]');await wait('document.querySelector("[data-action=msg-open]")');
+    if(source==='clients')assert.equal(await evaluate('document.querySelector("[data-action=msg-open]").dataset.ref'),'client-two','new client without messages rises by creation time');
+    await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await wait('document.querySelectorAll(".msg-bubble").length>10');
+    assert.equal(await evaluate('Boolean(document.querySelector("[data-action=msg-reply]"))'),source==='staff');
+    await draft('АБВ');await evaluate('document.getElementById("msgDraft").setSelectionRange(1,2)');await click('[data-action="msg-emoji"]');await click('[data-action="msg-insert-emoji"][data-emoji="😂"]');
+    assert.equal(await evaluate('document.getElementById("msgDraft").value'),'А😂В','emoji replaces the selected range');
     const initial=await draft('');await evaluate('window.__draftNode=document.getElementById("msgDraft");document.querySelector(".msg-history").scrollTop=120;window.__historyTop=document.querySelector(".msg-history").scrollTop');
     const expanded=await draft('Первая строка\nВторая строка\nТретья строка');assert.ok(expanded>initial+20,source+' multiline growth');
     assert.equal(await evaluate('__draftNode===document.getElementById("msgDraft")'),true);
@@ -73,6 +93,33 @@ try{
     await draft('Сохранённый\nчерновик');await click('[data-action="msg-back"]');await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');assert.equal(await evaluate('document.getElementById("msgDraft").value'),'Сохранённый\nчерновик');
     await screenshot('composer-'+source);await draft('');await click('[data-action="msg-back"]');
   }
+  const messageReads=calls.filter(x=>x.path.endsWith('/messages/list')).length;latestClient='client-one';await click('[data-action="msg-refresh"]');await wait('document.querySelector("[data-action=msg-open]").dataset.ref==="client-one"');assert.equal(calls.filter(x=>x.path.endsWith('/messages/list')).length,messageReads,'sorting does not download each history');
+  await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await click('[data-action="msg-chat-settings"]');await wait('document.querySelector("[data-action=msg-mute]")');await click('[data-action="msg-mute"]');await wait('document.querySelector("[data-action=msg-chat-settings]").textContent.includes("🔕")');assert.deepEqual(muted,[{source:'clients',ref:'client-one'}]);
+  assert.equal(await evaluate('ITUS_CHAT_PREFERENCES_CLIENT.status("staff","client-one").muted'),false);
+  await click('[data-action="msg-chat-settings"]');await click('[data-action="msg-mute"]');await wait('document.querySelector("[data-action=msg-chat-settings]").textContent.includes("🔔")');assert.equal(muted.length,0);
+  await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="staff"]');await click('[data-action="msg-open"]');await wait('document.querySelector("[data-action=msg-reply]")');
+  await click('[data-action="msg-reply"][data-ref="message-54"]');assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true);
+  await draft('Synthetic reply text');await evaluate('(()=>{const b=document.querySelector("[data-action=msg-send]");b.click();b.click()})()');
+  await wait('document.querySelector(".msg-quote")');
+  const sent=calls.filter(x=>x.path.endsWith('/internal-chat/messages/send'));assert.equal(sent.length,1);assert.equal(sent[0].body.replyToMessageRef,'message-54');
+  assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent'), '');
+  await draft('Keep while reacting');await click('[data-action="msg-reactions"][data-ref="message-54"]');await evaluate(`(()=>{const b=[...document.querySelectorAll('[data-action=msg-react]')].find(x=>x.dataset.ref==='message-54'&&x.dataset.emoji==='👍');b.click();b.click()})()`);
+  for(let n=0;n<100&&!reactionResponses.length;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,1);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).length,1);
+  assert.equal(await evaluate('document.querySelector("#msgDraft").value'),'Keep while reacting');assert.equal(await evaluate('document.querySelector(".msg-reaction-count")===null'),true,'unconfirmed reaction is not presented as saved');
+  reactionResponses[0].res.end(JSON.stringify({success:true,data:reactionResponses[0].data}));await wait('document.querySelector(".msg-reaction-count")');
+  await click('[data-action="msg-back"]');await click('[data-action="msg-open"]');
+  try{await wait('document.querySelector(".msg-reaction-count")');}catch(error){console.log(JSON.stringify({stage:'reopen-reactions',remote:staffHistory.find(x=>x.messageRef==='message-54'),calls:calls.slice(-5),dom:await evaluate('document.querySelector(".msg-conversation").textContent.slice(-1800)')}));throw error;}
+  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  for(let n=0;n<100&&reactionResponses.length<2;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,2);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).at(-1).body.emoji,'');
+  reactionResponses[1].res.end(JSON.stringify({success:true,data:reactionResponses[1].data}));await wait('!document.querySelector(".msg-reaction-count")');
+  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  for(let n=0;n<100&&reactionResponses.length<3;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,3);
+  reactionResponses[2].res.writeHead(422,{'Content-Type':'application/json'}).end(JSON.stringify({success:false,error:{code:'SYNTHETIC_REJECTED',message:'Synthetic reaction rejection'}}));
+  await wait('document.querySelector("#toast").textContent.includes("Synthetic reaction rejection")');assert.equal(await evaluate('document.querySelector(".msg-reaction-count")===null'),true);
+  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  for(let n=0;n<100&&reactionResponses.length<4;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,4);
+  const reactionCalls=calls.filter(x=>x.path.endsWith('/messages/react'));assert.equal(reactionCalls.at(-1).body.requestId,reactionCalls.at(-2).body.requestId,'manual retry keeps the unconfirmed reaction identity');
+  reactionResponses[3].res.end(JSON.stringify({success:true,data:reactionResponses[3].data}));await wait('document.querySelector(".msg-reaction-count")');await draft('');await screenshot('internal-reply-reactions');
   // Each role opens an existing document. Media is an independent top layer,
   // never a replacement of the defect sheet or its unsent draft.
   for(const role of ['mp','executor','tech']){
@@ -128,4 +175,4 @@ try{
   await evaluate('__testForward.toggle(0,true);__testForward.open();__fakeContext={...__fakeContext,session:{scope:"test|another",generation:2}}');await click('#defectForwardDialog[open] [data-forward-action="topics"]');await wait('document.querySelector("#defectForwardDialog[open] [role=alert]")');assert.equal(await evaluate('__enqueued.length'),1);await evaluate('__testForward.close()');
   console.log('Chat/defect browser: both composers grow/shrink and preserve cursor/history/draft; media retains document in MP/executor/tech; explicit client forwarding saves exact selected bytes once, preserves IDs on preparation failure and blocks owner changes.');
   await send('Browser.close');socket.close();
-}finally{socket?.close();child.kill();for(const response of held)response.destroy();server.closeAllConnections();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}
+}finally{socket?.close();child.kill();for(const response of held)response.destroy();for(const response of reactionResponses)response.res.destroy();server.closeAllConnections();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}
