@@ -1,0 +1,21 @@
+name: Verify Alfa-Auto web preview link
+on:
+  push:
+    branches:
+      - restore/alfa-auto-trainer-v13-1
+    paths:
+      - '.github/workflows/alfa-preview-link-check.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm preview page can be opened
+        run: |
+          set -euxo pipefail
+          URL='https://raw.githack.com/stasbasargin-design/project1/fb0684488c77bf1ac19a5bc7af19e55b36bff22a/alfa-auto-trainer-original/test.html'
+          curl -L --retry 3 --retry-delay 3 --connect-timeout 12 --max-time 55 -o /tmp/alfa-preview-response.html -w 'HTTP_STATUS=%{http_code}\nCONTENT_TYPE=%{content_type}\nREDIRECT=%{redirect_url}\n' "$URL"
+          wc -c /tmp/alfa-preview-response.html
+          head -c 180 /tmp/alfa-preview-response.html
+          echo
+          grep -q 'Тренажёр 1С:Альфа-Авто 6.1' /tmp/alfa-preview-response.html
