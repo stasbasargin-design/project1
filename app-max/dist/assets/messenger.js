@@ -2,6 +2,8 @@
   'use strict';
   const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const labels={clients:'Клиенты',staff:'Сотрудники'};
+  const replyIcon='<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 4 7 7-7 7v-4c-5.1 0-8.8 1.7-12 6 1.2-8.1 5.2-11 12-11V4Z"/></svg>';
+  const reactionIcon='<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M8 14a4.5 4.5 0 0 0 8 0M8.5 9h.01M15.5 9h.01"/></svg>';
   function safeUrl(value) {
     if (!value) return '';
     try {const u=new URL(value,document.baseURI);return u.protocol==='https:' || (u.protocol==='http:' && u.origin===location.origin) ? u.href : '';}catch{return '';}
@@ -234,7 +236,7 @@
       if(source!=='staff'||!message.hasServerMessageRef)return '';
       const cap=chatCapabilities(),ref=escape(message.messageRef),busy=reactionBusy.has(key(source,selected)+':'+message.messageRef);
       const summary=(message.reactions||[]).map(x=>`<span class="msg-reaction-count">${escape(x.emoji)} ${Number(x.count)}</span>`).join('');
-      return `<div class="msg-message-actions">${cap.replies?`<button data-action="msg-reply" data-ref="${ref}">Ответить</button>`:''}${cap.reactions?`<button data-action="msg-reactions" data-ref="${ref}" aria-label="Поставить реакцию">☺</button>`:''}${summary}</div>${cap.reactions?`<div class="msg-reaction-picker" data-reactions-ref="${ref}" hidden>${emojis().map(emoji=>`<button data-action="msg-react" data-ref="${ref}" data-emoji="${emoji}" aria-pressed="${message.myReaction===emoji}" ${busy?'disabled':''}>${emoji}</button>`).join('')}</div>`:''}`;
+      return `<div class="msg-message-actions">${cap.replies?`<button type="button" class="msg-message-action msg-reply-button" data-action="msg-reply" data-ref="${ref}" aria-label="Ответить на сообщение" title="Ответить на сообщение">${replyIcon}</button>`:''}${cap.reactions?`<button type="button" class="msg-message-action msg-reactions-button" data-action="msg-reactions" data-ref="${ref}" aria-label="Поставить реакцию" title="Поставить реакцию">${reactionIcon}</button>`:''}${summary}</div>${cap.reactions?`<div class="msg-reaction-picker" data-reactions-ref="${ref}" hidden>${emojis().map(emoji=>`<button data-action="msg-react" data-ref="${ref}" data-emoji="${emoji}" aria-pressed="${message.myReaction===emoji}" ${busy?'disabled':''}>${emoji}</button>`).join('')}</div>`:''}`;
     }
     function replyRef(s,id,target){
       const value=target&&Object.prototype.hasOwnProperty.call(target,'replyToMessageRef')?target.replyToMessageRef:replies[key(s,id)]?.messageRef;

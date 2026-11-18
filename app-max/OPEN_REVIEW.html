@@ -215,6 +215,12 @@ body.messenger-view footer{display:none}
 .msg-reply-draft{display:flex;align-items:center;flex:0 0 auto;min-width:0;gap:8px;padding:7px 12px;border-top:1px solid #d6dce4;background:#fff6f3;font-size:.8rem}.msg-reply-draft:empty{display:none}.msg-reply-draft>span{min-width:0;flex:1}.msg-reply-draft span span,.msg-quote span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.msg-reply-draft b{display:block;overflow-wrap:anywhere}.msg-reply-draft button{flex:0 0 42px;font-size:1.4rem}
 .messenger .msg-quote{display:block;max-width:100%;min-width:0;padding:7px 9px;margin:6px 0;border-left:3px solid #b92824;border-radius:5px;background:#fff7f2;text-align:left;font-size:.8rem}.msg-quote b{display:block;overflow-wrap:anywhere}.msg-message-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:5px}.msg-message-actions:empty{display:none}.msg-message-actions button{min-height:32px;padding:3px 7px;font-size:.75rem;border:1px solid #d7dce2;border-radius:9px;background:#ffffffb8}.msg-reaction-count{font-size:.8rem;padding:3px 5px;border-radius:8px;background:#fff8}
 .msg-emoji-picker,.msg-reaction-picker{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:2px;padding:4px 8px;background:#fff;border-top:1px solid #d6dce4}.msg-emoji-picker[hidden],.msg-reaction-picker[hidden]{display:none}.msg-emoji-picker button,.msg-reaction-picker button{min-width:34px;min-height:38px;padding:2px 5px;font-size:1.3rem}.msg-reaction-picker button[aria-pressed=true]{background:#f8ddd5;border-radius:8px}.msg-conversation-head [data-action=msg-chat-settings]{font-size:1.15rem}
+.messenger .msg-message-action{display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;height:44px;min-height:44px;padding:10px;border:1px solid #ecc5be;border-radius:12px;background:#fff6f3;color:#b92824;touch-action:manipulation;transition:background-color .15s,border-color .15s,transform .12s}
+.msg-message-action svg{display:block;flex:0 0 22px;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.messenger .msg-message-action:focus-visible{outline:2px solid #b92824;outline-offset:2px}
+.messenger .msg-message-action:active{background:#f4d9d4;border-color:#b92824;transform:scale(.94)}
+@media(hover:hover){.messenger .msg-message-action:hover{background:#f8e3df;border-color:#b92824}}
+@media(prefers-reduced-motion:reduce){.messenger .msg-message-action{transition:none}.messenger .msg-message-action:active{transform:none}}
 </style>
   <style>.media-picker-actions{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:8px}
 .media-picker-actions button{min-height:48px}
@@ -1892,6 +1898,8 @@ window.ITUS_CONFIG = {
   'use strict';
   const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const labels={clients:'Клиенты',staff:'Сотрудники'};
+  const replyIcon='<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 4 7 7-7 7v-4c-5.1 0-8.8 1.7-12 6 1.2-8.1 5.2-11 12-11V4Z"/></svg>';
+  const reactionIcon='<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M8 14a4.5 4.5 0 0 0 8 0M8.5 9h.01M15.5 9h.01"/></svg>';
   function safeUrl(value) {
     if (!value) return '';
     try {const u=new URL(value,document.baseURI);return u.protocol==='https:' || (u.protocol==='http:' && u.origin===location.origin) ? u.href : '';}catch{return '';}
@@ -2124,7 +2132,7 @@ window.ITUS_CONFIG = {
       if(source!=='staff'||!message.hasServerMessageRef)return '';
       const cap=chatCapabilities(),ref=escape(message.messageRef),busy=reactionBusy.has(key(source,selected)+':'+message.messageRef);
       const summary=(message.reactions||[]).map(x=>`<span class="msg-reaction-count">${escape(x.emoji)} ${Number(x.count)}</span>`).join('');
-      return `<div class="msg-message-actions">${cap.replies?`<button data-action="msg-reply" data-ref="${ref}">Ответить</button>`:''}${cap.reactions?`<button data-action="msg-reactions" data-ref="${ref}" aria-label="Поставить реакцию">☺</button>`:''}${summary}</div>${cap.reactions?`<div class="msg-reaction-picker" data-reactions-ref="${ref}" hidden>${emojis().map(emoji=>`<button data-action="msg-react" data-ref="${ref}" data-emoji="${emoji}" aria-pressed="${message.myReaction===emoji}" ${busy?'disabled':''}>${emoji}</button>`).join('')}</div>`:''}`;
+      return `<div class="msg-message-actions">${cap.replies?`<button type="button" class="msg-message-action msg-reply-button" data-action="msg-reply" data-ref="${ref}" aria-label="Ответить на сообщение" title="Ответить на сообщение">${replyIcon}</button>`:''}${cap.reactions?`<button type="button" class="msg-message-action msg-reactions-button" data-action="msg-reactions" data-ref="${ref}" aria-label="Поставить реакцию" title="Поставить реакцию">${reactionIcon}</button>`:''}${summary}</div>${cap.reactions?`<div class="msg-reaction-picker" data-reactions-ref="${ref}" hidden>${emojis().map(emoji=>`<button data-action="msg-react" data-ref="${ref}" data-emoji="${emoji}" aria-pressed="${message.myReaction===emoji}" ${busy?'disabled':''}>${emoji}</button>`).join('')}</div>`:''}`;
     }
     function replyRef(s,id,target){
       const value=target&&Object.prototype.hasOwnProperty.call(target,'replyToMessageRef')?target.replyToMessageRef:replies[key(s,id)]?.messageRef;
@@ -13335,7 +13343,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.3'
+    version: 'i-max-2.9.4'
   };
   let buildCommit = '';
   async function loadBuildInfo() {

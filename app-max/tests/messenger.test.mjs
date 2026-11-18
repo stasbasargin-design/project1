@@ -55,6 +55,7 @@ assert.match(app.innerHTML,/Реальный автор/);
 assert.doesNotMatch(app.innerHTML,/<div class="msg-author">Тест<\/div>/);
 assert.match(app.innerHTML,/photo.jpg/);
 assert.match(app.innerHTML,/data-action="msg-media"/);
+assert.doesNotMatch(app.innerHTML,/data-action="msg-reply"|data-action="msg-reactions"/,'unannounced 1C capabilities remain hidden');
 assert.doesNotMatch(app.innerHTML,/<img src="https:\/\/ea-itus.ru\/photo.jpg"/);
 assert.doesNotMatch(app.innerHTML,/data-auto-image/);
 await messenger.handle('msg-media',{dataset:{mi:'1',fi:'0'}});

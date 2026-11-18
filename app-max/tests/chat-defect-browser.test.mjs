@@ -21,7 +21,7 @@ const server=createServer(async(req,res)=>{
     calls.push({path,body});let data={};
     if(path.endsWith('/environments/config'))data={test:true,production:true,isolatedPush:true};
     else if(path.endsWith('/push/web/config')||path.endsWith('/push/installation'))data={enabled:false};
-    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
+    else if(path.endsWith('/auth/max'))data=[{user:{name:'Synthetic employee',roleName:'admin'}},{availableTabs:['orders','mp','executor','tech','clients','chat']},{chatCapabilities:{internal:{replies:true,reactions:true}}}];
     else if(path.endsWith('/orders/list'))data={orders:[order]};
     else if(path.endsWith('/orders/get'))data={order};
     else if(path.endsWith('/defects/start'))data={documentRef:'defect-one',entries};
@@ -79,6 +79,14 @@ try{
     if(source==='clients')assert.equal(await evaluate('document.querySelector("[data-action=msg-open]").dataset.ref'),'client-one','a new client without messages remains below an existing conversation');
     await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await wait('document.querySelectorAll(".msg-bubble").length>10');
     assert.equal(await evaluate('Boolean(document.querySelector("[data-action=msg-reply]"))'),source==='staff');
+    if(source==='staff'){
+      const buttons=await evaluate(`[...document.querySelectorAll('.msg-message-action')].map(b=>({width:b.getBoundingClientRect().width,height:b.getBoundingClientRect().height,label:b.getAttribute('aria-label'),title:b.title,svg:Boolean(b.querySelector('svg[aria-hidden="true"]')),text:b.textContent.trim()}))`);
+      assert.ok(buttons.length>0);assert.ok(buttons.every(b=>b.width>=44&&b.height>=44&&b.label&&b.label===b.title&&b.svg&&!b.text),'icon controls stay labelled and large enough to tap');
+      await screenshot('reply-icons-mobile');
+      await send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});await settle();
+      assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'reply icons do not widen the page');await screenshot('reply-icons-desktop');
+      await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});await settle();
+    }
     await draft('АБВ');await evaluate('document.getElementById("msgDraft").setSelectionRange(1,2)');await click('[data-action="msg-emoji"]');await click('[data-action="msg-insert-emoji"][data-emoji="😂"]');
     assert.equal(await evaluate('document.getElementById("msgDraft").value'),'А😂В','emoji replaces the selected range');
     const initial=await draft('');await evaluate('window.__draftNode=document.getElementById("msgDraft");document.querySelector(".msg-history").scrollTop=120;window.__historyTop=document.querySelector(".msg-history").scrollTop');
@@ -101,7 +109,10 @@ try{
   assert.equal(await evaluate('ITUS_CHAT_PREFERENCES_CLIENT.status("staff","client-one").muted'),false);
   await click('[data-action="msg-chat-settings"]');await click('[data-action="msg-mute"]');await wait('document.querySelector("[data-action=msg-chat-settings]").textContent.includes("🔔")');assert.equal(muted.length,0);
   await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="staff"]');await click('[data-action="msg-open"]');await wait('document.querySelector("[data-action=msg-reply]")');
+  const beforeReply=calls.filter(x=>/\/(messages|files)\/send$/.test(x.path)).length;
   await click('[data-action="msg-reply"][data-ref="message-54"]');assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true);
+  assert.equal(calls.filter(x=>/\/(messages|files)\/send$/.test(x.path)).length,beforeReply,'the arrow only selects a reply; it does not send immediately');
+  await screenshot('reply-selected-mobile');
   await draft('Synthetic reply text');await evaluate('(()=>{const b=document.querySelector("[data-action=msg-send]");b.click();b.click()})()');
   await wait('document.querySelector(".msg-quote")');
   const sent=calls.filter(x=>x.path.endsWith('/internal-chat/messages/send'));assert.equal(sent.length,1);assert.equal(sent[0].body.replyToMessageRef,'message-54');
