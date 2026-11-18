@@ -1,11 +1,5 @@
 name: Alfa-Auto trainer temporary browser preview
 on:
-  push:
-    branches:
-      - restore/alfa-auto-trainer-v13-1
-    paths:
-      - 'alfa-auto-trainer-original/**'
-      - '.github/workflows/alfa-auto-preview-pages.yml'
   workflow_dispatch:
 permissions:
   contents: read
