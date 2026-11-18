@@ -10,6 +10,15 @@ const base='http://127.0.0.1:18392/p/max-service';
 async function call(path,body,token){const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(token?{'X-ITUS-Device':token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:response.status,data:await response.json()};}
 try{
   await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error(logs||'Server startup timeout')),12000);child.stdout.on('data',b=>{if(String(b).includes('ИТУС запущен')){clearTimeout(timeout);resolve();}});child.once('exit',()=>{clearTimeout(timeout);reject(Error(logs));});});
+  // Listening does not mean asynchronous media-store initialization finished.
+  // Wait for readiness, then still require the unauthenticated request to fail.
+  let mediaReady=false;
+  for(let attempt=0;attempt<100;attempt++){
+    const config=await call('/api/media/config');
+    if(config.status===200&&config.data.data?.enabled===true){mediaReady=true;break;}
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.equal(mediaReady,true,logs||'Synthetic media service did not become ready');
   assert.equal((await call('/api/push/chat-preferences')).status,401);
   const session=(await call('/api/media/session',{userId:'111',maxUserId:'111',authId:'111',authMode:'manual'})).data.data;
   const token=session.token;assert.ok(token);
