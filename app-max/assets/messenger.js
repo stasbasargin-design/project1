@@ -27,7 +27,15 @@
     const owner=()=>String(options.cacheOwner?.() || user()?.id || user()?.userId || '').trim();
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
-    const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    function newMessageId(){
+      if(root.crypto?.randomUUID)return root.crypto.randomUUID();
+      const bytes=new Uint8Array(16);
+      if(root.crypto?.getRandomValues)root.crypto.getRandomValues(bytes);
+      else for(let index=0;index<bytes.length;index++)bytes[index]=Math.floor(Math.random()*256);
+      bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+      const hex=Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');
+      return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+    }
     let ownActionsMenu=null,messageForward=null,forwardContext=null;
     const actionsMenu=()=>options.actionsMenu?.()||(ownActionsMenu||=root.ITUS_MESSAGE_ACTIONS?.create({valid:ctx=>ctx.valid(),toast}));
     function closeActions(){gestures?.cancel();actionsMenu()?.close();messageForward?.close();forwardContext=null;}

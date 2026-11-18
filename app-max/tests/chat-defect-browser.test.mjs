@@ -63,23 +63,36 @@ try{
   const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(Error('Browser timeout '+method)),15000);waiting.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
   const wait=expression=>evaluate('new Promise((resolve,reject)=>{const t=setInterval(()=>{if('+expression+'){clearInterval(t);resolve(true)}},25);setTimeout(()=>{clearInterval(t);reject(Error("Missing state: "+'+JSON.stringify(expression)+'))},8000)})');
-  const click=selector=>evaluate('document.querySelector('+JSON.stringify(selector)+').click()');
+  const click=async selector=>{
+    const threadAction=['msg-open','msg-source','msg-back'].find(action=>selector.includes(action));
+    if(threadAction)await evaluate('window.__lastMessageAction=null');
+    await evaluate('document.querySelector('+JSON.stringify(selector)+').click()');
+    if(threadAction){await wait('window.__lastMessageAction?.action==='+JSON.stringify(threadAction));await evaluate('window.__lastMessageAction.promise');await settle();}
+  };
   const gesture=async(selector,kind='hold')=>{
     await evaluate('document.querySelector('+JSON.stringify(selector)+').scrollIntoView({block:"center"})');await settle();
-    const point=await evaluate('(()=>{const r=document.querySelector('+JSON.stringify(selector)+').getBoundingClientRect();return {x:r.x+r.width*.7,y:Math.max(180,Math.min(innerHeight-100,r.y+r.height/2))}})()');
+    // A cached thread is visible before its light refresh finishes. Start the
+    // physical gesture only after layout/scroll have stopped moving the target.
+    await evaluate(`new Promise((resolve,reject)=>{let previous='',stable=0,frames=0;function check(){const node=document.querySelector(${JSON.stringify(selector)}),r=node?.getBoundingClientRect(),stamp=r?JSON.stringify([r.x,r.y,r.width,r.height,document.querySelector('.msg-history')?.scrollTop,document.querySelector('[data-action="msg-refresh-messages"]')?.disabled]):'';stable=stamp&&stamp===previous?stable+1:0;previous=stamp;if(stable>=5)return resolve(true);if(++frames>120)return reject(Error('Gesture target kept moving'));requestAnimationFrame(check);}check();})`);
+    const point=await evaluate(`(()=>{const node=document.querySelector(${JSON.stringify(selector)}),r=node.getBoundingClientRect(),history=node.closest('.msg-history'),clip=history?.getBoundingClientRect()||{top:0,bottom:innerHeight,left:0,right:innerWidth};const top=Math.max(0,r.top,clip.top),bottom=Math.min(innerHeight,r.bottom,clip.bottom);return {x:Math.max(clip.left+2,Math.min(clip.right-2,r.x+r.width*.7)),y:(top+bottom)/2,visible:bottom>top+4};})()`);
+    assert.equal(point.visible,true,'gesture target must be inside its scroll viewport');delete point.visible;
+    assert.equal(await evaluate(`Boolean(document.elementFromPoint(${point.x},${point.y})?.closest(${JSON.stringify(selector)}))`),true,'touch must hit the selected entry, not its header/composer');
+    await evaluate(`(()=>{window.__gestureTrace=[];if(window.__tracingGestures)return;window.__tracingGestures=true;for(const type of ['pointerdown','pointermove','pointerup','pointercancel','scroll','contextmenu','visibilitychange'])document.addEventListener(type,event=>{window.__gestureTrace.push({type,id:event.pointerId,target:event.target?.id||event.target?.className,at:performance.now()});},true);})()`);
     await send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...point,id:1}]});
     if(kind==='hold')await new Promise(r=>setTimeout(r,580));
     else for(let n=1;n<=6;n++)await send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:point.x-n*12,y:point.y,id:1}]});
     await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await settle();
   };
-  const menu=async ref=>{await gesture('.msg-bubble[data-message-ref="'+ref+'"]');await wait('document.querySelector("#messageActionsDialog[open]")');};
+  const menu=async ref=>{await gesture('.msg-bubble[data-message-ref="'+ref+'"]');try{await wait('document.querySelector("#messageActionsDialog[open]")');}catch(error){console.error('Gesture trace',JSON.stringify(await evaluate('({events:__gestureTrace,header:document.querySelector(".msg-conversation-head")?.textContent,busy:document.querySelector("[data-action=msg-refresh-messages]")?.disabled})')));throw error;}};
   const reaction=async ref=>{await menu(ref);await click('[data-message-choice="reaction"]');await wait('document.querySelector(".message-actions-emojis")');await click('[data-message-choice="👍"]');};
   const settle=()=>evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   const draft=async value=>{await evaluate('(()=>{const t=document.getElementById("msgDraft");t.value='+JSON.stringify(value)+';t.dispatchEvent(new Event("input",{bubbles:true}));})()');await settle();return evaluate('document.getElementById("msgDraft").getBoundingClientRect().height');};
   const queue=()=>evaluate("new Promise((resolve,reject)=>{const r=indexedDB.open('itus-operation-queue');r.onsuccess=()=>{const db=r.result,q=db.transaction('operations','readonly').objectStore('operations').getAll();q.onsuccess=()=>{resolve(q.result.map(x=>({id:x.id,requestId:x.requestId,body:x.body,scope:x.scope,method:x.method})));db.close()};q.onerror=()=>reject(q.error)}})");
   const screenshot=async name=>{if(process.env.CHAT_DEFECT_ARTIFACT_DIR){mkdirSync(process.env.CHAT_DEFECT_ARTIFACT_DIR,{recursive:true});writeFileSync(join(process.env.CHAT_DEFECT_ARTIFACT_DIR,name+'.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));}};
   await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});
-  await send('Page.addScriptToEvaluateOnNewDocument',{source:"window.__ITUS_API_BASE__=location.origin+'/api/1c';localStorage.setItem('itus.environment:'+location.origin,'test');"});
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__ITUS_API_BASE__=location.origin+'/api/1c';localStorage.setItem('itus.environment:'+location.origin,'test');
+    // Observe real action completion without substituting its implementation.
+    Object.defineProperty(window,'ITUS_MESSENGER',{configurable:true,set(api){const create=api.create;api.create=function(options){const client=create(options),handle=client.handle;client.handle=(...args)=>{const promise=handle(...args);window.__lastMessageAction={action:args[0],promise};return promise;};return client;};Object.defineProperty(window,'ITUS_MESSENGER',{value:api,writable:true,configurable:true});}});`});
   await send('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/'});await wait('document.querySelector("#authUserId")');await evaluate('document.getElementById("authUserId").value="111"');await click('[data-action="login"]');await wait('document.querySelector("#orderSearch")');
   // The same composer implementation serves both messengers. Input growth must
   // preserve its DOM node, caret and a history position away from the bottom.
