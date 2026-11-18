@@ -179,7 +179,7 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
 {
   const f=fixture();
   const item={kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'};
-  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'staff',ref:'staff'}));
+  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'unknown',ref:'staff'}));
   await assert.rejects(f.messenger.enqueueForwardBatch([item,item],target));
   await assert.rejects(f.messenger.enqueueForwardBatch([{...item,text:''}],target));
   assert.equal(f.store.records.size,0,'invalid forwarding cannot partially enqueue');
@@ -219,4 +219,25 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
   f.messenger.back();await f.messenger.handle('msg-open',{dataset:{ref:'staff'}});gate.resolve();await opening;await until(()=>reads===2&&f.app.innerHTML.includes('Fresh reopened chat'));
   assert.equal(reads,2);assert.doesNotMatch(f.app.innerHTML,/Stale result/);
 }
-console.log('Chat outbox: durable complete batch, stable IDs, 422, owner isolation, selected defect forwarding, immutable replies and fast chat reopen recovery passed');
+// Client replies/reactions are excluded even if a backend advertises them.
+for(const capabilities of [{clients:{replies:true,reactions:true}},{replies:true,reactions:true,clients:{replies:true,reactions:true}}]){
+  const sent=[],gate=defer(),f=fixture({capabilities,readMessages:()=>({data:{messages:[{messageRef:'original',text:'Original',replyToMessageRef:'old-source',replyTo:{text:'Old quote'},myReaction:'👍',reactions:[{emoji:'👍',count:1}]}]}}),sender:async value=>{sent.push(value);await gate.promise;return {success:true};}});
+  await f.messenger.enter('clients');await f.messenger.handle('msg-open',{dataset:{ref:'topic'}});
+  await f.messenger.handle('msg-reply',{dataset:{ref:'original'}});await f.messenger.handle('msg-react',{dataset:{ref:'original',emoji:'👍'}});
+  assert.equal(sent.length,0);assert.doesNotMatch(f.app.innerHTML,/msg-quote|msg-reaction-count/);
+  await assert.rejects(f.messenger.enqueueMediaBatch(files,{...target,replyToMessageRef:'original'}),/Ответы пока недоступны/);assert.equal(f.store.records.size,0);
+  await f.messenger.enqueueMediaBatch(files,target);await until(()=>sent.length===1);
+  assert.ok([...f.store.records.values()].every(x=>x.method==='/clients/files/send'&&!x.body.replyToMessageRef));gate.resolve();await until(()=>f.store.records.size===0);
+}
+// Mixed forwarding in both directions uses only the ordinary text/file senders.
+for(const destination of [{source:'clients',ref:'same-ref'},{source:'staff',ref:'same-ref'}]){
+  const gate=defer(),calls=[],f=fixture({sender:async value=>{calls.push(clone(value));await gate.promise;return {success:true};}});
+  const items=['text','photo','video','file'].map((kind,index)=>({kind,...(kind==='text'?{text:'Forwarded original'}:{file:{fileName:kind,contentBase64:'original-bytes'}}),replyToMessageRef:'must-not-copy',authorName:'must-not-copy',clientMessageId:'forward-'+index,requestId:'request-'+index}));
+  await f.messenger.enqueueForwardBatch(items,destination);await until(()=>calls.length>0);
+  assert.equal(f.store.records.size,4);const prefix=destination.source==='clients'?'/clients':'/internal-chat';
+  assert.ok(calls.every(x=>x.method.startsWith(prefix)&&x.documentKey==='chat:'+destination.source+':same-ref'&&!x.body.replyToMessageRef&&!x.body.authorName));
+  gate.resolve();await until(()=>f.store.records.size===0);assert.equal(calls.length,4);
+  assert.ok(calls.every(x=>x.method.startsWith(prefix)&&!x.body.replyToMessageRef&&!x.body.authorName));
+  assert.ok(calls.filter(x=>x.body.file).every(x=>x.body.file.contentBase64==='original-bytes'));
+}
+console.log('Chat outbox: stable complete batches and IDs, isolation, internal replies, ordinary client sending and bidirectional text/file forwarding; client replies/reactions blocked even with advertised capabilities passed');

@@ -1,0 +1,13 @@
+.msg-bubble[data-message-ref],.defect-history .entry[data-defect-entry]{touch-action:pan-y pinch-zoom;-webkit-touch-callout:none}
+.message-swiping{position:relative;transform:translateX(var(--message-swipe-x,0px));will-change:transform}
+.message-swiping::after{content:'↩';position:absolute;right:-38px;top:50%;display:grid;place-items:center;width:30px;height:30px;margin-top:-15px;border-radius:50%;background:#f8e3df;color:#b92824;font-size:22px;pointer-events:none}
+.msg-bubble[data-message-ref]:focus-visible,.defect-history .entry[data-defect-entry]:focus-visible{outline:2px solid #b92824;outline-offset:2px}
+.message-actions-dialog{width:min(92vw,380px);max-height:85dvh;padding:14px;border:1px solid #e1c1b9;border-radius:18px;background:#fff;color:#27313a;overflow:auto;box-shadow:0 12px 40px #08163233}
+.message-actions-dialog::backdrop{background:#08163266}.message-actions-dialog header{display:flex;align-items:center;gap:10px}.message-actions-dialog header strong{flex:1}.message-actions-dialog header button{width:44px;height:44px;border:0;border-radius:12px;background:#fff6f3;color:#b92824;font-size:24px}
+.message-actions-preview{margin:8px 0 12px;padding:8px 10px;border-left:3px solid #b92824;border-radius:5px;background:#fff7f2;font-size:.85rem;white-space:pre-wrap;max-height:110px;overflow:auto;overflow-wrap:anywhere}
+.message-actions-options{display:grid;gap:5px}.message-actions-options button,.message-actions-cancel{min-height:48px;padding:11px 13px;border:1px solid #e2e5e9;border-radius:12px;background:#fff;color:#27313a;font:inherit;text-align:left;touch-action:manipulation}
+.message-actions-options button:active{background:#f8e3df}.message-actions-options button:disabled{color:#6a737e;background:#f5f6f7}.message-actions-options small{display:block;margin-top:3px;font-size:.75rem;color:#6a737e}.message-actions-cancel{width:100%;margin-top:10px;text-align:center;color:#b92824;background:#fff6f3}
+@media(pointer:coarse){.msg-bubble[data-message-ref],.defect-history .entry[data-defect-entry]{user-select:none;-webkit-user-select:none}}
+@media(prefers-reduced-motion:reduce){.message-swiping{will-change:auto}}
+
+.message-actions-emojis{grid-template-columns:repeat(4,1fr)}.message-actions-emojis button{text-align:center;font-size:25px}

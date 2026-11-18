@@ -21,7 +21,7 @@ const server=createServer(async(req,res)=>{
     calls.push({path,body});let data={};
     if(path.endsWith('/environments/config'))data={test:true,production:true,isolatedPush:true};
     else if(path.endsWith('/push/web/config')||path.endsWith('/push/installation'))data={enabled:false};
-    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
+    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true},clients:{replies:true,reactions:true}}};
     else if(path.endsWith('/orders/list'))data={orders:[order]};
     else if(path.endsWith('/orders/get'))data={order};
     else if(path.endsWith('/defects/start'))data={documentRef:'defect-one',entries};
@@ -42,9 +42,9 @@ const server=createServer(async(req,res)=>{
       reactionResponses.push({res,data,accept(){Object.assign(message,data);res.end(JSON.stringify({success:true,data}));}});return;
     }
     else if(path.endsWith('/internal-chat/messages/send')){
-      const original=staffHistory.find(x=>x.messageRef===body.replyToMessageRef);
+      const list=staffHistory,original=list.find(x=>x.messageRef===body.replyToMessageRef);
       const message={messageRef:'synthetic-reply',authorName:'Synthetic employee',text:body.text,createdAt:'2026-11-17T11:00:00Z',replyToMessageRef:body.replyToMessageRef,replyTo:original?{messageRef:original.messageRef,authorName:original.authorName,text:original.text}:undefined};
-      if(!staffHistory.some(x=>x.messageRef===message.messageRef))staffHistory.push(message);data={message};
+      if(!list.some(x=>x.messageRef===message.messageRef))list.push(message);data={message};
     }
     else if(/\/(files|messages)\/send$/.test(path)){held.push(res);return;}
     res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data}));return;
@@ -64,6 +64,16 @@ try{
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
   const wait=expression=>evaluate('new Promise((resolve,reject)=>{const t=setInterval(()=>{if('+expression+'){clearInterval(t);resolve(true)}},25);setTimeout(()=>{clearInterval(t);reject(Error("Missing state: "+'+JSON.stringify(expression)+'))},8000)})');
   const click=selector=>evaluate('document.querySelector('+JSON.stringify(selector)+').click()');
+  const gesture=async(selector,kind='hold')=>{
+    await evaluate('document.querySelector('+JSON.stringify(selector)+').scrollIntoView({block:"center"})');await settle();
+    const point=await evaluate('(()=>{const r=document.querySelector('+JSON.stringify(selector)+').getBoundingClientRect();return {x:r.x+r.width*.7,y:Math.max(180,Math.min(innerHeight-100,r.y+r.height/2))}})()');
+    await send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...point,id:1}]});
+    if(kind==='hold')await new Promise(r=>setTimeout(r,580));
+    else for(let n=1;n<=6;n++)await send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:point.x-n*12,y:point.y,id:1}]});
+    await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await settle();
+  };
+  const menu=async ref=>{await gesture('.msg-bubble[data-message-ref="'+ref+'"]');await wait('document.querySelector("#messageActionsDialog[open]")');};
+  const reaction=async ref=>{await menu(ref);await click('[data-message-choice="reaction"]');await wait('document.querySelector(".message-actions-emojis")');await click('[data-message-choice="👍"]');};
   const settle=()=>evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   const draft=async value=>{await evaluate('(()=>{const t=document.getElementById("msgDraft");t.value='+JSON.stringify(value)+';t.dispatchEvent(new Event("input",{bubbles:true}));})()');await settle();return evaluate('document.getElementById("msgDraft").getBoundingClientRect().height');};
   const queue=()=>evaluate("new Promise((resolve,reject)=>{const r=indexedDB.open('itus-operation-queue');r.onsuccess=()=>{const db=r.result,q=db.transaction('operations','readonly').objectStore('operations').getAll();q.onsuccess=()=>{resolve(q.result.map(x=>({id:x.id,requestId:x.requestId,body:x.body,scope:x.scope,method:x.method})));db.close()};q.onerror=()=>reject(q.error)}})");
@@ -78,7 +88,10 @@ try{
     await click('[data-action="msg-source"][data-source="'+source+'"]');await wait('document.querySelector("[data-action=msg-open]")');
     if(source==='clients')assert.equal(await evaluate('document.querySelector("[data-action=msg-open]").dataset.ref'),'client-one','a new client without messages remains below an existing conversation');
     await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await wait('document.querySelectorAll(".msg-bubble").length>10');
-    assert.equal(await evaluate('Boolean(document.querySelector("[data-action=msg-reply]"))'),source==='staff');
+    assert.equal(await evaluate('Boolean(document.querySelector("[data-action=msg-reply]"))'),false,'no permanent action buttons');
+    await gesture('.msg-bubble[data-message-ref="message-54"]','swipe');
+    if(source==='staff'){assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true,'internal swipe selects quote');await click('[data-action="msg-reply-cancel"]');}
+    else{assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.trim()'),'');assert.equal(await evaluate('Boolean(document.querySelector(".message-swiping"))'),false);await menu('message-54');assert.equal(await evaluate('Boolean(document.querySelector("[data-message-choice=reply],[data-message-choice=reaction]"))'),false,'client menu has no excluded actions');await screenshot('client-forward-menu');await click('[data-message-choice="cancel"]');}
     await draft('АБВ');await evaluate('document.getElementById("msgDraft").setSelectionRange(1,2)');await click('[data-action="msg-emoji"]');await click('[data-action="msg-insert-emoji"][data-emoji="😂"]');
     assert.equal(await evaluate('document.getElementById("msgDraft").value'),'А😂В','emoji replaces the selected range');
     const initial=await draft('');await evaluate('window.__draftNode=document.getElementById("msgDraft");document.querySelector(".msg-history").scrollTop=120;window.__historyTop=document.querySelector(".msg-history").scrollTop');
@@ -100,29 +113,48 @@ try{
   await click('[data-action="msg-open"][data-ref="client-one"]');await wait('document.querySelector("#msgDraft")');await click('[data-action="msg-chat-settings"]');await wait('document.querySelector("[data-action=msg-mute]")');await click('[data-action="msg-mute"]');await wait('document.querySelector("[data-action=msg-chat-settings]").textContent.includes("🔕")');assert.deepEqual(muted,[{source:'clients',ref:'client-one'}]);
   assert.equal(await evaluate('ITUS_CHAT_PREFERENCES_CLIENT.status("staff","client-one").muted'),false);
   await click('[data-action="msg-chat-settings"]');await click('[data-action="msg-mute"]');await wait('document.querySelector("[data-action=msg-chat-settings]").textContent.includes("🔔")');assert.equal(muted.length,0);
-  await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="staff"]');await click('[data-action="msg-open"]');await wait('document.querySelector("[data-action=msg-reply]")');
-  await click('[data-action="msg-reply"][data-ref="message-54"]');assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true);
+  await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="staff"]');await click('[data-action="msg-open"]');await wait('document.querySelector(".msg-bubble")');
+  await menu('message-54');await click('[data-message-choice="reply"]');assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true);
   await draft('Synthetic reply text');await evaluate('(()=>{const b=document.querySelector("[data-action=msg-send]");b.click();b.click()})()');
   await wait('document.querySelector(".msg-quote")');
   const sent=calls.filter(x=>x.path.endsWith('/internal-chat/messages/send'));assert.equal(sent.length,1);assert.equal(sent[0].body.replyToMessageRef,'message-54');
   assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent'), '');
-  await draft('Keep while reacting');await click('[data-action="msg-reactions"][data-ref="message-54"]');await evaluate(`(()=>{const b=[...document.querySelectorAll('[data-action=msg-react]')].find(x=>x.dataset.ref==='message-54'&&x.dataset.emoji==='👍');b.click();b.click()})()`);
+  await draft('Keep while reacting');await menu('message-54');await click('[data-message-choice="reaction"]');await wait('document.querySelector(".message-actions-emojis")');await evaluate(`(()=>{const b=document.querySelector('[data-message-choice="👍"]');b.click();b.click()})()`);
   for(let n=0;n<100&&!reactionResponses.length;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,1);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).length,1);
   assert.equal(await evaluate('document.querySelector("#msgDraft").value'),'Keep while reacting');assert.equal(await evaluate('document.querySelector(".msg-reaction-count")===null'),true,'unconfirmed reaction is not presented as saved');
   reactionResponses[0].accept();await wait('document.querySelector(".msg-reaction-count")');
   await click('[data-action="msg-back"]');await click('[data-action="msg-open"]');
   try{await wait('document.querySelector(".msg-reaction-count")');}catch(error){console.log(JSON.stringify({stage:'reopen-reactions',remote:staffHistory.find(x=>x.messageRef==='message-54'),calls:calls.slice(-5),dom:await evaluate('document.querySelector(".msg-conversation").textContent.slice(-1800)')}));throw error;}
-  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  await reaction('message-54');
   for(let n=0;n<100&&reactionResponses.length<2;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,2);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).at(-1).body.emoji,'');
   reactionResponses[1].accept();await wait('!document.querySelector(".msg-reaction-count")');
-  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  await reaction('message-54');
   for(let n=0;n<100&&reactionResponses.length<3;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,3);
   reactionResponses[2].res.writeHead(422,{'Content-Type':'application/json'}).end(JSON.stringify({success:false,error:{code:'SYNTHETIC_REJECTED',message:'Synthetic reaction rejection'}}));
   await wait('document.querySelector("#toast").textContent.includes("Synthetic reaction rejection")');assert.equal(await evaluate('document.querySelector(".msg-reaction-count")===null'),true);
-  await click('[data-action="msg-reactions"][data-ref="message-54"]');await click('[data-action="msg-react"][data-ref="message-54"][data-emoji="👍"]');
+  await reaction('message-54');
   for(let n=0;n<100&&reactionResponses.length<4;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,4);
   const reactionCalls=calls.filter(x=>x.path.endsWith('/messages/react'));assert.equal(reactionCalls.at(-1).body.requestId,reactionCalls.at(-2).body.requestId,'manual retry keeps the unconfirmed reaction identity');
   reactionResponses[3].accept();await wait('document.querySelector(".msg-reaction-count")');await draft('');await screenshot('internal-reply-reactions');
+  // Desktop alternatives use the same menu, and Back dismisses it first.
+  await evaluate(`document.querySelector('.msg-bubble[data-message-ref="message-54"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`);
+  await wait('document.querySelector("#messageActionsDialog[open]")');await screenshot('message-hold-menu');assert.equal(await evaluate('ITUS_BACK()'),true);
+  await evaluate(`document.querySelector('.msg-bubble[data-message-ref="message-54"]').dispatchEvent(new KeyboardEvent('keydown',{key:'F10',shiftKey:true,bubbles:true,cancelable:true}))`);
+  await wait('document.querySelector("#messageActionsDialog[open]")');await click('[data-message-choice="cancel"]');
+  await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="clients"]');await click('[data-action="msg-open"][data-ref="client-one"]');await wait('document.querySelector(".msg-bubble")');
+  await gesture('.msg-bubble[data-message-ref="message-54"]','swipe');assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.trim()'),'');
+  await menu('message-54');await click('[data-message-choice="forward"]');await wait('document.querySelector("#messageForwardDialog[open]")');await click('#messageForwardDialog [data-forward-action="topics"]');await wait(`document.querySelector('#messageForwardDialog [data-ref="staff:staff-one"]')`);
+  assert.equal(await evaluate(`Boolean(document.querySelector('#messageForwardDialog [data-ref="clients:client-one"]'))`),false,'source chat excluded');
+  const sendsBefore=calls.filter(x=>x.path.endsWith('/internal-chat/messages/send')).length;await click('#messageForwardDialog [data-forward-action="recipient"][data-ref="staff:staff-one"]');assert.equal(calls.filter(x=>x.path.endsWith('/internal-chat/messages/send')).length,sendsBefore);
+  await click('#messageForwardDialog [data-forward-action="send"]');await wait('!document.querySelector("#messageForwardDialog").open');
+  for(let n=0;n<100&&calls.filter(x=>x.path.endsWith('/internal-chat/messages/send')).length===sendsBefore;n++)await new Promise(r=>setTimeout(r,20));
+  const forwardedMessage=calls.filter(x=>x.path.endsWith('/internal-chat/messages/send')).at(-1);assert.equal(forwardedMessage.body.groupRef,'staff-one');assert.equal(forwardedMessage.body.text,'Synthetic history line 54');assert.ok(!forwardedMessage.body.replyToMessageRef&&!forwardedMessage.body.authorName);
+  await click('[data-action="msg-back"]');await click('[data-action="msg-source"][data-source="staff"]');await click('[data-action="msg-open"]');await wait('document.querySelector(".msg-bubble")');
+  await menu('message-54');await click('[data-message-choice="forward"]');await wait('document.querySelector("#messageForwardDialog[open]")');await click('#messageForwardDialog [data-forward-action="topics"]');await wait(`document.querySelector('#messageForwardDialog [data-ref="clients:client-two"]')`);
+  await click('#messageForwardDialog [data-forward-action="recipient"][data-ref="clients:client-two"]');await click('#messageForwardDialog [data-forward-action="send"]');await wait('!document.querySelector("#messageForwardDialog").open');
+  for(let n=0;n<100&&!held.length;n++)await new Promise(r=>setTimeout(r,20));assert.equal(held.length,1);const clientForward=calls.filter(x=>x.path.endsWith('/clients/messages/send')).at(-1);assert.equal(clientForward.body.text,'Synthetic history line 54');assert.ok(!clientForward.body.replyToMessageRef);
+  for(const response of held.splice(0))response.end('{"success":true,"data":{}}');for(let n=0;n<100&&(await queue()).length;n++)await new Promise(r=>setTimeout(r,20));assert.equal((await queue()).length,0);
+  assert.equal(calls.filter(x=>x.path.endsWith('/clients/messages/react')).length,0);assert.ok(calls.filter(x=>x.path.includes('/clients/')&&/\/(files|messages)\/send$/.test(x.path)).every(x=>!x.body.replyToMessageRef));
   // Each role opens an existing document. Media is an independent top layer,
   // never a replacement of the defect sheet or its unsent draft.
   for(const role of ['mp','executor','tech']){
@@ -140,6 +172,10 @@ try{
       assert.equal(await evaluate('document.getElementById("overlay").classList.contains("hidden")'),false);
     }
     assert.equal(calls.filter(x=>x.path.endsWith('/defects/start')).length,before,'closing media never reloads/creates a document');
+    await gesture('.defect-history .entry[data-defect-entry="0"]');await wait('document.querySelector("#messageActionsDialog[open]")');
+    assert.equal(await evaluate('ITUS_BACK()'),true);assert.equal(await evaluate('document.getElementById("overlay").classList.contains("hidden")'),false);
+    await gesture('.defect-history .entry[data-defect-entry="1"]');await click('[data-message-choice="forward"]');await wait('document.querySelector("#defectForwardDialog[open]")');
+    assert.equal(await evaluate('document.getElementById("defectText").value'),'Unsent defect draft');await click('#defectForwardDialog [data-forward-action="close"]');
     await click('#closeSheetButton');
   }
   await click('[data-view="mp"]');await click('[data-action="open-defect-chat"]');await wait('document.querySelector("[data-action=select-defect-forward]")');
@@ -148,9 +184,9 @@ try{
   await click('[data-action="defect-media"][data-index="1"]');await wait('document.querySelector("#documentMediaViewer[open]")');await click('#documentMediaViewer button');
   assert.equal(await evaluate('document.querySelectorAll("[data-action=select-defect-forward]:checked").length'),2);
   await click('[data-action="defect-forward"]');await wait('document.querySelector("[data-forward-action=topics]")');
-  assert.equal(held.length,0);await click('[data-forward-action="topics"]');await wait('document.querySelectorAll("[data-forward-action=recipient]").length===2');
+  assert.equal(held.length,0);await click('[data-forward-action="topics"]');await wait('document.querySelectorAll("[data-forward-action=recipient]").length===3');
   assert.equal(await evaluate('document.querySelector("[data-forward-action=send]")===null'),true,'no implicit recipient');
-  await click('[data-forward-action="recipient"][data-ref="client-two"]');assert.equal(held.length,0);
+  await click('[data-forward-action="recipient"][data-ref="clients:client-two"]');assert.equal(held.length,0);
   await evaluate('(()=>{const button=document.querySelector("[data-forward-action=send]");button.click();button.click();})()');
   await wait('!document.querySelector("#defectForwardDialog").open');
   for(let n=0;n<160&&held.length<2;n++)await new Promise(r=>setTimeout(r,25));assert.equal(held.length,2);
@@ -178,4 +214,5 @@ try{
   await evaluate('__testForward.toggle(0,true);__testForward.open();__fakeContext={...__fakeContext,session:{scope:"test|another",generation:2}}');await click('#defectForwardDialog[open] [data-forward-action="topics"]');await wait('document.querySelector("#defectForwardDialog[open] [role=alert]")');assert.equal(await evaluate('__enqueued.length'),1);await evaluate('__testForward.close()');
   console.log('Chat/defect browser: both composers grow/shrink and preserve cursor/history/draft; media retains document in MP/executor/tech; explicit client forwarding saves exact selected bytes once, preserves IDs on preparation failure and blocks owner changes.');
   await send('Browser.close');socket.close();
+}catch(error){console.error('Synthetic browser failure:',error.message,stderr.slice(-1800));throw error;
 }finally{socket?.close();child.kill();for(const response of held)response.destroy();for(const response of reactionResponses)response.res.destroy();server.closeAllConnections();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}

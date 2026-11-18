@@ -12,6 +12,7 @@
     let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={},refreshPending={};
     let replies={},reactionBusy=new Set(),reactionAttempts={};
     const chatCapabilities=()=>options.chatCapabilities?.()||{};
+    const capabilities=(s=source)=>s==='staff'?chatCapabilities():{replies:false,reactions:false};
     const chatPreferences=()=>options.chatPreferences?.();
     const emojis=()=>root.ITUS_CHAT_POLICY?.emojis||['👍','❤️','😂','😮','😢','🙏','✅','👎'];
     const blobUrls=new Map();
@@ -27,6 +28,61 @@
     const endpoints=s=>s==='clients'?'/clients':'/internal-chat';
     const params=(s,id)=>s==='clients'?{topicRef:id,topicId:id}:{groupRef:id,groupId:id};
     const newMessageId=()=>root.crypto.randomUUID?root.crypto.randomUUID():String(Date.now());
+    let ownActionsMenu=null,messageForward=null,forwardContext=null;
+    const actionsMenu=()=>options.actionsMenu?.()||(ownActionsMenu||=root.ITUS_MESSAGE_ACTIONS?.create({valid:ctx=>ctx.valid(),toast}));
+    function closeActions(){gestures?.cancel();actionsMenu()?.close();messageForward?.close();forwardContext=null;}
+    function actionContext(node){
+      if(!visible||!selected||!permitted(source))return null;
+      const message=cache[selectedKey()]?.find(item=>item.id===node.dataset.messageRef);
+      if(!message)return null;
+      const s=source,id=selected,generation=epoch,selection=selectionEpoch,who=owner(),scope=outboxScope();
+      return {source:s,ref:id,messageRef:message.messageRef,message:{...message,attachments:(message.attachments||[]).map(file=>({...file}))},
+        preview:message.text||message.attachments?.[0]?.fileName||'Сообщение',
+        valid:()=>visible&&generation===epoch&&selection===selectionEpoch&&who===owner()&&scope===outboxScope()&&s===source&&id===selected&&permitted(s)};
+    }
+    function selectReply(ctx){
+      if(!ctx?.valid()||ctx.source!=='staff')return;
+      if(!ctx.message.hasServerMessageRef)return toast('1С не вернула идентификатор сообщения',true);
+      if(!capabilities(ctx.source,ctx.ref).replies)return toast('Ответы пока не поддерживаются этим чатом',true);
+      const m=ctx.message;replies[key(ctx.source,ctx.ref)]={messageRef:m.messageRef,author:m.author,text:m.text,fileName:m.attachments?.[0]?.fileName};
+      paint();document.getElementById('msgDraft')?.focus({preventScroll:true});
+    }
+    function reactionMenu(ctx){
+      if(!ctx?.valid()||ctx.source!=='staff')return;
+      actionsMenu()?.open(ctx,emojis().map(emoji=>({id:emoji,label:emoji,run:()=>react(ctx.messageRef,emoji)})),{title:'Реакция на сообщение',emojiGrid:true});
+    }
+    function forwardMessage(ctx){
+      if(!ctx?.valid()||!options.forwardRecipients||!options.forwardAttachment)return;
+      if(!messageForward)messageForward=root.ITUS_DEFECT_FORWARDING?.create({dialogId:'messageForwardDialog',id:newMessageId,toast,
+        context:()=>forwardContext,valid:context=>context.valid()&&options.forwardValid?.(context)!==false,
+        topics:context=>options.forwardRecipients(context),attachment:(...args)=>options.forwardAttachment(...args),
+        enqueue:(_context,items,target)=>enqueueForwardBatch(items,target)});
+      if(!messageForward)return;
+      const m=ctx.message,entries=[];
+      if(m.text)entries.push({entryRef:ctx.messageRef+':text',type:'text',text:m.text});
+      for(const file of m.attachments||[]){
+        const cached=mediaMemory.get(attachmentKey(ctx.source,ctx.ref,ctx.messageRef,file));
+        entries.push({entryRef:ctx.messageRef,type:/^image\//i.test(file.mimeType||'')?'photo':/^video\//i.test(file.mimeType||'')?'video':'file',file:{...file,...(cached?.blob?{contentBlob:cached.blob}:{})}});
+      }
+      forwardContext={...ctx,session:options.forwardSession?.()||{scope:outboxScope(),generation:epoch},title:current()?.title||'Сообщение',entries};
+      messageForward.openEntries(entries.map((_,index)=>index));
+    }
+    async function copyText(value){
+      if(!root.navigator?.clipboard?.writeText)return toast('Копирование недоступно в этом браузере',true);
+      await root.navigator.clipboard.writeText(value);toast('Текст скопирован');
+    }
+    function openActions(ctx){
+      if(!ctx?.valid())return;const caps=capabilities(ctx.source,ctx.ref),real=ctx.message.hasServerMessageRef;
+      actionsMenu()?.open(ctx,[
+        ...(ctx.source==='staff'?[
+          {id:'reply',label:'Ответить',disabled:!real||!caps.replies,hint:!caps.replies?'Пока не поддерживается этим чатом':'',run:selectReply},
+          {id:'reaction',label:'Реакция',disabled:!real||!caps.reactions||reactionBusy.has(key(ctx.source,ctx.ref)+':'+ctx.messageRef),hint:!caps.reactions?'Пока не поддерживается этим чатом':'',run:reactionMenu}
+        ]:[]),
+        {id:'forward',label:'Переслать в другой чат',disabled:!options.forwardRecipients||(!ctx.message.text&&!ctx.message.attachments?.length),run:forwardMessage},
+        ...(ctx.message.text?[{id:'copy',label:'Копировать текст',run:()=>copyText(ctx.message.text)}]:[])
+      ]);
+    }
+    const gestures=root.ITUS_MESSAGE_GESTURES?.create({selector:'.msg-bubble[data-message-ref]',resolve:actionContext,hold:openActions,reply:selectReply,canReply:ctx=>ctx.source==='staff'});
     function updateLastMessage(item,message,s,attachmentFallback='Вложение'){
       if(!item||!message)return;
       if(s==='clients'){
@@ -128,17 +184,17 @@
     }
     async function enqueueForwardBatch(items,target){
       if(!outbox?.prepareBatch)throw new Error('Постоянная очередь чатов недоступна');
-      const s='clients',id=String(target?.ref||''),session=epoch,scope=outboxScope();
-      if(!id||(target.source&&target.source!=='clients')||!permitted(s)||!Array.isArray(items)||!items.length)throw new Error('Нет доступа к выбранному клиентскому чату');
+      const s=target?.source||'clients',id=String(target?.ref||''),session=epoch,scope=outboxScope();
+      if(!id||!['clients','staff'].includes(s)||!permitted(s)||!Array.isArray(items)||!items.length)throw new Error('Нет доступа к выбранному чату');
       ensureOutboxSession(session,scope);
       const seen=new Set(),definitions=items.map(item=>{
         const clientMessageId=String(item.clientMessageId||''),requestId=String(item.requestId||'');
-        if(!clientMessageId||!requestId||seen.has(clientMessageId)||!['text','photo'].includes(item.kind))throw new Error('Некорректный пакет пересылки');
+        if(!clientMessageId||!requestId||seen.has(clientMessageId)||!['text','photo','video','file'].includes(item.kind))throw new Error('Некорректный пакет пересылки');
         seen.add(clientMessageId);
-        if(item.kind==='text'&&!String(item.text||'').trim()||item.kind==='photo'&&!item.file)throw new Error('Пустая запись для пересылки');
-        const file=item.kind==='photo';
-        return {id:`${scope}:chat:${clientMessageId}`,scope,kind:'chat',documentKey:`chat:${s}:${id}`,method:'/clients'+(file?'/files/send':'/messages/send'),requestId,
-          body:{...params(s,id),clientMessageId,...(file?{kind:'photo',file:item.file}:{text:String(item.text)})}};
+        if(item.kind==='text'&&!String(item.text||'').trim()||item.kind!=='text'&&!item.file)throw new Error('Пустая запись для пересылки');
+        const file=item.kind!=='text';
+        return {id:`${scope}:chat:${clientMessageId}`,scope,kind:'chat',documentKey:`chat:${s}:${id}`,method:endpoints(s)+(file?'/files/send':'/messages/send'),requestId,
+          body:{...params(s,id),clientMessageId,...(file?{kind:item.kind,file:item.file}:{text:String(item.text)})}};
       });
       const operations=await outbox.prepareBatch(definitions);ensureOutboxSession(session,scope);
       await refreshOutbox();startOutbox();return operations;
@@ -231,15 +287,14 @@
       return `<button class="msg-quote" data-action="msg-jump-reply" data-ref="${escape(message.replyToMessageRef)}"><b>${escape(original?.author||'Ответ на сообщение')}</b><span>${escape(original?.text||original?.fileName||'Исходное сообщение недоступно')}</span></button>`;
     }
     function messageActions(message){
-      if(source!=='staff'||!message.hasServerMessageRef)return '';
-      const cap=chatCapabilities(),ref=escape(message.messageRef),busy=reactionBusy.has(key(source,selected)+':'+message.messageRef);
+      if(source!=='staff')return '';
       const summary=(message.reactions||[]).map(x=>`<span class="msg-reaction-count">${escape(x.emoji)} ${Number(x.count)}</span>`).join('');
-      return `<div class="msg-message-actions">${cap.replies?`<button data-action="msg-reply" data-ref="${ref}">Ответить</button>`:''}${cap.reactions?`<button data-action="msg-reactions" data-ref="${ref}" aria-label="Поставить реакцию">☺</button>`:''}${summary}</div>${cap.reactions?`<div class="msg-reaction-picker" data-reactions-ref="${ref}" hidden>${emojis().map(emoji=>`<button data-action="msg-react" data-ref="${ref}" data-emoji="${emoji}" aria-pressed="${message.myReaction===emoji}" ${busy?'disabled':''}>${emoji}</button>`).join('')}</div>`:''}`;
+      return summary?`<div class="msg-message-actions">${summary}</div>`:'';
     }
     function replyRef(s,id,target){
       const value=target&&Object.prototype.hasOwnProperty.call(target,'replyToMessageRef')?target.replyToMessageRef:replies[key(s,id)]?.messageRef;
-      if(s!=='staff'||!value)return '';
-      if(chatCapabilities().replies!==true)throw Error('1С пока не подтверждает поддержку ответов');
+      if(!value)return '';
+      if(capabilities(s,id).replies!==true)throw Error('Ответы пока недоступны для этого чата');
       return String(value);
     }
     function clearReply(s,id,ref){if(ref&&replies[key(s,id)]?.messageRef===ref)delete replies[key(s,id)];}
@@ -248,14 +303,14 @@
       const button=document.querySelector('[data-action="msg-chat-settings"]');if(button){const value=chatPreferences()?.status(source,selected);button.textContent=value?.pending?'◷':value?.muted?'🔕':'🔔';button.setAttribute('aria-label',value?.pending?'Настройка ожидает подтверждения Timeweb':'Уведомления этого чата');}
     }
     async function react(ref,emoji){
-      if(source!=='staff'||!chatCapabilities().reactions||!emojis().includes(emoji))return;
+      if(!capabilities().reactions||!emojis().includes(emoji))return;
       const s=source,id=selected,k=key(s,id),message=cache[k]?.find(x=>x.messageRef===ref&&x.hasServerMessageRef),lock=k+':'+ref;
       if(!message||reactionBusy.has(lock))return;
       const desired=message.myReaction===emoji?'':emoji,signature=lock+':'+desired;
       const requestId=reactionAttempts[signature]||(reactionAttempts[signature]=newMessageId()),generation=epoch;
       reactionBusy.add(lock);paintHistory();
       try{
-        const response=await call('/internal-chat/messages/react',{...params(s,id),messageRef:ref,emoji:desired,requestId},{silent:true,requestId});
+        const response=await call(endpoints(s)+'/messages/react',{...params(s,id),messageRef:ref,emoji:desired,requestId},{silent:true,requestId});
         if(generation!==epoch)return;
         const data=response.data||response;
         if(data.messageRef!==ref||data.myReaction!==desired||!Array.isArray(data.reactions))throw Error('1С не подтвердила реакцию');
@@ -276,7 +331,7 @@
         // derive an author from the logged-in reader or from local state.
         const author=m.author || 'Отправитель не указан';
         const knownStatus={sent:'Отправлено',delivered:'Получено',read:'Прочитано',received:'Получено',отправлено:'Отправлено',получено:'Получено',прочитано:'Прочитано'}[m.status]||'';
-        return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${replyHtml(m)}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div>${messageActions(m)}</article>`;
+        return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}" tabindex="0" aria-keyshortcuts="Shift+F10"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${replyHtml(m)}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div>${messageActions(m)}</article>`;
       }).join('');
       return html || `<div class="msg-empty">${busy[k]?'Загрузка сообщений…':'Сообщений пока нет'}</div>`;
     }
@@ -388,7 +443,7 @@
         }catch(e){errors[key(source,id)]=e.message;toast(e.message,true);return;}
         finally{openingContact=false;}
       }
-      selectionEpoch++;selected=id;if(!current()){selected='';return paint();}paint({bottom:true});
+      closeActions();selectionEpoch++;selected=id;if(!current()){selected='';return paint();}paint({bottom:true});
       // A cached thread is rendered immediately, but switching to a conversation
       // must also fetch its current light-weight history.  Attachments stay lazy
       // and cached: this request explicitly does not include file content.
@@ -517,7 +572,7 @@
       if(!url)return toast('1С не передала содержимое или ссылку на файл',true);
       display(url);
     }
-    function back(){if(!visible||!selected)return false;selectionEpoch++;selected='';paint();return true;}
+    function back(){if(actionsMenu()?.back()||messageForward?.back())return true;if(!visible||!selected)return false;closeActions();selectionEpoch++;selected='';paint();return true;}
     async function enter(preferred){visible=true;if(preferred&&permitted(preferred)&&source!==preferred){selectionEpoch++;source=preferred;selected='';}if(!permitted(source))source=allowed()[0]||'clients';paint();await loadList(source);if(selected&&current())await loadMessages(source,selected);if(outbox?.list){await refreshOutbox();startOutbox();}}
     async function handle(action,button){
       if(action==='msg-outbox-show'){await refreshOutbox();options.sheet('Неотправленные сообщения','Сохранены на этом устройстве для текущего пользователя',outboxRows(outboxItems)||'<p>Все сообщения отправлены</p>');return;}
@@ -528,8 +583,8 @@
         catch(error){if(session===epoch){toast(error.message,true);await refreshOutbox();}}
         return;
       }
-      if(action==='msg-new-chat'){if(!permitted('staff'))return;selectionEpoch++;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
-      if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;selectionEpoch++;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
+      if(action==='msg-new-chat'){if(!permitted('staff'))return;closeActions();selectionEpoch++;source='staff';section='contacts';selected='';query='';contactsLoaded=false;paint();await loadContacts();return;}
+      if(action==='msg-source'){const s=button.dataset.source;if(!permitted(s))return;closeActions();selectionEpoch++;source=s;section='chats';selected='';query='';paint();if(!loaded[s])await loadList(s);}
       if(action==='msg-section'){section=button.dataset.section;paint();if(section==='contacts'&&source==='staff')await loadContacts();}
       if(action==='msg-open')await open(button.dataset.ref);
       if(action==='msg-back')back();
@@ -554,7 +609,7 @@
         input.value=input.value.slice(0,start)+emoji+input.value.slice(end);drafts[selectedKey()]=input.value;
         document.querySelector('.msg-emoji-picker').hidden=true;input.focus({preventScroll:true});input.setSelectionRange(start+emoji.length,start+emoji.length);resizeDraft();
       }
-      if(action==='msg-reply'&&source==='staff'&&chatCapabilities().replies){
+      if(action==='msg-reply'&&capabilities().replies){
         const message=cache[selectedKey()]?.find(x=>x.messageRef===button.dataset.ref&&x.hasServerMessageRef);if(message){replies[selectedKey()]={messageRef:message.messageRef,author:message.author,text:message.text,fileName:message.attachments?.[0]?.fileName};paint();document.getElementById('msgDraft')?.focus();}
       }
       if(action==='msg-reply-cancel'){delete replies[selectedKey()];const bar=document.querySelector('.msg-reply-draft');if(bar)bar.innerHTML='';resize();}
@@ -565,7 +620,7 @@
         const target=[...document.querySelectorAll('.msg-bubble')].find(x=>x.dataset.messageRef===button.dataset.ref);target?.scrollIntoView?.({block:'center',behavior:'smooth'});
       }
       if(action==='msg-reactions'){
-        const picker=[...document.querySelectorAll('[data-reactions-ref]')].find(x=>x.dataset.reactionsRef===button.dataset.ref);if(picker)picker.hidden=!picker.hidden;
+        const node=[...document.querySelectorAll('.msg-bubble')].find(x=>x.dataset.messageRef===button.dataset.ref);const ctx=node&&actionContext(node);if(ctx&&capabilities().reactions)reactionMenu(ctx);
       }
       if(action==='msg-react')await react(button.dataset.ref,button.dataset.emoji);
       if(action==='msg-send')await send();
@@ -591,7 +646,7 @@
         try{await call('/clients/polls/vote',{...params('clients',selected),messageRef:button.closest('.msg-bubble')?.dataset?.messageRef||'',option:button.dataset.value},{silent:true});await loadMessages('clients',selected,{refresh:true});toast('Ответ сохранён');}
         catch(e){toast(e.message,true);}
       }
-      const target={type:'messenger',source,ref:selected,replyToMessageRef:source==='staff'?replies[selectedKey()]?.messageRef||'':''};
+      const target={type:'messenger',source,ref:selected,replyToMessageRef:replies[selectedKey()]?.messageRef||''};
       if(action==='msg-photo'||action==='msg-video'){
         if(options.media) options.media(target);
         else if(action==='msg-photo')photo({...target,kind:'photo'});
@@ -636,8 +691,8 @@
     return {enter,paint,back,handle,openThread,upload:(file,target)=>send(file,target.kind,target),enqueueMediaBatch,enqueueForwardBatch,refreshOutbox,confirmedOutbox,
       refreshInternalThreadFromPush,refreshVisibleInternalThread,
       recoverVisibleReads,preferencesChanged:paintPreferences,
-      leave(){selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
-      reset(){clearTimeout(listRefreshTimer);listRefreshTimer=null;void clearPersistentCache();epoch++;selectionEpoch++;outboxRevision++;outboxItems=[];outboxRunning=null;outboxRerun=false;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};replies={};reactionBusy.clear();reactionAttempts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
+      leave(){closeActions();selectionEpoch++;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();},
+      reset(){closeActions();clearTimeout(listRefreshTimer);listRefreshTimer=null;void clearPersistentCache();epoch++;selectionEpoch++;outboxRevision++;outboxItems=[];outboxRunning=null;outboxRerun=false;visible=false;document.body.classList.remove('messenger-conversation');revokeMedia();mediaMemory.clear();mediaLoading.clear();restored.clear();records={clients:[],staff:[]};contacts=[];contactsLoaded=false;loaded={};listBusy={};listError={};cache={};busy={};errors={};drafts={};replies={};reactionBusy.clear();reactionAttempts={};sending={};counts={};attempts={};refreshPending={};selected='';query='';},
       async notify(event){
         if(!['new_messages','internal_chat_message','message_reaction_changed'].includes(event.type))return;
         loaded.clients=false;loaded.staff=false;
