@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fff2a7">
+  <title>Тренажёр 1С:Альфа-Авто 6.1</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section class="training-portal" id="trainingPortal" aria-label="Учебный центр мастера-приёмщика">
+    <header class="portal-topbar">
+      <div class="portal-brand"><span class="portal-logo">ЕА</span><div><strong>ЕвроАзия</strong><small>Учебный тренажёр мастера-приёмщика</small></div></div>
+      <div class="portal-progress"><span>0 из 3 уроков</span><i><b></b></i></div>
+    </header>
+    <main class="portal-main">
+      <section class="portal-hero">
+        <div><small>ВИДЕООБУЧЕНИЕ + ПРАКТИКА</small><h1>Работа с обращением клиента</h1><p>Сквозной маршрут: входящий звонок → событие → запись в календарь или передача в КО → обработка в Bitrix24.</p></div>
+        <div class="portal-route"><span>1С</span><b>→</b><span>Событие</span><b>→</b><span>Календарь / КО</span><b>→</b><span>Б24</span></div>
+      </section>
+      <section class="portal-content">
+        <aside class="portal-cards" id="portalCards">
+          <button class="portal-card portal-trainer-card" type="button" data-open-trainer>
+            <img src="assets/event-production.png" alt="Интерфейс тренажёра 1С">
+            <span>ПРАКТИКА</span><strong>Тренажёр 1С:Альфа-Авто 6.1</strong><p>Отработать действия самостоятельно в интерактивной учебной базе.</p>
+          </button>
+          <button class="portal-card active" type="button" data-portal-lesson="incoming">
+            <img src="assets/training/img/lesson1.jpg" alt="Урок 1">
+            <span>УРОК 1</span><strong>Входящий звонок → запись в календарь</strong><p>От входящего звонка до появления записи в календаре планирования.</p>
+          </button>
+          <button class="portal-card" type="button" data-portal-lesson="ko">
+            <img src="assets/training/img/lesson2.jpg" alt="Урок 2">
+            <span>УРОК 2</span><strong>Событие → задача в КО</strong><p>Как корректно передать обращение из 1С в коммерческий отдел.</p>
+          </button>
+          <button class="portal-card" type="button" data-portal-lesson="bitrix">
+            <img src="assets/training/img/lesson3.jpg" alt="Урок 3">
+            <span>УРОК 3</span><strong>Задача для КО в Bitrix24</strong><p>Что видит сотрудник КО после передачи задачи из 1С.</p>
+          </button>
+        </aside>
+        <section class="portal-player-panel">
+          <video id="portalVideo" controls playsinline preload="metadata" poster="assets/training/img/lesson1.jpg">
+            <source id="portalVideoSource" src="assets/training/video/01_incoming_call_calendar.mp4" type="video/mp4">
+            <track id="portalVideoTrack" kind="subtitles" srclang="ru" label="Русский" default src="assets/training/subtitles/01.vtt">
+          </video>
+          <div class="portal-caption" id="portalCaption">Рабочий стол первой линии CRM. При входящем звонке система создаёт событие с видом обращения «Входящий звонок».</div>
+          <div class="portal-info"><div><small id="portalLessonNo">УРОК 1</small><h2 id="portalLessonTitle">Входящий звонок → запись в календарь</h2><p id="portalLessonText">При входящем звонке вид обращения устанавливается автоматически: «Входящий звонок». В ручном режиме создания события система использует вид «Встреча».</p></div><button type="button" data-open-trainer>Перейти в тренажёр →</button></div>
+        </section>
+      </section>
+    </main>
+  </section>
+
+  <div class="app-shell portal-hidden" id="trainerApp">
+    <header class="trainer-header">
+      <div class="trainer-title">
+        <span class="trainer-badge">ПРОМЕЖУТОЧНЫЙ ЭКЗАМЕН</span>
+        <div><strong>1С:Альфа-Авто 6.1</strong><small>8 учебных модулей · 4 сквозных экзамена · задачи CRM</small></div>
+      </div>
+      <div class="mode-tabs" role="tablist" aria-label="Режим работы">
+        <button class="mode-tab active" id="trainingMode" type="button" role="tab">Обучение и экзамены</button>
+        <button class="mode-tab" id="liveMode" type="button" role="tab">Все объекты · учебная база</button>
+      </div>
+      <button class="integration-button demo" id="integrationButton" type="button" title="Состояние обмена JSON с 1С"><span class="connection-dot"></span><span id="integrationLabel">1С · DEMO</span><small id="integrationPending">0</small></button>
+      <button class="home-button" id="homeButton" type="button" title="Вернуться на главную страницу">⌂ Главная</button>
+      <button class="learning-button" id="learningButton" type="button" title="Открыть видеоуроки по текущему процессу">▶ Видеообучение</button>
+      <button class="progress-button" id="progressButton" type="button">Прогресс <span id="progressPercent">0%</span></button>
+    </header>
+
+    <nav class="object-nav" id="objectNav" aria-label="Навигация по этапам и объектам"></nav>
+    <nav class="substage-nav hidden" id="subStageNav" aria-label="Этапы автоматической калькуляции"></nav>
+
+    <main class="main-layout">
+      <section class="work-area" aria-label="Рабочая область тренажёра">
+        <div class="view-toolbar">
+          <strong id="viewTitle">Сценарий экзамена</strong>
+          <span id="viewStatus">Последовательная отработка</span>
+          <button id="resetObjectButton" type="button">Сбросить объект</button>
+        </div>
+        <div class="object-screen" id="objectScreen" aria-live="polite"></div>
+      </section>
+
+      <aside class="coach-panel" aria-label="Подсказка и состояние">
+        <div class="coach-head"><span id="coachMode">Экзаменационный сценарий</span><span id="stepCounter">Шаг 1 из 1</span></div>
+        <div class="coach-body">
+          <h2 id="coachTitle">Начните работу</h2>
+          <p id="coachText">Выберите этап.</p>
+          <div class="coach-note" id="coachNote">Наведите курсор на элемент формы — появится краткая легенда.</div>
+          <div class="coach-actions">
+            <button class="primary" id="hintButton" type="button">Показать объект</button>
+            <button id="restartButton" type="button">Начать этап заново</button>
+          </div>
+          <div class="object-state" id="objectState"></div>
+        </div>
+      </aside>
+    </main>
+
+    <footer>Автономный экзаменационный контур. Данные хранятся только в браузере и не передаются в рабочую 1С.</footer>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop" role="presentation">
+    <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="integration.js"></script>
+  <script src="exam-history.js"></script>
+  <script src="app.js"></script>
+  <script src="portal.js"></script>
+</body>
+</html>
