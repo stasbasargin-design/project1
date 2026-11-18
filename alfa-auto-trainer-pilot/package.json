@@ -1,0 +1,1 @@
+{"name":"alfa-auto-trainer-pilot","version":"0.1.0","private":true,"description":"Сквозной учебный тренажёр по 1С Альфа-Авто 6.1 (демо)","scripts":{"test":"node --test tests/test-engine.js"},"engines":{"node":">=20"}}
