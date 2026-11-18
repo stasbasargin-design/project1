@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:alfa-auto-web:request:1.0",
+  "title": "Запрос WEB-приложения в 1С:Альфа-Авто",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "action", "sentAt", "client", "context", "payload"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "requestId": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "action": {
+      "type": "string",
+      "enum": ["session.bootstrap", "state.save", "workflow.execute", "events.pull"]
+    },
+    "sentAt": { "type": "string", "format": "date-time" },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "locale", "timezone"],
+      "properties": {
+        "id": { "const": "alfa-auto-service-workplace" },
+        "version": { "type": "string" },
+        "locale": { "const": "ru-RU" },
+        "timezone": { "type": "string" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["userId", "employeeRef", "organizationRef", "branchRef", "roles"],
+      "properties": {
+        "userId": { "type": "string" },
+        "employeeRef": { "type": "string" },
+        "organizationRef": { "type": "string" },
+        "branchRef": { "type": "string" },
+        "roles": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "session.bootstrap" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["localRevision", "capabilities"],
+            "properties": {
+              "localRevision": { "type": "integer", "minimum": 0 },
+              "capabilities": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "state.save" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["reason", "revision", "state"],
+            "properties": {
+              "reason": { "type": "string" },
+              "revision": { "type": "integer", "minimum": 0 },
+              "state": { "$ref": "state.schema.json" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "workflow.execute" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["command", "payload", "state"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "payload": { "type": "object" },
+              "state": { "$ref": "state.schema.json" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "action": { "const": "events.pull" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["cursor", "limit"],
+            "properties": {
+              "cursor": { "type": "string" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+name: Alfa-Auto 6.1 trainer static regression
+on:
+  push:
+    paths:
+      - 'alfa-auto-trainer-original/**'
+  pull_request:
+    paths:
+      - 'alfa-auto-trainer-original/**'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: alfa-auto-trainer-original
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check app.js
+      - run: node tests/smoke.cjs
+      - run: node tests/test-exam-history.cjs

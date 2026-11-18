@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:alfa-auto-web:response:1.0",
+  "title": "Ответ 1С WEB-приложению",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "ok", "serverTime"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "requestId": { "type": "string" },
+    "ok": { "type": "boolean" },
+    "serverTime": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "object",
+      "properties": {
+        "revision": { "type": "integer", "minimum": 0 },
+        "state": { "$ref": "state.schema.json" },
+        "userContext": { "type": "object" },
+        "events": { "type": "array", "items": { "type": "object" } },
+        "nextCursor": { "type": ["string", "integer"] }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "details": {}
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "ok": { "const": true } } }, "then": { "required": ["data"] } },
+    { "if": { "properties": { "ok": { "const": false } } }, "then": { "required": ["error"] } }
+  ]
+}

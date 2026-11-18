@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:alfa-auto-web:state:1.0",
+  "title": "Состояние рабочего места мастера-приёмщика",
+  "type": "object",
+  "required": ["schemaVersion", "revision", "directories", "documents"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "savedAt": { "type": "string", "format": "date-time" },
+    "progress": { "type": "array", "items": { "type": "string" } },
+    "directories": {
+      "type": "object",
+      "required": ["works", "parts", "counterparties", "cars"],
+      "properties": {
+        "works": { "type": "array", "items": { "$ref": "#/$defs/directoryItem" } },
+        "parts": { "type": "array", "items": { "$ref": "#/$defs/directoryItem" } },
+        "counterparties": { "type": "array", "items": { "$ref": "#/$defs/directoryItem" } },
+        "cars": { "type": "array", "items": { "$ref": "#/$defs/directoryItem" } }
+      }
+    },
+    "documents": {
+      "type": "object",
+      "required": ["event", "crmTask", "zn", "kp", "kpData", "customerOrder", "reservation", "supplierOrder", "production", "warehouseOrders", "max", "email"],
+      "additionalProperties": { "type": "object" },
+      "properties": {
+        "event": { "$ref": "#/$defs/document" },
+        "crmTask": { "$ref": "#/$defs/document" },
+        "zn": { "$ref": "#/$defs/document" },
+        "kp": { "$ref": "#/$defs/document" },
+        "kpData": { "$ref": "#/$defs/document" },
+        "quickPick": { "$ref": "#/$defs/document" },
+        "customerOrder": { "$ref": "#/$defs/document" },
+        "reservation": { "$ref": "#/$defs/document" },
+        "supplierOrder": { "$ref": "#/$defs/document" },
+        "production": { "$ref": "#/$defs/document" },
+        "warehouseOrders": { "$ref": "#/$defs/document" },
+        "express": { "$ref": "#/$defs/document" },
+        "max": { "$ref": "#/$defs/document" },
+        "email": { "$ref": "#/$defs/document" }
+      }
+    }
+  },
+  "$defs": {
+    "directoryItem": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "ref": { "type": "string", "description": "UUID/ссылка 1С в строковом виде" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "document": {
+      "type": "object",
+      "properties": {
+        "ref": { "type": "string" },
+        "number": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string" },
+        "rows": { "type": "array", "items": { "type": "object" } },
+        "works": { "type": "array", "items": { "type": "object" } },
+        "parts": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}
