@@ -1,1 +1,32 @@
-The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
+name: Expand Alfa-Auto trainer preview static assets
+on:
+  push:
+    branches:
+      - restore/alfa-auto-trainer-v13-1
+    paths:
+      - '.github/workflows/alfa-auto-preview-assets-expand.yml'
+      - 'alfa-auto-trainer-original/preview-assets.tar.gz'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out restoration branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Extract original screenshots and lesson posters
+        run: |
+          set -euo pipefail
+          cd alfa-auto-trainer-original
+          tar -xzf preview-assets.tar.gz
+          cd ..
+          git add alfa-auto-trainer-original/assets
+          if git diff --cached --quiet; then
+            echo 'Assets already present.'
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'trainer preview: add original static screenshot assets without internal videos'
+          git push origin HEAD:restore/alfa-auto-trainer-v13-1
