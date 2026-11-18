@@ -10,7 +10,7 @@ function memoryStore(){
   const records=new Map();
   return {records,async get(id){return records.has(id)?clone(records.get(id)):null;},async put(value){records.set(value.id,clone(value));},async delete(id){records.delete(id);},async list(scope){return [...records.values()].filter(value=>value.scope===scope).map(clone);},async putBatch(values){for(const value of values)records.set(value.id,clone(value));return values.map(clone);}};
 }
-function fixture({store=memoryStore(),sender=async()=>({success:true}),payload,permanent=true,readMessages}={}){
+function fixture({store=memoryStore(),sender=async()=>({success:true}),payload,permanent=true,readMessages,capabilities={}}={}){
   let uuid=0;
   const state={userId:'a',generation:0,scope(){return `https://test.invalid/api|${this.userId}`;}};
   const app={innerHTML:'',querySelector(){return null;},querySelectorAll(){return [];}};
@@ -30,7 +30,7 @@ function fixture({store=memoryStore(),sender=async()=>({success:true}),payload,p
     return sender({method,body});
   };
   const outbox={scope:()=>state.scope(),prepareBatch:values=>queue.prepareBatch(values),list:()=>queue.list(state.scope()),run:(...args)=>queue.run(...args),report:id=>reports.push(id)};
-  const messenger=scope.ITUS_MESSENGER.create({api:scope.ITUS_API,call,user:()=>({id:state.userId}),cacheOwner:()=>state.userId,allowed:()=>['clients','staff'],toast:(...args)=>toasts.push(args),filePayload:payload|| (async file=>({fileName:file.name,mimeType:file.type,contentBase64:file.name})),closeSheet(){},sheet(){},settings(){},...(permanent?{outbox}:{})});
+  const messenger=scope.ITUS_MESSENGER.create({api:scope.ITUS_API,call,user:()=>({id:state.userId}),cacheOwner:()=>state.userId,allowed:()=>['clients','staff'],chatCapabilities:()=>capabilities,toast:(...args)=>toasts.push(args),filePayload:payload|| (async file=>({fileName:file.name,mimeType:file.type,contentBase64:file.name})),closeSheet(){},sheet(){},settings(){},...(permanent?{outbox}:{})});
   return {scope,state,store,queue,messenger,outbox,app,handlers,toasts,reports,inputs,readCalls,mediaSlot};
 }
 const files=['one','two','three'].map(name=>({file:{name:`${name}.jpg`,type:'image/jpeg',size:123,lastModified:1},kind:'photo',uploadId:`upload-${name}`}));
@@ -158,4 +158,65 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
   assert.equal(f.store.records.size,1,'only the held file should remain');
   gate.resolve();await until(()=>f.store.records.size===0);
 }
-console.log('Chat outbox: durable complete batch, restore, stable IDs, 422 report/retry, owner isolation, independent text lane and error propagation passed');
+// Defect forwarding reuses the ordinary client outbox. All selected messages
+// must be durable before transport; a repeated click keeps exactly those IDs.
+{
+  const gate=defer(),calls=[],store=memoryStore();
+  const f=fixture({store,sender:async operation=>{calls.push(clone(operation));assert.equal(store.records.size,2);await gate.promise;return {success:true};}});
+  const items=[{kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'},
+    {kind:'photo',file:{fileName:'original.png',mimeType:'image/png',sizeBytes:1,contentBase64:'YQ==',clientFileId:'original-copy'},clientMessageId:'forward-photo',requestId:'request-photo'}];
+  const original=clone(items);
+  await f.messenger.enqueueForwardBatch(items,target);await until(()=>calls.length===2);
+  await f.messenger.enqueueForwardBatch(items,target);
+  assert.equal(store.records.size,2);assert.equal(calls.length,2);
+  assert.deepEqual(items,original);
+  assert.deepEqual(calls.map(x=>x.method).sort(),['/clients/files/send','/clients/messages/send']);
+  assert.ok(calls.every(x=>x.body.topicRef==='topic'&&x.documentKey==='chat:clients:topic'));
+  assert.equal(calls.find(x=>x.body.file).body.file.contentBase64,'YQ==');
+  assert.deepEqual(calls.map(x=>x.requestId).sort(),['request-photo','request-text']);
+  gate.resolve();await until(()=>store.records.size===0);
+}
+{
+  const f=fixture();
+  const item={kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'};
+  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'staff',ref:'staff'}));
+  await assert.rejects(f.messenger.enqueueForwardBatch([item,item],target));
+  await assert.rejects(f.messenger.enqueueForwardBatch([{...item,text:''}],target));
+  assert.equal(f.store.records.size,0,'invalid forwarding cannot partially enqueue');
+}
+{
+  const gate=defer();let sent=0;
+  const f=fixture({sender:async()=>{sent++;return {success:true};}});
+  const prepare=f.outbox.prepareBatch;
+  f.outbox.prepareBatch=async values=>{await gate.promise;return prepare(values);};
+  const pending=f.messenger.enqueueForwardBatch([{kind:'text',text:'Old owner',clientMessageId:'old-owner',requestId:'old-request'}],target);
+  f.messenger.reset();f.state.userId='b';f.state.generation++;gate.resolve();
+  await assert.rejects(pending,error=>error.code==='SESSION_CHANGED');
+  assert.equal(sent,0);assert.ok([...f.store.records.values()].every(x=>x.scope.endsWith('|a')),'saved operations remain scoped to the original owner');
+}
+// Reply context is part of the immutable message, including restoration after
+// logout and a different current conversation. It is never sent to clients.
+{
+  const store=memoryStore(),f=fixture({store,capabilities:{replies:true},readMessages:()=>({data:{messages:[{messageRef:'reply-original',text:'Original',authorName:'Original author'}]}}),sender:async()=>{throw Object.assign(Error('Session paused'),{code:'SESSION_CHANGED'});}});
+  await f.messenger.enter('staff');await f.messenger.handle('msg-open',{dataset:{ref:'staff'}});await f.messenger.handle('msg-reply',{dataset:{ref:'reply-original'}});
+  f.handlers.input({target:{id:'msgDraft',value:'Reply text'}});await f.messenger.handle('msg-send',{dataset:{}});
+  await until(()=>[...store.records.values()][0]?.attempts===1);const operation=[...store.records.values()][0];assert.equal(operation.body.replyToMessageRef,'reply-original');
+  f.messenger.reset();const calls=[],restored=fixture({store,capabilities:{replies:true},sender:async value=>{calls.push(clone(value));return {success:true};}});
+  await restored.messenger.enter('clients');await until(()=>store.records.size===0);assert.equal(calls[0].body.replyToMessageRef,'reply-original');assert.equal(calls[0].requestId,operation.requestId);assert.equal(calls[0].method,'/internal-chat/messages/send');
+}
+{
+  const gate=defer(),calls=[],f=fixture({capabilities:{replies:true},sender:async value=>{calls.push(value);await gate.promise;return {success:true};}});
+  await f.messenger.enqueueMediaBatch(files,{source:'staff',ref:'staff',replyToMessageRef:'original-file-context'});await until(()=>calls.length===1);assert.equal(f.store.records.size,3);assert.ok([...f.store.records.values()].every(x=>x.body.replyToMessageRef==='original-file-context'));
+  gate.resolve();await until(()=>f.store.records.size===0);assert.equal(calls.length,3);assert.ok(calls.every(x=>x.body.replyToMessageRef==='original-file-context'));
+  const plain=fixture();await assert.rejects(plain.messenger.enqueueMediaBatch(files,{source:'staff',ref:'staff',replyToMessageRef:'unsupported'}));assert.equal(plain.store.records.size,0);
+}
+// Reopening while a previous history request is held must fetch a fresh light
+// list after that stale request ends, rather than leaving an empty/stale chat.
+{
+  const gate=defer();let reads=0;
+  const f=fixture({readMessages:async()=>{if(++reads===1){await gate.promise;return {data:{messages:[{messageRef:'stale',text:'Stale result'}]}};}return {data:{messages:[{messageRef:'fresh',text:'Fresh reopened chat'}]}};}});
+  await f.messenger.enter('staff');const opening=f.messenger.handle('msg-open',{dataset:{ref:'staff'}});await until(()=>reads===1);
+  f.messenger.back();await f.messenger.handle('msg-open',{dataset:{ref:'staff'}});gate.resolve();await opening;await until(()=>reads===2&&f.app.innerHTML.includes('Fresh reopened chat'));
+  assert.equal(reads,2);assert.doesNotMatch(f.app.innerHTML,/Stale result/);
+}
+console.log('Chat outbox: durable complete batch, stable IDs, 422, owner isolation, selected defect forwarding, immutable replies and fast chat reopen recovery passed');

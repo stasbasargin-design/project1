@@ -21,6 +21,7 @@ try{
  const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
  const settle=()=>evaluate('new Promise(r=>setTimeout(r,80))');
  const wait=selector=>evaluate(`new Promise((r,j)=>{const t=setInterval(()=>{if(document.querySelector(${JSON.stringify(selector)})){clearInterval(t);r(true)}},20);setTimeout(()=>{clearInterval(t);j(Error('Missing '+${JSON.stringify(selector)}))},5000)})`);
+ const waitState=expression=>evaluate(`new Promise((r,j)=>{const t=setInterval(()=>{if(${expression}){clearInterval(t);r(true)}},20);setTimeout(()=>{clearInterval(t);j(Error('Missing state '+${JSON.stringify(expression)}))},5000)})`);
  const screenshot=async name=>writeFileSync(join(out,name+'.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
  await send('Page.enable');await send('Runtime.enable');await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});
  await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/?role=executor`});await wait('#orderSearch');
@@ -34,8 +35,10 @@ try{
  await evaluate(`document.querySelector('[data-action="msg-open"]').click()`);await wait('#msgDraft');
  const chatBefore=await evaluate(`auditCalls.filter(x=>x.endsWith('/messages/send')).length`);
  await evaluate(`(()=>{const t=document.getElementById('msgDraft');t.value='Синтетическое первое сообщение';t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-action="msg-send"]').click()})()`);await settle();await settle();
+ await waitState(`auditCalls.filter(x=>x.endsWith('/messages/send')).length===${chatBefore+1}&&!document.querySelector('[data-action="msg-send"]').disabled`);
  const first=await evaluate(`auditCalls.filter(x=>x.endsWith('/messages/send')).length`);
  await evaluate(`(()=>{const t=document.getElementById('msgDraft');t.value='Синтетическое второе сообщение';t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-action="msg-send"]').click()})()`);await settle();
+ await waitState(`auditCalls.filter(x=>x.endsWith('/messages/send')).length===${chatBefore+2}&&!document.querySelector('[data-action="msg-send"]').disabled`);
  const chat=await evaluate(`({sendCalls:auditCalls.filter(x=>x.endsWith('/messages/send')).length,draft:document.getElementById('msgDraft').value,buttonDisabled:document.querySelector('[data-action="msg-send"]').disabled})`);
  assert.equal(first,chatBefore+1);assert.equal(chat.sendCalls,first+1);assert.equal(chat.buttonDisabled,false);assert.equal(chat.draft,'');await screenshot('second-chat-send-succeeded');
  // No request leaves localhost: the review fixture supplies every API response.

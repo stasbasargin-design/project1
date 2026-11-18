@@ -1,6 +1,7 @@
 import {mkdir,readFile,open,rename,rm,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
+import './assets/chat-policy.js';
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const failure=(message,status=409)=>Object.assign(Error(message),{status,code:'PUSH_INSTALLATION_CONFLICT'});
 
@@ -55,10 +56,32 @@ export class PushInstallations{
       return {enabled:false};
     });
   }
-  async recipient(platform,resource,environment){
+  preferencesKey(userId,environment){
+    if(!/^\d{1,30}$/.test(String(userId))||!['test','production'].includes(environment))throw failure('Invalid chat preference owner',400);
+    return digest('chat-preferences|'+environment+'|'+userId);
+  }
+  async preferences(userId,environment){
+    const row=await this.read(this.preferencesKey(userId,environment));
+    return {revision:row?.revision||0,muted:Array.isArray(row?.muted)?row.muted:[]};
+  }
+  async setMuted(userId,environment,{source,ref,muted}){
+    const target=globalThis.ITUS_CHAT_POLICY.thread(source,ref);
+    if(!target||typeof muted!=='boolean')throw failure('Invalid chat preference',400);
+    const key=this.preferencesKey(userId,environment);
+    return this.locked(key,async()=>{
+      const previous=await this.preferences(userId,environment),items=previous.muted.filter(x=>x.source!==target.source||x.ref!==target.ref);
+      if(muted)items.push(target);
+      if(items.length>1000)throw failure('Chat preference limit',409);
+      const result={revision:previous.revision+1,muted:items};await this.write(key,result);return result;
+    });
+  }
+  async recipient(platform,resource,environment,data){
     const ref=await this.read(digest('recipient|'+platform+'|'+resource));
     if(!ref)return environment==='test'?{legacy:true}:null;
     const record=await this.read(ref.installation);
-    return record?.enabled&&record.environment===environment&&record.activationId===ref.activationId?{environment,activationId:record.activationId}:null;
+    if(!record?.enabled||record.environment!==environment||record.activationId!==ref.activationId)return null;
+    const chat=globalThis.ITUS_CHAT_POLICY.pushThread(data);
+    if(chat&&(await this.preferences(record.userId,environment)).muted.some(x=>x.source===chat.source&&x.ref===chat.ref))return null;
+    return {environment,activationId:record.activationId};
   }
 }

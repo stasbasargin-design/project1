@@ -150,15 +150,16 @@ function allowCapacitorApiOrigin(req, res) {
   res.setHeader('Vary', 'Origin');
 }
 
-async function readBody(req) {
+async function readBody(req,limit=maxRequestBytes) {
   const chunks = [];
   let total = 0;
   for await (const chunk of req.iterator({destroyOnReturn: false})) {
     total += chunk.length;
-    if (total > maxRequestBytes) {
+    if (total > limit) {
       req.resume();
       const error = new Error(`Тело запроса превышает лимит ${Math.round(maxRequestBytes / 1024 / 1024)} МБ`);
       error.code = 'REQUEST_TOO_LARGE';
+      error.status = 413;
       throw error;
     }
     chunks.push(chunk);
@@ -273,7 +274,7 @@ async function sendInternalPush(req, res, testOnly = false) {
   }
   try {
     const environment=(req.itusConnection||connections.test).id;
-    const recipients=await Promise.all(tokens.map(async(token,index)=>({token,index,routing:pushInstallations?await pushInstallations.recipient('android',token,environment):environment==='test'?{legacy:true}:null})));
+    const recipients=await Promise.all(tokens.map(async(token,index)=>({token,index,routing:pushInstallations?await pushInstallations.recipient('android',token,environment,data):environment==='test'?{legacy:true}:null})));
     const legacy=recipients.filter(item=>item.routing?.legacy),managed=recipients.filter(item=>item.routing&&!item.routing.legacy);
     const messaging=legacy.length||managed.length?await firebaseMessaging():null;
     const responses=[];
@@ -328,7 +329,7 @@ async function sendInternalWebPush(req, res) {
     for(let offset=0;offset<payload.subscriptions.length;offset+=5){
     await Promise.all(payload.subscriptions.slice(offset,offset+5).map(async(subscription,slot)=>{
       const index=offset+slot;
-      const routing=pushInstallations?await pushInstallations.recipient('web',subscription?.endpoint,environment):environment==='test'?{legacy:true}:null;
+      const routing=pushInstallations?await pushInstallations.recipient('web',subscription?.endpoint,environment,data):environment==='test'?{legacy:true}:null;
       if(!routing){result.skipped++;return;}
       const delivery=await deliverWebPush([subscription],{title,body,data:{...target,...(routing.legacy?{}:routing)}});
       result.sent+=delivery.sent;result.failed+=delivery.failed;
@@ -529,6 +530,29 @@ const server = http.createServer(async (req, res) => {
   if(pathname==='/api/environments/config'&&req.method==='GET'){
     allowCapacitorApiOrigin(req,res);
     json(res,200,{success:true,data:{test:true,production:Boolean(connections.production),isolatedPush:Boolean(pushInstallations)}});return;
+  }
+  if(pathname==='/api/push/chat-preferences'){
+    allowCapacitorApiOrigin(req,res);
+    if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
+    if(!['GET','POST'].includes(req.method)){json(res,405,{success:false});return;}
+    try{
+      if(!pushInstallations)throw Object.assign(Error('Preferences unavailable'),{status:503});
+      const owner=await mediaService.device(req);
+      let result;
+      if(req.method==='GET')result=await pushInstallations.preferences(owner.userId,selected.connection.id);
+      else{
+        const raw=await readBody(req,8192);let input;
+        try{input=JSON.parse(raw.toString('utf8'));}catch{throw Object.assign(Error('Invalid JSON'),{status:400});}
+        if(!input||typeof input!=='object'||Array.isArray(input))throw Object.assign(Error('Invalid preference'),{status:400});
+        const target=globalThis.ITUS_CHAT_POLICY.thread(input.source,input.ref);
+        if(!target||typeof input.muted!=='boolean')throw Object.assign(Error('Invalid preference'),{status:400});
+        await mediaService.authorize(owner.userId,target.source==='clients'?'/clients/messages/send':'/internal-chat/messages/send',
+          {userId:owner.userId,...(target.source==='clients'?{topicRef:target.ref}:{groupRef:target.ref})});
+        result=await pushInstallations.setMuted(owner.userId,selected.connection.id,{...target,muted:input.muted});
+      }
+      json(res,200,{success:true,data:result});
+    }catch(error){json(res,error.status||503,{success:false,error:{code:'CHAT_PREFERENCES_UNAVAILABLE',message:'Не удалось сохранить настройку уведомлений'}});}
+    return;
   }
   if(pathname==='/api/push/installation'){
     allowCapacitorApiOrigin(req,res);
