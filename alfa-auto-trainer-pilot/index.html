@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Альфа-Авто 6.1 — учебный тренажёр</title>
+<link rel="stylesheet" href="styles.css"></head>
+<body>
+<div class="system-strip"><span class="brand-square">1С</span><span>Учебная версия · Альфа-Авто 6.1</span><span id="system-status">Демонстрационная среда, без связи с боевой 1С</span></div>
+<div class="app-shell">
+  <header class="application-bar"><div class="app-name">Альфа-Авто · CRM ЕвроАзия <small>Учебный контур</small></div><div class="session">
+    <label>Роль <select id="role-picker" aria-label="Роль сотрудника"></select></label>
+    <label>Режим <select id="mode-picker" aria-label="Режим тренировки"></select></label>
+    <button id="reset-btn" class="button-light" type="button">Новый сценарий</button>
+  </div></header>
+  <div id="nav" class="navigation" aria-label="Разделы программы"></div>
+  <div class="body-layout">
+    <aside class="sidebar">
+      <h3>Рабочий стол</h3><div id="sidebar-content"></div>
+      <div class="side-note"><strong>Учебная БЕ: ЕАТ</strong><div>Все данные вымышлены. Отправка писем, SMS и обмен с 1С не выполняются.</div></div>
+    </aside>
+    <main id="main-content" tabindex="-1"></main>
+    <aside class="instruction-pane"><div class="pane-title">Учебное задание</div>
+      <p>Клиент обратился по поводу <strong>постороннего шума при торможении грузового автомобиля</strong>. Требуется оформить обращение и провести полный цикл до закрытия ЗН.</p>
+      <div class="fake-client"><strong>Учебные данные</strong><div>Контрагент: ООО «Транспорт-Альфа»</div><div>Контакт: Петров Алексей</div><div>Тел.: +7 900 000-00-01</div><div>Автомобиль: КАМАЗ 65115</div><div>Причина: диагностика тормозов</div></div>
+      <div id="next-step"></div><div id="help-content"></div>
+      <div class="aside-bottom"><strong>Проверка</strong><div>Все документы, задачи и уведомления связаны в пределах одного учебного сценария.</div></div>
+    </aside>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="engine.js"></script><script src="app.js"></script>
+</body></html>
