@@ -303,6 +303,7 @@
       unread: Number(x.unreadCount || x.unread || 0),
       common: x.isCommon === true || x.common === true || x.general === true || x.isGeneral === true || /^(common|general)$/i.test(text(x.chatType || x.groupType || x.type)),
       orderRef: text(x.orderRef || x.orderId),
+      chatCapabilities: isObject(x.chatCapabilities)?{replies:x.chatCapabilities.replies===true,reactions:x.chatCapabilities.reactions===true}:undefined,
       orderNumber: text(x.orderNumber),
       vehiclePlate: text(x.vehiclePlate || x.plate)
     };

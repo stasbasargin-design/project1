@@ -20,7 +20,7 @@
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
     let data = {};
-    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
+    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true},clients:{replies:true,reactions:true}}};
     else if(method === '/orders/list') data={orders:allowedRole === 'executor' ? [reviewOrder()] : []};
     else if(method === '/orders/get') data={order:reviewOrder()};
     else if(method.startsWith('/worktime/')) {
@@ -50,11 +50,11 @@
     }
     else if(method.endsWith('/topics/list') || method.endsWith('/groups/list')) data={topics:[{topicRef:'review-topic',title:'Тестовый клиент',unreadCount:clientUnread}],groups:staffGroups};
     else if(method.endsWith('/messages/read')) {if(method.startsWith('/clients/'))clientUnread=0;else {const group=staffGroups.find(x=>x.groupRef===body.groupRef);if(group)group.unreadCount=0;}reviewUnread=clientUnread+staffGroups.reduce((n,x)=>n+x.unreadCount,0);data={read:true,unreadCount:0,unreadMessagesCount:reviewUnread};}
-    else if(method==='/internal-chat/messages/react'){
-      const message=staffMessages.get(body.groupRef)?.find(x=>(x.messageRef||x.id)===body.messageRef);
+    else if(['/internal-chat/messages/react','/clients/messages/react'].includes(method)){
+      const message=(method.startsWith('/clients/')?messages:staffMessages.get(body.groupRef))?.find(x=>(x.messageRef||x.id)===body.messageRef);
       if(!message)return new Response(JSON.stringify({success:false,error:{message:'Сообщение недоступно'}}),{status:404});
       message.myReaction=body.emoji;message.reactions=body.emoji?[{emoji:body.emoji,count:1}]:[];
-      data={messageRef:body.messageRef,myReaction:message.myReaction,reactions:message.reactions};
+      data={messageRef:body.messageRef,myReaction:message.myReaction,reactions:message.reactions,...(method.startsWith('/clients/')?{delivery:{status:'sent',kind:'native-reaction'}}:{})};
     }
     else if(method.endsWith('/messages/list')) data={messages:method.startsWith('/internal-chat/')?(staffMessages.get(body.groupRef)||[]):messages};
     else if(method.endsWith('/messages/send') || method.endsWith('/files/send') || method.endsWith('/polls/send')) {

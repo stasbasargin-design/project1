@@ -179,7 +179,7 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
 {
   const f=fixture();
   const item={kind:'text',text:'Selected defect',clientMessageId:'forward-text',requestId:'request-text'};
-  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'staff',ref:'staff'}));
+  await assert.rejects(f.messenger.enqueueForwardBatch([item],{source:'unknown',ref:'staff'}));
   await assert.rejects(f.messenger.enqueueForwardBatch([item,item],target));
   await assert.rejects(f.messenger.enqueueForwardBatch([{...item,text:''}],target));
   assert.equal(f.store.records.size,0,'invalid forwarding cannot partially enqueue');
@@ -219,4 +219,28 @@ const incoming={messageRef:'incoming-1',attachments:[{fileRef:'file-1',fileName:
   f.messenger.back();await f.messenger.handle('msg-open',{dataset:{ref:'staff'}});gate.resolve();await opening;await until(()=>reads===2&&f.app.innerHTML.includes('Fresh reopened chat'));
   assert.equal(reads,2);assert.doesNotMatch(f.app.innerHTML,/Stale result/);
 }
-console.log('Chat outbox: durable complete batch, stable IDs, 422, owner isolation, selected defect forwarding, immutable replies and fast chat reopen recovery passed');
+// Client replies retain the same source reference for every file. Forwarding
+// to staff uses the ordinary staff sender and preserves video/document bytes.
+{
+  const gate=defer(),calls=[],f=fixture({capabilities:{clients:{replies:true}},sender:async value=>{calls.push(clone(value));await gate.promise;return {success:true};}});
+  await f.messenger.enqueueMediaBatch(files,{...target,replyToMessageRef:'client-original'});await until(()=>calls.length===1);
+  assert.ok([...f.store.records.values()].every(x=>x.body.replyToMessageRef==='client-original'&&x.method==='/clients/files/send'));
+  gate.resolve();await until(()=>f.store.records.size===0);
+  const forwarded=[];const staff=fixture({sender:async value=>{forwarded.push(value);return {success:true};}});
+  await staff.messenger.enqueueForwardBatch(['video','file'].map((kind,index)=>({kind,file:{fileName:kind,contentBase64:'original-bytes'},clientMessageId:'forward-'+index,requestId:'request-'+index})),{source:'staff',ref:'topic'});
+  await until(()=>forwarded.length===2);assert.ok(forwarded.every(x=>x.method==='/internal-chat/files/send'&&x.documentKey==='chat:staff:topic'&&x.body.groupRef==='topic'&&!x.body.topicRef));
+}
+// A client reaction is confirmed only after the native channel acknowledges it.
+// Missing capabilities and an emoji-as-message response must never look saved.
+for(const delivery of [undefined,{status:'queued'},{status:'sent',kind:'message'},{status:'sent',kind:'native-reaction'}]){
+  const calls=[],f=fixture({capabilities:{clients:{reactions:true}},readMessages:()=>({data:{messages:[{messageRef:'original',text:'Original'}]}}),sender:async value=>{calls.push(value);return {success:true,data:{messageRef:'original',myReaction:'👍',reactions:[{emoji:'👍',count:1}],delivery}};}});
+  await f.messenger.enter('clients');await f.messenger.handle('msg-open',{dataset:{ref:'topic'}});await f.messenger.handle('msg-react',{dataset:{ref:'original',emoji:'👍'}});
+  assert.equal(calls.length,1);assert.equal(calls[0].method,'/clients/messages/react');f.messenger.paint();
+  assert.equal(f.app.innerHTML.includes('msg-reaction-count'),delivery?.kind==='native-reaction');
+  if(delivery?.status==='queued'){const request=calls[0].body.requestId;await f.messenger.handle('msg-react',{dataset:{ref:'original',emoji:'👍'}});assert.equal(calls[1].body.requestId,request);}
+}
+{
+  let sent=0;const f=fixture({readMessages:()=>({data:{messages:[{messageRef:'original',text:'Original'}]}}),sender:async()=>{sent++;}});
+  await f.messenger.enter('clients');await f.messenger.handle('msg-open',{dataset:{ref:'topic'}});await f.messenger.handle('msg-react',{dataset:{ref:'original',emoji:'👍'}});assert.equal(sent,0);
+}
+console.log('Chat outbox: durable complete batch, stable IDs, 422, isolation, mixed forwarding, immutable replies and native client reaction acknowledgement passed');
