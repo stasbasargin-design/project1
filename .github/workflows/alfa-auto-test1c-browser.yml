@@ -1,0 +1,66 @@
+name: "Test 1C browser UI from independent cloud runner"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-test1c-network-probe-20261119
+    paths:
+      - ".github/workflows/alfa-auto-test1c-browser.yml"
+permissions:
+  contents: read
+jobs:
+  anonymous-browser-inspection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare standalone Chromium browser
+        run: |
+          python -m pip install playwright==1.55.0
+          if ! command -v google-chrome >/dev/null 2>&1; then python -m playwright install chromium; fi
+      - name: Load ONLY the test 1C URL without credentials or changes
+        run: |
+          python - <<'PY'
+          import os, shutil, urllib.parse
+          from playwright.sync_api import sync_playwright, Error
+          url='https://1c.eazia.ru/aa6_ea_test9/'
+          with sync_playwright() as pw:
+              kw={"headless":True, "args":["--no-sandbox","--disable-dev-shm-usage"]}
+              if shutil.which("google-chrome"):kw["channel"]="chrome"
+              browser=pw.chromium.launch(**kw)
+              page=browser.new_page(viewport={"width":1440,"height":900},locale="ru-RU")
+              errors=[]
+              page.on("pageerror",lambda e:errors.append(str(e)[:150]))
+              try:
+                  resp=page.goto(url,wait_until="domcontentloaded",timeout=60000)
+                  page.wait_for_timeout(9000)
+                  print("HTTP_STATUS",resp.status if resp else None)
+                  print("PAGE_TITLE",repr(page.title()[:140]))
+                  print("CURRENT_PATH",urllib.parse.urlsplit(page.url).path)
+                  print("VISIBLE_BODY_CHARACTERS",len(page.locator("body").inner_text(timeout=5000)))
+                  print("PASSWORD_FIELDS",page.locator("input[type=password]").count())
+                  print("TEXT_INPUT_FIELDS",page.locator("input:not([type=password])").count())
+                  print("FORM_COUNT",page.locator("form").count())
+                  print("BUTTON_COUNT",page.locator("button").count())
+                  print("JAVASCRIPT_ERRORS",len(errors))
+                  login=page.locator("input[type=password]").count()>0
+                  print("AUTH_REQUIRED_PASSWORD_FORM",login)
+                  if login:
+                      page.screenshot(path="test1c-login.png",full_page=False)
+                      print("LOGIN_SCREENSHOT_CREATED",True)
+                  else:
+                      print("NO_SCREENSHOT_UNTIL_AUTH_STATE_IS_KNOWN")
+              except Exception as e:
+                  print("BROWSER_ERROR",type(e).__name__,str(e)[:250])
+              finally:
+                  browser.close()
+          PY
+      - name: Save login page screenshot if present (no data or credentials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test1c-anonymous-login-screen
+          path: test1c-login.png
+          if-no-files-found: ignore
