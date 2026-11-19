@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.3'
+    version: 'i-max-2.9.8'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -135,7 +135,10 @@
       && context.ref === (currentOrder()?.orderRef || currentOrder()?.id || '');
   }
 
+  window.ITUS_MESSAGE_MENU_CLIENT=window.ITUS_MESSAGE_ACTIONS?.create({valid:context=>context.valid?.()===true,toast});
   const messenger = window.ITUS_MESSENGER?.create({
+    actionsMenu:()=>window.ITUS_MESSAGE_MENU_CLIENT,forwardSession:sessionSnapshot,
+    forwardRecipients,forwardAttachment:prepareForwardAttachment,forwardValid:context=>sessionCurrent(context.session),
     api:API,call:call1C,user:()=>state.user,cacheOwner,
     chatCapabilities:()=>state.chatCapabilities||{},chatPreferences:()=>window.ITUS_CHAT_PREFERENCES_CLIENT,
     allowed:()=>[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])],
@@ -171,26 +174,46 @@
     id:requestId,toast,
     context:()=>{
       const order=currentOrder(),sheet=order?._defectSheet;
-      if(state.view!=='mp'||!state.views.clients||!sheet?.documentRef)return null;
+      if(!['mp','executor','tech'].includes(state.view)||!(state.views.clients||state.views.chat)||!sheet?.documentRef)return null;
       return {session:sessionSnapshot(),orderRef:order.orderRef||order.id,orderNumber:order.num,documentRef:sheet.documentRef,entries:sheet.entries||[]};
     },
-    valid:context=>sessionCurrent(context.session)&&state.view==='mp'&&Boolean(state.views.clients)
+    valid:context=>sessionCurrent(context.session)&&['mp','executor','tech'].includes(state.view)&&Boolean(state.views.clients||state.views.chat)
       &&context.orderRef===(currentOrder()?.orderRef||currentOrder()?.id)&&context.documentRef===currentOrder()?._defectSheet?.documentRef,
-    topics:async context=>{
-      const result=await call1C('/clients/topics/list',{status:'active'},{silent:true,session:context.session});
-      return API.extractItems(result,['topics']).filter(topic=>String(topic?.topicRef||topic?.topicId||topic?.ref||topic?.id||'').trim()).map(API.normalizeTopic);
-    },
-    photo:prepareForwardPhoto,
+    topics:forwardRecipients,attachment:prepareForwardAttachment,
     enqueue:async(context,items,target)=>{
       assertSession(context.session,context.session.scope);
-      return messenger.enqueueForwardBatch(items,{source:'clients',ref:target.ref});
+      return messenger.enqueueForwardBatch(items,{source:target.source||'clients',ref:target.ref});
     }
   });
 
-  async function prepareForwardPhoto(context,entry,signal,clientFileId){
+  async function forwardRecipients(context){
+    const sources=[...(state.views.clients?['clients']:[]),...(state.views.chat?['staff']:[])];
+    const results=await Promise.all(sources.map(async source=>{
+      const response=await call1C(source==='clients'?'/clients/topics/list':'/internal-chat/groups/list',source==='clients'?{status:'active'}:{},{silent:true,session:context.session});
+      assertSession(context.session,context.session.scope);
+      return API.extractItems(response,[source==='clients'?'topics':'groups']).filter(value=>String(value.topicRef||value.topicId||value.groupRef||value.groupId||value.ref||value.id||'').trim()).map(API.normalizeTopic).map(topic=>({...topic,source}));
+    }));
+    return results.flat().filter(topic=>topic.source!==context.source||topic.ref!==context.ref);
+  }
+  const defectGestures=window.ITUS_MESSAGE_GESTURES?.create({selector:'.defect-history .entry[data-defect-entry]',
+    resolve:node=>{
+      if($('overlay').classList.contains('hidden')||!['mp','executor','tech'].includes(state.view))return null;
+      const index=Number(node.dataset.defectEntry),entry=currentOrder()?._defectSheet?.entries?.[index],context=sheetContext();
+      if(!entry||!window.ITUS_DEFECT_FORWARD_CLIENT?.eligible(entry))return null;
+      return {index,preview:entry.text||entry.file?.fileName||'Запись дефектовки',valid:()=>sheetCurrent(context)&&!$('overlay').classList.contains('hidden')};
+    },hold:context=>window.ITUS_MESSAGE_MENU_CLIENT?.open(context,[
+      {id:'forward',label:'Переслать в чат',run:()=>window.ITUS_DEFECT_FORWARD_CLIENT?.openEntries([context.index])},
+      ...(currentOrder()?._defectSheet?.entries?.[context.index]?.text?[{id:'copy',label:'Копировать текст',run:async()=>{
+        if(!navigator.clipboard?.writeText)throw Error('Копирование недоступно в этом браузере');
+        await navigator.clipboard.writeText(currentOrder()._defectSheet.entries[context.index].text);toast('Текст скопирован');
+      }}]:[])
+    ])});
+
+  async function prepareForwardAttachment(context,entry,signal,clientFileId){
     assertSession(context.session,context.session.scope);
     const check=()=>{assertSession(context.session,context.session.scope);if(signal.aborted)throw new DOMException('Aborted','AbortError');};
     const file=entry.file;let blob=file.contentBlob,url='';check();
+    if(context.source&&file.fileRef&&!blob&&!file.contentBase64&&!context.message?.hasServerMessageRef)throw Error('1С не вернула идентификатор сообщения для выбранного файла');
     if(!blob&&file.contentBase64){
       const raw=atob(String(file.contentBase64).replace(/^data:[^,]*,/,'').replace(/\s/g,''));
       blob=new Blob([Uint8Array.from(raw,c=>c.charCodeAt(0))],{type:file.mimeType||'image/jpeg'});
@@ -198,21 +221,22 @@
     if(!blob){
       if(file.fileRef){
         const media=mediaClient(context.session);if(!media)throw Error('Подключение файлов недоступно');
-        const result=await media.attachment('/defects/start',{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,
-          orderRef:context.orderRef,orderId:context.orderRef,documentRef:context.documentRef,existingDocumentRef:context.documentRef,
-          attachmentRef:file.fileRef,entryRef:entry.entryRef||entry.id,requestId:requestId()},file.sizeBytes);check();url=result.url;
+        const chat=Boolean(context.source),route=chat?(context.source==='clients'?'/clients/messages/list':'/internal-chat/messages/list'):'/defects/start';
+        const origin=chat?{...(context.source==='clients'?{topicRef:context.ref,topicId:context.ref}:{groupRef:context.ref,groupId:context.ref}),messageRef:context.messageRef,includeAttachmentContent:true}
+          :{orderRef:context.orderRef,orderId:context.orderRef,documentRef:context.documentRef,existingDocumentRef:context.documentRef,entryRef:entry.entryRef||entry.id};
+        const result=await media.attachment(route,{...authPayload(),max:maxContext(),miniApp:'ITUS',version:CONFIG.version,...origin,attachmentRef:file.fileRef,requestId:requestId()},file.sizeBytes);check();url=result.url;
       }else url=String(file.downloadUrl||'');
-      if(!url)throw Error('1С не вернула ссылку или идентификатор выбранного фото');
-      const parsed=new URL(url,location.href);if(!['https:','http:'].includes(parsed.protocol))throw Error('Недопустимая ссылка фотографии');
+      if(!url)throw Error('1С не вернула ссылку или идентификатор выбранного файла');
+      const parsed=new URL(url,location.href);if(!['https:','http:'].includes(parsed.protocol))throw Error('Недопустимая ссылка файла');
       const controller=new AbortController(),abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});
-      const timer=setTimeout(abort,CONFIG.timeoutMs);
+      const timer=setTimeout(abort,20*60*1000);
       try{check();const response=await fetch(parsed.href,{signal:controller.signal,credentials:'omit'});if(!response.ok)throw Error(`Не удалось получить выбранное фото: HTTP ${response.status}`);blob=await response.blob();}
       finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
     }
-    check();if(!blob?.size)throw Error('Выбранная фотография пуста');
+    check();if(!blob?.size)throw Error('Выбранный файл пуст');
     // Forward the saved original bytes. Do not compress a document photo again.
-    const payload={fileName:file.fileName||'Фото дефекта.jpg',mimeType:file.mimeType||blob.type||'image/jpeg',sizeBytes:blob.size,clientFileId};
-    if(blob.size>10*1024*1024)return {...payload,contentBlob:blob,transport:'s3'};
+    const payload={fileName:file.fileName||'Вложение',mimeType:file.mimeType||blob.type||'application/octet-stream',sizeBytes:blob.size,clientFileId};
+    if(blob.size>10*1024*1024||/^video\//i.test(payload.mimeType))return {...payload,contentBlob:blob,transport:blob.size>10*1024*1024?'s3':'direct'};
     const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(blob);});
     check();return {...payload,contentBase64:String(data).split(',')[1]};
   }
@@ -228,6 +252,7 @@
 
   function showSheet(title, hint, html) {
     window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.close({restorePosition:false});
+    window.ITUS_MESSAGE_MENU_CLIENT?.close();defectGestures?.cancel();
     window.ITUS_DEFECT_FORWARD_CLIENT?.close();
     sheetRevision++;
     sheetOrder = currentOrder();
@@ -240,6 +265,7 @@
   function closeSheet() {
     if (mediaPicker?.dismiss?.() === false) return false;
     window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.close({restorePosition:false});
+    window.ITUS_MESSAGE_MENU_CLIENT?.close();defectGestures?.cancel();
     window.ITUS_DEFECT_FORWARD_CLIENT?.close();
     sheetRevision++;
     sheetOrder = null;
@@ -538,7 +564,7 @@
       else if (CONFIG.enforceTabs) {
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
-      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:authData.chatCapabilities?.internal?.reactions===true};
+      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:API.reactionCodesSupported(authData.chatCapabilities?.internal),reactionEncoding:authData.chatCapabilities?.internal?.reactionEncoding||''};
       state.updateCheckReady=true;
       void appUpdater?.check({login:!readOnlyRecovery});
       void window.ITUS_CHAT_PREFERENCES_CLIENT?.load();
@@ -605,6 +631,14 @@
     return mapped;
     }finally{if(select&&selection===orderSelectionRevision){orderLoadingRef='';render();}}
   }
+
+  const visibleOrderRefresh=window.ITUS_ORDER_READ_REFRESH?.create({
+    current:()=>({ref:currentOrder()?.orderRef||currentOrder()?.id,scope:state.userId?sessionSnapshot().scope+'|'+sessionSnapshot().generation:''}),
+    allowed:()=>Boolean(state.userId&&state.initialized&&!state.loading&&!state.busy&&!document.hidden&&['mp','executor','tech'].includes(state.view)&&$('overlay').classList.contains('hidden')&&!document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')),
+    load:ref=>loadSingleOrder(ref,{select:false}),paint:()=>render()
+  });
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void visibleOrderRefresh?.refresh();});
+  window.addEventListener('focus',()=>{void visibleOrderRefresh?.refresh();});
 
   function renderAuth() {
     if ($('botUnread')) $('botUnread').hidden = true;
@@ -913,11 +947,11 @@
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
     const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
     const defectCell = defectRef
-      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
-      : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
+      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="stat-label">Дефектовка</span><span class="stat-state is-present">✓ Создана</span><span class="stat-action-label">Открыть историю <span aria-hidden="true">›</span></span></button>`
+      : `<div class="stat stat-information"><span class="stat-label">Дефектовка</span><b>Не создана</b><span class="stat-note">История появится после создания</span></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
     const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat stat-information"><span class="stat-label">Пост</span><b>${esc(order.post)}</b><span class="stat-note">Сведения из 1С</span></div><div class="stat stat-information"><span class="stat-label">Исполнитель</span><b>${esc(order.executor)}</b><span class="stat-note">Сведения из 1С</span></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="stat-label">Пакет УРВ</span><b>${esc(packageLabel)}</b><span class="stat-action-label">Выбрать пакет <span aria-hidden="true">›</span></span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
   }
 
   function renderOrdersView() {
@@ -1765,7 +1799,7 @@
     const order = currentOrder(), sheet = order?._defectSheet;
     if (!sheet) return;
     const entries = sheet.entries || [];
-    const forwarding=state.view==='mp'&&state.views.clients?window.ITUS_DEFECT_FORWARD_CLIENT:null;
+    const forwarding=['mp','executor','tech'].includes(state.view)&&(state.views.clients||state.views.chat)?window.ITUS_DEFECT_FORWARD_CLIENT:null;
     const entryHtml = entries.length ? entries.map((entry, index) => {
       const file = entry.file;
       const imageSource = entry.type === 'photo' || /^image\//i.test(file?.mimeType || '') ? defectImageSource(file) : '';
@@ -1775,13 +1809,13 @@
       const verification = state.view === 'tech'
         ? `<label class="setting-row defect-entry-verification"><input type="checkbox" data-action="verify-defect-entry" data-index="${index}" ${entry.verified ? 'checked disabled' : ''}${entry.hasServerEntryRef ? '' : ' disabled'}>Проверено</label>`
         : '';
-      const selection=forwarding?.eligible(entry)?`<label class="defect-forward-choice"><input type="checkbox" data-action="select-defect-forward" data-index="${index}"${forwarding.isSelected(index)?' checked':''}>Выбрать для пересылки клиенту</label>`:'';
-      return `<div class="entry"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}${verification}${selection}</div>`;
+      const selection=state.view==='mp'&&forwarding?.eligible(entry)?`<label class="defect-forward-choice"><input type="checkbox" data-action="select-defect-forward" data-index="${index}"${forwarding.isSelected(index)?' checked':''}>Выбрать для пересылки</label>`:'';
+      return `<div class="entry" data-defect-entry="${index}" tabindex="0" aria-keyshortcuts="Shift+F10"><div class="entry-head"><span>${esc(entry.author || 'Сотрудник')}</span><span>${esc(FEATURES.dateTime(entry.createdAt))}</span></div>${entry.text ? `<div>${esc(entry.text)}</div>` : ''}${fileButton}${verification}${selection}</div>`;
     }).join('') : '<div class="empty">По этому ЗН ранее добавленных дефектов нет.</div>';
     const completionKey = `defects:${sheet.documentRef || ''}`;
     const completing = state.completionKey === completionKey && state.completionStatus?.stage !== 'error';
     const disabled=documentCompletionLocked(sheet.documentRef)?' disabled':'';
-    const forwardToolbar=forwarding?`<div class="defect-forward-toolbar"><span data-defect-forward-count>Выбрано записей: ${forwarding.count()}</span><button class="primary" data-action="defect-forward"${forwarding.count()?'':' disabled'}>Переслать клиенту</button></div>`:'';
+    const forwardToolbar=state.view==='mp'&&forwarding?`<div class="defect-forward-toolbar"><span data-defect-forward-count>Выбрано записей: ${forwarding.count()}</span><button class="primary" data-action="defect-forward"${forwarding.count()?'':' disabled'}>Переслать в чат</button></div>`:'';
     showSheet(`Дефектовочная ведомость · ЗН ${order.num}`, `Все записи по этому ЗН · документ 1С: ${sheet.documentRef || 'не указан'}`, `<div class="defect-history">${entryHtml}</div>${forwardToolbar}<label for="defectText">Новая запись</label><textarea id="defectText"${disabled} placeholder="Опишите выявленный дефект"></textarea><div class="grid two" style="margin-top:8px"><button data-action="defect-photo"${disabled}>Фото и видео</button><button data-action="send-defect-text"${disabled}>Добавить текст</button></div><button class="secondary" style="margin-top:8px" data-action="complete-defect-sheet" ${state.busy || disabled ? 'disabled' : ''} aria-busy="${completing}">${completing ? '<span class="spinner"></span> Подтверждаем отправку…' : 'Завершить дефектовку'}</button>`);
   }
 
@@ -2192,6 +2226,7 @@
   function normalizePushTarget(data) {
     const payload = data?.data && typeof data.data === 'object' ? data.data : data;
     const type = String(payload?.type || '').trim();
+    if(type==='app_update_available')return /^\d+\.\d+\.\d+$/.test(payload.version||'')&&/^\d{1,10}$/.test(String(payload.versionCode||''))&&Number(payload.versionCode)>0&&Number(payload.versionCode)<=2100000000?{type,eventId:String(payload.eventId||'app-update-'+payload.versionCode)}:null;
     const orderRef = String(payload?.orderRef || payload?.orderId || '').trim();
     const topicRef = String(payload?.topicRef || payload?.topicId || '').trim();
     if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
@@ -2216,6 +2251,7 @@
     toast(target.message || 'Открыт запрос выходного контроля');
   }
   async function applyPushTarget(target) {
+    if(target.type==='app_update_available'){appUpdater?.show();return;}
     if (target.type === 'internal_chat_message') {
       if (!state.views.chat) throw new Error('Внутренние чаты недоступны для вашей роли');
       await setView('chat');
@@ -2369,9 +2405,12 @@
 
   function showSettings() {
     const display=window.ITUS_DISPLAY;
-    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
-    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
-    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid">${appUpdater?'<button data-action="check-app-update">Проверить обновление I-MAX</button>':''}<button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+    const size=display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '';
+    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button class="secondary" data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
+    const link=(action,title,hint='')=>`<button class="settings-link" type="button" data-action="${action}"><span>${title}${hint?`<small>${hint}</small>`:''}</span><span aria-hidden="true">›</span></button>`;
+    const appearance=window.ITUS_APPEARANCE?.settings() || '';
+    const appearanceWithSize=appearance.replace('<label class="appearance-switch-row"',size+'<label class="appearance-switch-row"');
+    showSheet('Настройки I-MAX','Оформление и работа приложения',`<div class="settings-page">${appearanceWithSize||size}<section class="settings-section"><h3>Работа приложения</h3><div class="settings-group">${link('notification-settings','Уведомления','Сообщения, задачи и назначения')}${link('show-operation-queue','Неотправленные','Сохранённые записи, сообщения и вложения')}${link('media-device-settings','Отправка крупных файлов','Буфер и фоновая передача')}${link('test-1c','Проверить связь с 1С')}</div></section><section class="settings-section"><h3>Подключение к 1С</h3><details class="settings-group"><summary>${esc(ENVIRONMENTS?.label||'Текущая база')} · сведения о подключении</summary><div class="settings-detail-body">${environments}<p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase||'задаётся сервером')}</p></div></details></section><section class="settings-section"><h3>О приложении и помощь</h3><div class="settings-group">${appUpdater?link('check-app-update','Проверить обновление I-MAX','Текущая версия: '+esc(CONFIG.version)):''}${link('retry-init','Перезагрузить данные','Обновить сведения из 1С')}</div><details><summary>Сведения о пользователе</summary><p>Пользователь MAX: ${esc(state.userId)}</p></details></section><button type="button" class="settings-logout" data-action="logout">Выйти из аккаунта</button><p class="settings-version">I-MAX · ${esc(CONFIG.version)}</p></div>`);
   }
 
   async function switchEnvironment(){
@@ -2477,6 +2516,7 @@
     messenger?.leave();
     if (!state.views[view]) view = 'orders';
     state.view = view; render();
+    void visibleOrderRefresh?.refresh();
     try {
       if (view === 'clients' && !state.clientTopics.length) await loadClientTopics();
       if (view === 'chat' && !state.chatGroups.length) await loadChatGroups();
@@ -2681,6 +2721,8 @@
   }
 
   window.ITUS_BACK = () => {
+    if(window.ITUS_APPEARANCE?.back?.())return true;
+    if(window.ITUS_MESSAGE_MENU_CLIENT?.back?.())return true;
     if (window.ITUS_APP_UPDATE_CLIENT?.back()) return true;
     if (window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.back()) return true;
     if (window.ITUS_DEFECT_FORWARD_CLIENT?.back()) return true;

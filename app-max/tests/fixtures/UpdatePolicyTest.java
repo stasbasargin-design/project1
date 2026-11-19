@@ -16,6 +16,9 @@ public final class UpdatePolicyTest {
         rejected(()->UpdatePolicy.validate("2.9.0",0,"I-MAX-2.9.0.apk",1024,hash,hash,commit,"ru.eazia.imax",24));
         byte[] digest=MessageDigest.getInstance("SHA-256").digest("original apk".getBytes());
         if(!UpdatePolicy.matches(UpdatePolicy.hex(digest),digest)||UpdatePolicy.matches(hash,digest))throw new AssertionError("Digest check");
+        if(!UpdatePolicy.shouldNotify(2903,2908,0)||UpdatePolicy.shouldNotify(2908,2908,0)
+            ||UpdatePolicy.shouldNotify(2909,2908,0)||UpdatePolicy.shouldNotify(2903,2908,2908)
+            ||UpdatePolicy.shouldNotify(2903,Long.MAX_VALUE,0))throw new AssertionError("Update notification filter");
         System.out.println("Native update policy: fixed HTTPS origin, paths, package, version, size, hash and signer format passed");
     }
 }

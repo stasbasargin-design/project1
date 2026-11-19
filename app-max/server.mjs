@@ -3,7 +3,7 @@ import { resolvePublicPath } from './static-path.mjs';
 import http from 'node:http';
 import dns from 'node:dns';
 import { createReadStream, existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual,createHash } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFragment } from 'parse5';
@@ -16,6 +16,7 @@ import {assertMediaIdentity} from './media-store.mjs';
 import {scanMediaJson} from './media-metadata.mjs';
 import {oneCEnvironments,environmentRoute,mediaEnvironment,upstreamHeaders} from './one-c-environments.mjs';
 import {PushInstallations} from './push-installations.mjs';
+import {AndroidUpdateNotices,captureAndroidSubscription,androidSubscriptionActivation} from './android-update-notices.mjs';
 import {createDiagnostics} from './diagnostics-server.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -87,8 +88,12 @@ function androidRelease() {
   if (!stats.isFile() || stats.isSymbolicLink() || stats.size !== raw.bytes) throw Error('Incomplete APK');
   return {enabled:true,schema:1,packageName:raw.packageName,version:raw.version,versionCode:raw.versionCode,
     fileName:raw.fileName,sha256:raw.sha256,signerSha256:raw.signerSha256,commit:raw.commit,
-    bytes:raw.bytes,minSdk:24,notes:raw.notes};
+    bytes:raw.bytes,minSdk:24,notes:raw.notes,...(raw.notify===true?{notify:true}:{})};
 }
+const androidUpdateNotices=new AndroidUpdateNotices({registry:pushInstallations,environment:webPushContext,release:androidRelease,
+  verify:async release=>{const hash=createHash('sha256');for await(const chunk of createReadStream(join(androidUpdatesDir,release.fileName)))hash.update(chunk);if(hash.digest('hex')!==release.sha256)throw Error('APK_HASH_MISMATCH');},
+  send:async ({token,data})=>(await firebaseMessaging()).send({token,data,android:{priority:'high',ttl:24*60*60*1000}})});
+function announceAndroidUpdate(){void androidUpdateNotices.run().then(result=>{if(result.attempted)console.log(`[apk-update] attempted=${result.attempted} sent=${result.sent} uncertain=${result.failed}`);}).catch(()=>console.warn('[apk-update] release check failed'));}
 async function serveAndroidUpdate(req,res,pathname) {
   if (!pathname.startsWith('/updates/android/')) return false;
   if (!['GET','HEAD'].includes(req.method)) { json(res,405,{success:false,error:{code:'METHOD_NOT_ALLOWED'}});return true; }
@@ -433,6 +438,8 @@ async function proxy1C(req, res, pathname) {
       console.log(`[ИТУС -> 1С] POST ${suffix}${requestId ? ` requestId=${requestId}` : ''}`);
     }
 
+    let subscriptionActivation=null;
+    if(suffix==='/notifications/push/subscribe')try{subscriptionActivation=await androidSubscriptionActivation(pushInstallations,body,connection.id);}catch{}
     const perform=()=>fetch(oneCTarget + suffix, {
       method: 'POST',
       headers,
@@ -441,6 +448,9 @@ async function proxy1C(req, res, pathname) {
       signal: controller.signal
     });
     const upstream=mediaEnvelope?await mediaService.write(suffix,mediaEnvelope,perform,{binaryDigest:video?.binaryDigest,manual:req.headers['x-itus-retry']==='checked'}):await perform();
+    if(suffix==='/notifications/push/subscribe'){
+      try{await captureAndroidSubscription(pushInstallations,upstream,body,connection.id,subscriptionActivation);}catch{console.warn('[apk-update] registration metadata unavailable');}
+    }
     let responseBody=upstream.body,diagnosticOutcome={};
     if(diagnostics.enabled&&suffix==='/auth/max'&&upstream.status===200){
       const decorated=await diagnostics.authResponse(upstream,body,connection.id);responseBody=decorated.body;
@@ -564,6 +574,7 @@ const server = http.createServer(async (req, res) => {
       if(!['begin','bind','pause'].includes(input.action))throw Object.assign(Error('Invalid Push action'),{status:400});
       const result=await pushInstallations[input.action](owner.userId,selected.connection.id,input);
       json(res,200,{success:true,data:result});
+      if(input.action==='bind')announceAndroidUpdate();
     }catch(error){json(res,error.status||503,{success:false,error:{code:error.code||'PUSH_ISOLATION_UNAVAILABLE',message:'Не удалось подтвердить контур уведомлений'}});}
     return;
   }
@@ -608,7 +619,9 @@ server.requestTimeout = Number(process.env.MEDIA_PROXY_TIMEOUT_MS || 20*60*1000)
 void cleanupStaleVideos().catch(()=>{});
 setInterval(()=>{void cleanupStaleVideos().catch(()=>{});},60*60*1000).unref();
 server.listen(port, listenHost, () => {
+  announceAndroidUpdate();
   console.log(`ИТУС запущен: http://localhost:${port}`);
   console.log(`Прокси 1С: /api/1c/* -> ${oneCTarget}/*`);
   console.log(`Публичный путь: ${normalizedConfiguredBasePath || 'автоопределение'}`);
 });
+setInterval(announceAndroidUpdate,60000).unref();

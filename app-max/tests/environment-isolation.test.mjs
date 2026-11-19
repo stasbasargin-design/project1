@@ -39,7 +39,7 @@ async function upstream(environment){const server=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
   const body=JSON.parse(raw);calls.push({environment,path:req.url,body,headers:req.headers});
   res.setHeader('Content-Type','application/json');
-  res.end(JSON.stringify({success:true,data:{user:{employeeRef:'employee-'+environment,name:'Synthetic'},environment,order:{orderRef:'order',defectDocumentRef:'doc'},messages:[{messageRef:'same-id',text:environment}]}}));
+  res.end(JSON.stringify({success:true,data:{user:{employeeRef:'employee-'+environment,name:'Synthetic'},environment,registered:req.url.endsWith('/notifications/push/subscribe'),order:{orderRef:'order',defectDocumentRef:'doc'},messages:[{messageRef:'same-id',text:environment}]}}));
 });await new Promise(r=>server.listen(0,'127.0.0.1',r));return server;}
 const test=await upstream('test'),production=await upstream('production');
 const child=spawn(process.execPath,[fileURLToPath(new URL('../server.mjs',import.meta.url))],{env:{...process.env,PORT:'18290',LISTEN_HOST:'127.0.0.1',APP_BASE_PATH:'/p/max-service',ONE_C_TARGET:'http://127.0.0.1:'+test.address().port,ONE_C_TOKEN:'test-secret',ONE_C_PRODUCTION_TARGET:'http://127.0.0.1:'+production.address().port,ONE_C_PRODUCTION_TOKEN:'production-secret',MEDIA_BUFFER_ENABLED:'true',MEDIA_STATE_DIR:join(folder,'media'),MEDIA_CONTEXT:'test',MEDIA_S3_BUCKET:'offline',MEDIA_S3_ACCESS_KEY:'offline',MEDIA_S3_SECRET_KEY:'offline',PUSH_INSTALLATIONS_DIR:join(folder,'http-registry'),PUSH_INTERNAL_TOKEN:'offline-push',GOOGLE_APPLICATION_CREDENTIALS:''},stdio:['ignore','pipe','pipe']});
@@ -65,6 +65,11 @@ try{
   const authTest={'X-ITUS-Device':sessionTest.body.data.token},authProduction={'X-ITUS-Device':sessionProduction.body.data.token};
   assert.equal((await post('/contours/production/api/push/installation',{...installation,action:'begin'},authTest)).status,401);
   const begin=await post('/api/push/installation',{...installation,action:'begin'},authTest);assert.equal(begin.status,200);
+  const subscription={...owner,...installation,version:'i-max-2.9.3',token:'synthetic-token',requestId:'subscription-original'};
+  const subscriptionResult=await post('/api/1c/notifications/push/subscribe',subscription);
+  assert.equal(subscriptionResult.body.data.registered,true);assert.deepEqual(calls.at(-1).body,subscription,'subscription JSON is not rewritten');
+  const recorded=new PushInstallations(join(folder,'http-registry'));
+  assert.equal((await recorded.androidInstallations())[0].record.androidUpdate.version,'2.9.3');
   assert.equal((await post('/api/push/installation',{...installation,action:'bind',activationId:begin.body.data.activationId,token:'synthetic-token'},authTest)).status,200);
   const switchBegin=await post('/contours/production/api/push/installation',{...installation,action:'begin'},authProduction);assert.equal(switchBegin.status,200);
   assert.equal((await post('/api/push/installation',{...installation,action:'bind',activationId:begin.body.data.activationId,token:'synthetic-token'},authTest)).status,409);
