@@ -133,3 +133,6 @@ html,body{background:#fff;font:13px var(--sans);color:#333}
 #screen .table1c tbody tr[data-row^="taskqueue:"]{cursor:pointer}
 #screen .table1c tbody tr[data-row^="taskqueue:"]:hover{background:#fff4c8}
 #screen .form-caption .muted-caption{font-size:11px}
+
+/* Training-only simulators never masquerade as native 1C commands in form-comparison mode. */
+.sim-only{border-style:dashed!important;color:#856027!important;background:#fffdf5!important}.app-shell.only-1c .sim-only{display:none!important}
