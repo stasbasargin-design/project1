@@ -1,0 +1,72 @@
+/* Visually faithful 1C-managed-forms training shell. Reference: user-provided 1C screen captures. */
+:root{--border:#b5b5b5;--field:#fff;--pane:#fff;--ink:#303030;--link:#1c5aa5;--rust:#ac2017;--green:#13833b;--onecyellow:#ffe130;--sans:Arial,'Segoe UI',Tahoma,sans-serif}
+html,body{background:#fff;font:13px var(--sans);color:#333}
+.app-shell{background:#fff;min-height:580px}
+.system-header{box-shadow:none}.global-line{height:35px;background:#f9f9f9;border-bottom:1px solid #d2d2d2;padding:0 12px;gap:10px}.mark1c{font-size:18px;color:#ad3026}.brand-name{font-size:12px;font-weight:500;color:#474747}.test-mark{font-size:10px;color:#898989}.head-right{font-size:12px}
+.top-nav{height:36px;background:#fff;border-bottom:1px solid #ccc;gap:1px;padding:0 6px;flex-wrap:nowrap}.top-nav button{font-size:12px;color:#3e3e3e;padding:7px 12px;height:34px;border-right:1px solid transparent}.top-nav button:hover,.top-nav button.on{background:#f5f5f5;border-bottom:2px solid #c8a330}.top-nav button:last-child{margin-left:0}.top-nav .menu-separator{width:1px;height:24px;background:#d6d6d6;margin:0 4px}.nav-fill{flex:1}
+.tab-strip{height:29px;background:#f8f8f8;border-bottom:1px solid #d1d1d1;align-items:center;padding-left:14px;gap:12px}.tab-open{border:0;border-bottom:2px solid #c5a840;background:#fff;min-width:200px;padding:4px 13px 4px 10px;border-radius:0;font-size:12px}.tab-open button{font-size:15px}.tabs-hint{font-size:10px}
+.workspace{position:relative;background:#fff;flex:1;min-height:0}.work-area{padding:0 8px 14px;min-width:0;background:#fff;width:100%}
+.guide-left,.guide-right{position:fixed;z-index:85;top:100px;bottom:25px;width:315px;flex:initial;box-shadow:0 9px 23px #0002;transition:transform .16s ease;display:flex;overflow:auto}
+.guide-left{left:0;transform:translateX(-108%);background:#fff;border:1px solid #aaa}.guide-right{right:0;transform:translateX(108%);background:#fff;border:1px solid #aaa}.app-shell.drawer-left .guide-left{transform:translateX(0)}.app-shell.drawer-right .guide-right{transform:translateX(0)}.app-shell.focus-mode .guide-left,.app-shell.focus-mode .guide-right{display:flex!important;transform:translateX(-108%)}.app-shell.focus-mode .guide-right{transform:translateX(108%)}.app-shell.focus-mode.drawer-left .guide-left{transform:translateX(0)}.app-shell.focus-mode.drawer-right .guide-right{transform:translateX(0)}
+.guide-title{background:#f4f4f4;color:#424242;padding:12px 13px;border-color:#d1d1d1}.guide-caption{color:#676767}.help-instruction{background:#f6f6f6;border-color:#ddd}.scenario-step.active{border-color:#d6bc50;background:#fff9df}
+.form-caption{font-size:21px;height:40px;gap:5px;line-height:36px;color:#191919}.star{font-size:23px}.form-tabs{height:38px;margin:0 0 8px;align-items:center;gap:4px}.form-tab{color:#1758a7;padding:9px 11px;white-space:nowrap;text-decoration:underline;font-size:12px}.form-tab.active{background:#efefef;color:#333;text-decoration:none}.toolbar{margin:4px 0 9px;gap:5px;min-height:28px;flex-wrap:wrap}.btn{min-height:27px;padding:4px 9px;background:linear-gradient(#fff,#f2f2f2);border:1px solid #aaa;border-radius:1px;box-shadow:none;font-size:12px}.btn-primary{background:linear-gradient(#ffed75,#ffd600);border:1px solid #ccaf1b;color:#222}.btn:hover{background:#fdf4d8}.btn-primary:hover{background:#ffe461}.btn-icon{font-size:14px;min-width:29px}.surface-tabs{margin:8px 0 6px}.surface-tabs button{font-size:12px;background:#eee;padding:7px 12px;margin:0 1px 0 0}.surface-tabs button.active{background:#fff}
+.field{min-height:26px;margin:2px 0;gap:6px}.field>label{font-size:12px;color:#555;width:115px}.entry,.select1c{height:25px;border:1px solid #b9b9b9;border-radius:0;box-shadow:none;font-size:12px;padding:2px 5px}.entry:focus,.select1c:focus,.area:focus{border-color:#d3a721;outline:1px solid #ecbf1c;background:#fffdf2}.ref-action{font-size:11px;background:#f7f7f7;width:24px;border-color:#b9b9b9}.area{border:1px solid #b5b5b5;box-shadow:none;font-size:12px;min-height:108px}.group-label{font-size:12px;font-weight:600;color:#a11b13}.section-title{font-size:13px;color:#088644}.status-strip{background:#f7f7f7;border:1px solid #e5e5e5;color:#666}.feedback{background:#fafafa;border:1px solid #ddd;color:#555}.feedback.good{color:#1c7138;background:#f2faf4}.feedback.bad{color:#aa1d19;background:#fff0f0}
+.table1c{border-color:#c3c3c3;font-size:12px}.table1c th{background:linear-gradient(#f5f5f5,#ebebeb);padding:6px 7px;border-color:#c7c7c7;line-height:16px}.table1c td{height:27px;padding:5px 7px;border-color:#e3e3e3}.table1c tbody tr.selected{background:#ffe893}.table-empty{background:#fff;min-height:95px;color:#999}.table1c tbody tr:hover{background:#fff2c4}
+/* Event: four fixed functional areas as seen in the 1C form, with right-hand registries. */
+.bigdoc-event{display:grid;grid-template-columns:minmax(280px,1.55fr) minmax(260px,1.30fr) minmax(162px,.62fr) minmax(280px,1.1fr);column-gap:15px;row-gap:7px;min-height:615px}.bigdoc-event .field>label{width:104px}.bigdoc-event .field{margin:3px 0}.bigdoc-event .area{min-height:184px;height:184px;resize:vertical;border-bottom:1px dotted #bd5555}.bigdoc-event .event-reco{grid-column:1/4}.bigdoc-event .event-bottom{grid-column:1/4}.bigdoc-event .event-right{grid-column:4;grid-row:1/4}.event-right .table1c th{font-size:11px}.event-right section:first-child .table-empty{height:114px}.event-right section:nth-child(2) .table-empty{height:152px}.event-right section:nth-child(3) .table-empty{height:120px}.event-right section{margin-bottom:5px}.quick-create{height:67px;border-color:#b7b7b7;background:linear-gradient(#fff,#eee);font-size:12px}.quick-create .qicon{font-size:30px;color:#ee751b;width:52px}.quick-create:hover{background:#fff4d7}.event-reco .inline-fields{gap:5px}.event-reco .inline-fields .entry{height:25px}.event-reco .inline-fields>label{font-size:11px}.bigdoc-event .event-reco .table-empty{min-height:155px}
+/* Counterparty form modeled on user's real 1C screenshot */
+.cp-header{display:grid;grid-template-columns:232px minmax(290px,1fr) 155px 145px;gap:10px;align-items:start}.cp-header .entry,.cp-header .select1c{height:29px}.cp-header .cp-extra{color:#1d5da5;font-size:12px;line-height:29px}.cp-secondary{display:flex;gap:14px;align-items:center;margin:9px 0;color:#555;font-size:12px}.cp-secondary label{display:flex;align-items:center;gap:6px}.cp-fields{display:grid;grid-template-columns:minmax(400px,1.2fr) minmax(250px,.9fr);gap:20px}.cp-fields .field>label{width:135px}.cp-fields .control{max-width:520px}.cp-fields .section-title{margin:12px 0 7px}.cp-side{margin-top:40px;padding-left:0}
+/* Actual vehicle model matching is a three-table selector. */
+.modal.vehicle-picker{width:min(1450px,96vw);height:min(870px,90vh)}.vehicle-picker .modal-body{padding:10px;flex:1;display:flex;flex-direction:column;overflow:auto}.vehicle-details{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:9px}.vehicle-details p{margin:6px 0;font-size:12px}.vehicle-picker-two{display:grid;grid-template-columns:1fr 1fr;gap:9px;flex:1;min-height:185px}.vehicle-picker-three{display:grid;grid-template-columns:2fr .8fr;gap:9px;margin-top:9px;min-height:160px}.vehicle-lookup-list{border:1px solid #c5c5c5;min-width:0;display:flex;flex-direction:column}.vehicle-lookup-list input{border:1px solid #bbb;height:26px;padding:4px}.vehicle-lookup-list table{width:100%}.vehicle-lookup-list .table-scroll{overflow:auto;flex:1}.vehicle-lookup-list th{background:#f0f0f0;border:1px solid #c6c6c6;text-align:left;padding:6px;font-weight:400}.vehicle-lookup-list td{padding:6px;border-bottom:1px solid #ddd;cursor:pointer}.vehicle-lookup-list tr:hover{background:#fff1bf}.vehicle-lookup-list tr.chosen{background:#ffe68d}.vehicle-empty{color:#aaa;font-size:12px;padding:30px 10px}
+/* 1C-like modal from the screenshots, not a design-system dialog */
+#modalLayer{background:#0002;padding:14px}.modal{border:1px solid #999;box-shadow:0 10px 32px #0003;border-radius:0}.modal-head{background:#f9f9f9;font-size:17px;padding:8px 11px;border-bottom:1px solid #ccc}.modal-body{padding:10px}.modal-actions{background:#fafafa;padding:9px}.modal-search input{font-size:12px}.hover-tip{background:#fffce0;border:1px solid #adab91;box-shadow:0 3px 12px #0002;max-width:320px;color:#333}.status-line{height:24px;background:#fbfbfb;border-color:#ddd;font-size:11px}
+/* Examination ribbon and learning layers are outside the 1C form and reversible */
+.mode-pill{border:1px solid #cacaca!important;background:#f5f5f5!important;color:#333!important;font-size:12px!important;border-radius:1px}.mode-pill.is-exam{border-color:#e3c251!important;background:#fff6cf!important}.mode-pill.is-exam:before{content:'● ';color:#bd7e0c}.training-ribbon{border-bottom:1px solid #dedede;background:#fffdf1;padding:6px 13px;display:flex;align-items:center;gap:11px;color:#555;font-size:12px}.training-ribbon strong{font-weight:600;color:#333}.training-ribbon button{background:#fff;border:1px solid #ccc;padding:4px 9px}.training-ribbon .progressline{height:5px;flex:1;max-width:170px;background:#eee}.training-ribbon .progressline span{display:block;height:5px;background:#ddbc50}.training-ribbon a{color:#1d5ca6;cursor:pointer}.training-ribbon .exam-label{font-size:11px;color:#935b17}.app-shell.exam-mode .hover-tip{display:none!important}.app-shell.exam-mode .spotlight{outline:none!important;box-shadow:none!important;background:inherit!important}
+/* Interactive list rows in cars and registries */
+.list-filter{display:flex;align-items:center;gap:9px;background:#f9f9f9;padding:7px;border:1px solid #ddd}.list-filter .entry{width:320px}.doc-navigation{text-overflow:ellipsis}.focus-note{font-size:10px;color:#888}
+@media(max-width:1400px){.bigdoc-event{grid-template-columns:minmax(255px,1.5fr) minmax(245px,1.3fr) minmax(145px,.75fr) minmax(240px,1.1fr);gap:7px}.quick-create{height:60px}.cp-header{grid-template-columns:190px minmax(260px,1fr) 140px 90px}}
+@media(max-width:1100px){.bigdoc-event{grid-template-columns:minmax(270px,1fr) minmax(270px,1fr);gap:8px}.bigdoc-event .event-buttons{grid-column:1;grid-row:2}.bigdoc-event .event-right{grid-column:2;grid-row:2/5}.bigdoc-event .event-reco{grid-column:1}.bigdoc-event .event-bottom{grid-column:1}.cp-header{grid-template-columns:190px minmax(250px,1fr);gap:5px}.cp-fields{grid-template-columns:1fr}.training-ribbon .progressline{display:none}}
+@media(max-width:700px){.guide-left,.guide-right{top:100px;width:min(310px,94vw)}.form-caption{font-size:16px}.top-nav{overflow-x:auto}.bigdoc-event{grid-template-columns:1fr}.bigdoc-event>*{grid-column:1!important;grid-row:auto!important}.cp-header{grid-template-columns:1fr}.training-ribbon{flex-wrap:wrap}.vehicle-picker-two,.vehicle-picker-three,.vehicle-details{grid-template-columns:1fr}}
+
+/* v3.1 — corrections grounded in the screenshots in user's manuals */
+.cp-notifications{display:flex;flex-direction:column;gap:1px;margin:7px 0 10px;padding:0 8px;font-size:13px;color:#383838}
+.cp-notification-row{min-height:28px;display:flex;align-items:center;gap:8px}
+.cp-notification-row .checkline{margin:0;min-height:22px}
+.cp-notification-row span{min-width:210px}
+.cp-notification-row input[type=radio]{accent-color:#1d9751;vertical-align:middle;margin-left:6px}
+.cp-header+.cp-secondary{margin-left:285px;max-width:calc(100% - 295px);margin-top:3px;margin-bottom:10px}
+.cp-header+.cp-secondary .entry{width:min(100%,950px);height:29px}
+.cp-fields{padding:0 0 0 22px}
+.cp-fields .field>label{width:160px}
+.cp-fields .field .control{max-width:515px}
+.cp-side{margin-top:40px}
+.vehicle-picker-tabs .form-tabs{margin:0 0 7px;height:35px}
+.vehicle-picker-toolbar{display:flex;gap:7px;align-items:center;margin:4px 0 9px}
+.vehicle-picker-caption{color:#198b41;font-size:13px;margin:4px 0 6px}
+#modalLayer .vehicle-picker{width:calc(100vw - 12px);height:calc(100vh - 12px);max-height:none}
+#modalLayer .vehicle-picker .modal-head{font-size:20px;background:white;border-bottom:0;height:38px}
+#modalLayer .vehicle-picker .modal-body{padding:6px 9px;min-height:0}
+#modalLayer .vehicle-picker .modal-actions{display:none}
+#modalLayer .vehicle-picker .vehicle-picker-two{min-height:210px;max-height:39vh;grid-template-columns:1fr 1fr}
+#modalLayer .vehicle-picker .vehicle-picker-three{min-height:180px;max-height:31vh;grid-template-columns:2fr .8fr}
+#modalLayer .vehicle-picker .vehicle-details{min-height:110px}
+#modalLayer .vehicle-picker .vehicle-details p{margin:8px 0}
+#modalLayer .vehicle-picker .vehicle-lookup-list th{background:linear-gradient(#f5f5f5,#eaeaea)}
+#modalLayer .vehicle-picker .vehicle-lookup-list tr.chosen{background:#ffe999}
+/* Dedicated viewing mode: the form is not obscured by trainer-specific chrome. */
+.one-c-floating{position:fixed;top:4px;right:6px;z-index:110;border:1px solid #c5c5c5;background:#fff;opacity:.78;padding:5px 9px;font-size:11px;cursor:pointer}
+.one-c-floating:hover,.one-c-floating:focus{opacity:1;background:#fff4ca}
+.training-ribbon.ribbon-idle{display:none}
+.app-shell.only-1c .system-header,.app-shell.only-1c .tab-strip,.app-shell.only-1c .training-ribbon,.app-shell.only-1c .status-line{display:none!important}
+.app-shell.only-1c .work-area{padding:0 6px 10px}
+.app-shell.only-1c .workspace{height:100vh}
+.app-shell.only-1c .form-caption{height:40px}
+.app-shell.only-1c .guide-left,.app-shell.only-1c .guide-right{top:42px;bottom:10px}
+.app-shell.only-1c+.one-c-floating{z-index:120}
+@media(max-width:1000px){.cp-header+.cp-secondary{margin-left:0;max-width:100%}.cp-fields{padding-left:7px}.cp-fields .field>label{width:138px}}
+
+/* The original 1C vehicle selector opens as a full work-form, not a web popover */
+#modalLayer:has(.vehicle-picker){padding:0;background:#fff}
+#modalLayer .vehicle-picker{width:100vw;height:100vh;border:0;box-shadow:none}
+#modalLayer .vehicle-picker .modal-body{padding:5px 8px;}
+#modalLayer .vehicle-picker .modal-head{padding:7px 10px}
