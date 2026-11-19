@@ -289,14 +289,27 @@ body.messenger-view footer{display:none}
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
   let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
   const created = new Map();
-  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',workshopRef:'review-workshop',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
+  const defectDocumentRef = 'review-defect-sheet';
+  const defectEntries = [{entryRef:'review-defect-1',type:'text',text:'При осмотре обнаружена царапина на правом крыле.',author:'Мастер-приёмщик'}];
+  const reviewOrder = () => ({orderRef:'review-order',orderNumber:'ЗН-УРВ-001',defectDocumentRef,workshopRef:'review-workshop',vehicle:{model:'Тестовый автомобиль',plate:'А001АА'},worktime:packageData || {}});
   window.fetch = async (url,options={}) => {
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
     let data = {};
     if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true,reactionEncoding:'code-v1'}}};
-    else if(method === '/orders/list') data={orders:allowedRole === 'executor' ? [reviewOrder()] : []};
+    else if(method === '/orders/list') data={orders:[reviewOrder()]};
     else if(method === '/orders/get') data={order:reviewOrder()};
+    else if(method === '/defects/start' && body.orderRef === 'review-order')
+      data={documentRef:defectDocumentRef,entries:defectEntries};
+    else if(method === '/defects/entries/add' && body.orderRef === 'review-order' &&
+      body.documentRef === defectDocumentRef && body.entry?.type === 'text' && body.clientEntryId && body.entry.text?.trim()){
+      let entry=defectEntries.find(item=>item.clientEntryId===body.clientEntryId);
+      if(!entry){
+        entry={entryRef:'review-defect-'+(defectEntries.length+1),clientEntryId:body.clientEntryId,type:'text',text:body.entry.text,author:'Тестовый сотрудник ИТУС',createdAt:new Date().toISOString()};
+        defectEntries.push(entry);
+      }
+      data={entry};
+    }
     else if(method.startsWith('/worktime/')) {
       try { window.ITUS_WORKTIME.validateRequest(method,body); }
       catch(error) { return new Response(JSON.stringify({success:false,error:{code:'VALIDATION_ERROR',message:error.message}}),{status:400,headers:{'Content-Type':'application/json'}}); }

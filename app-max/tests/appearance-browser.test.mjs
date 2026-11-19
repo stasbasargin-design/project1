@@ -89,6 +89,19 @@ try{
   assert.equal(await evaluate(`Boolean(document.querySelector('[data-action="msg-message-menu"]'))`),true);
   await evaluate(`document.querySelector('[data-action="msg-message-menu"]').click()`);await waitFor('.message-actions-dialog[open]');await screenshot('chat-actions-dark');
   await evaluate(`document.querySelector('.message-actions-dialog').close()`);
+  await navigate(`http://127.0.0.1:${server.address().port}/?role=master`);
+  await waitFor('#orderSearch');
+  await evaluate(`document.querySelector('[data-view="mp"]').click()`);
+  await waitFor('[data-action="open-defect-chat"]');
+  await evaluate(`document.querySelector('[data-action="open-defect-chat"]').click()`);
+  await waitFor('#defectText');
+  await evaluate(`document.querySelector('#defectText').focus()`);
+  await send('Input.insertText',{text:'Учебная запись о дефекте'});
+  await evaluate(`document.querySelector('[data-action="send-defect-text"]').click()`);
+  await waitFor('.defect-history .entry:nth-child(2)');
+  await evaluate(`document.querySelector('#closeSheetButton').click();document.querySelector('[data-action="open-defect-chat"]').click()`);
+  await waitFor('.defect-history .entry:nth-child(2)');
+  assert.match(await evaluate(`document.querySelector('.defect-history').textContent`),/Учебная запись о дефекте/);
   console.log('Appearance browser: holiday boundaries/off switch, light/dark settings at 320–1200px, preserved role actions, visible message menu, read-only reason refresh OK.');
   await send('Browser.close');socket.close();
 }finally{
