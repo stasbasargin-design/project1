@@ -12,7 +12,7 @@ entries.splice(1,0,{entryRef:'photo-entry',type:'photo',text:'',file:{fileRef:'p
 entries.splice(2,0,{entryRef:'video-entry',type:'video',file:{fileRef:'video-ref',fileName:'sample.mp4',mimeType:'video/mp4',contentBase64:'AAAA',sizeBytes:3}});
 const order={orderRef:'order-one',orderNumber:'Synthetic order',defectDocumentRef:'defect-one'};
 const history=Array.from({length:55},(_,i)=>({messageRef:'message-'+i,text:'Synthetic history line '+i,authorName:'Synthetic author',createdAt:'2026-11-13T08:'+String(i).padStart(2,'0')+':00Z'}));
-const staffHistory=history.map(x=>({...x})),reactionResponses=[];let muted=[],latestClient='client-one';
+const staffHistory=history.map(x=>({...x})),reactionResponses=[],historyResponses=[];let muted=[],latestClient='client-one',holdHistory=false;
 const server=createServer(async(req,res)=>{
   const path=new URL(req.url,'http://synthetic.invalid').pathname;
   if(path==='/api/media/download/'+'b'.repeat(48)){res.setHeader('Content-Type','image/png');res.end(Buffer.from(image,'base64'));return;}
@@ -27,7 +27,10 @@ const server=createServer(async(req,res)=>{
     else if(path.endsWith('/defects/start'))data={documentRef:'defect-one',entries};
     else if(path.endsWith('/topics/list'))data={topics:[{topicRef:'client-one',title:'Synthetic client one',orderRef:order.orderRef,orderNumber:order.orderNumber,lastMessageAt:'2026-11-01T10:00:00Z',updatedAt:'2099-01-01T10:00:00Z'},{topicRef:'client-two',title:'Synthetic client two',createdAt:'2099-11-17T10:00:00Z',lastMessageAt:latestClient==='client-two'?'2026-12-01T10:00:00Z':null}]};
     else if(path.endsWith('/groups/list'))data={groups:[{groupRef:'staff-one',title:'Передача смены',isCommon:true}]};
-    else if(path.endsWith('/messages/list'))data={messages:path.includes('/internal-chat/')?staffHistory:history};
+    else if(path.endsWith('/messages/list')){
+      data={messages:path.includes('/internal-chat/')?staffHistory:history};
+      if(holdHistory){historyResponses.push({res,accept(){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data}));},reject(){res.writeHead(503,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,error:{message:'Synthetic history failure'}}));}});return;}
+    }
     else if(path.endsWith('/contacts/list'))data={contacts:[]};
     else if(path.endsWith('/media/session'))data={token:'a'.repeat(64),expires:Date.now()+3600000};
     else if(path.endsWith('/media/attachment'))data={ticket:'b'.repeat(48)};
@@ -103,6 +106,27 @@ try{
     await click('[data-action="msg-source"][data-source="'+source+'"]');await wait('document.querySelector("[data-action=msg-open]")');
     if(source==='clients')assert.equal(await evaluate('document.querySelector("[data-action=msg-open]").dataset.ref'),'client-one','a new client without messages remains below an existing conversation');
     await click('[data-action="msg-open"]');await wait('document.querySelector("#msgDraft")');await wait('document.querySelectorAll(".msg-bubble").length>10');
+    assert.equal(await evaluate('document.querySelector("[data-action=msg-refresh-messages]").disabled'),false,source+' refresh is enabled after opening');
+    // Hold the real browser request to cover busy, duplicate click, success,
+    // failure and retry. Completing a partial history render must not replace
+    // the composer or lose text typed while the request is in flight.
+    for(const outcome of ['success','failure','retry']){
+      holdHistory=true;const before=historyResponses.length;
+      await click('[data-action="msg-refresh-messages"]');
+      for(let n=0;n<200&&historyResponses.length===before;n++)await new Promise(r=>setTimeout(r,10));
+      assert.equal(historyResponses.length,before+1);
+      assert.equal(await evaluate('document.querySelector("[data-action=msg-refresh-messages]").disabled'),true);
+      assert.equal(await evaluate('document.querySelector("[data-action=msg-refresh-messages]").getAttribute("aria-busy")'),'true');
+      await click('[data-action="msg-refresh-messages"]');assert.equal(historyResponses.length,before+1,'disabled duplicate click does not send a request');
+      await draft('Keep refresh draft');await evaluate('window.__refreshDraft=document.querySelector("#msgDraft");__refreshDraft.setSelectionRange(5,5)');
+      holdHistory=false;historyResponses[before][outcome==='failure'?'reject':'accept']();
+      await wait('document.querySelector("[data-action=msg-refresh-messages]:not(:disabled)")');
+      assert.equal(await evaluate('document.querySelector("[data-action=msg-refresh-messages]").getAttribute("aria-busy")'),'false');
+      assert.equal(await evaluate('document.querySelector("[data-action=msg-refresh-messages]").classList.contains("is-pending")'),false);
+      assert.equal(await evaluate('document.querySelector("#msgDraft")===__refreshDraft'),true,'completion preserves composer node');
+      assert.equal(await evaluate('__refreshDraft.value'),'Keep refresh draft');assert.equal(await evaluate('__refreshDraft.selectionStart'),5);
+      await draft('');
+    }
     assert.equal(await evaluate('Boolean(document.querySelector("[data-action=msg-reply]"))'),false,'no permanent action buttons');
     await gesture('.msg-bubble[data-message-ref="message-54"]','swipe');
     if(source==='staff'){assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true,'internal swipe selects quote');await click('[data-action="msg-reply-cancel"]');}
@@ -227,7 +251,7 @@ try{
   assert.equal(await evaluate('__enqueued.length'),0);const ids=await evaluate('__forwardIds.slice()');
   await click('#defectForwardDialog[open] [data-forward-action="send"]');await wait('__enqueued.length===1');const forwarded=await evaluate('__enqueued[0]');assert.equal(forwarded.length,2);assert.equal(forwarded[0].clientMessageId,ids[0]);assert.equal(forwarded[0].requestId,ids[1]);assert.equal(forwarded[1].file.clientFileId,ids[2]);
   await evaluate('__testForward.toggle(0,true);__testForward.open();__fakeContext={...__fakeContext,session:{scope:"test|another",generation:2}}');await click('#defectForwardDialog[open] [data-forward-action="topics"]');await wait('document.querySelector("#defectForwardDialog[open] [role=alert]")');assert.equal(await evaluate('__enqueued.length'),1);await evaluate('__testForward.close()');
-  console.log('Chat/defect browser: both composers grow/shrink and preserve cursor/history/draft; media retains document in MP/executor/tech; explicit client forwarding saves exact selected bytes once, preserves IDs on preparation failure and blocks owner changes.');
+  console.log('Chat/defect browser: staff/client refresh busy/success/error/retry restores the button, blocks duplicate requests and preserves composer/caret; both composers grow/shrink; media retains document in MP/executor/tech; explicit client forwarding preserves bytes, IDs and owner isolation.');
   await send('Browser.close');socket.close();
 }catch(error){console.error('Synthetic browser failure:',error.message,stderr.slice(-1800));throw error;
-}finally{socket?.close();child.kill();for(const response of held)response.destroy();for(const response of reactionResponses)response.res.destroy();server.closeAllConnections();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}
+}finally{socket?.close();child.kill();for(const response of held)response.destroy();for(const response of [...reactionResponses,...historyResponses])response.res.destroy();server.closeAllConnections();server.close();try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}}
