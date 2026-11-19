@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#f7f7f7">
+<title>1С:Альфа-Авто 6.1 — интерактивный WEB-тренажёр</title>
+<link rel="stylesheet" href="src/styles.css"><link rel="stylesheet" href="src/skin.css">
+</head>
+<body>
+<div id="app" class="app-shell">
+<header class="system-header">
+ <div class="global-line"><span class="mark1c" data-help="Учебная копия интерфейса 1С. Не подключается к рабочей или тестовой базе.">1С</span><span class="brand-name">Альфа-Авто 6.1 — учебный симулятор v7</span><span class="test-mark">Все записи вымышленные. Работа производится только в браузере.</span><span class="head-right">⌕　☰　⚙　<span id="clock"></span></span></div>
+ <nav class="top-nav" id="topNav" aria-label="Разделы">
+ <button data-nav="desktop" data-help="Главное — рабочий стол первой линии CRM и очередь обращений.">⌂ Главное</button>
+ <button data-nav="event" data-help="CRM ЕвроАзия — документ «Событие», задачи и взаимодействия с клиентами.">▤ CRM ЕвроАзия</button>
+ <button data-nav="estimate" data-help="Продажи — калькуляции на работы и запасные части.">▤ Продажи</button>
+ <button data-nav="repair" data-help="Автосервис — заказ-наряды и оформление ремонта.">⚒ Автосервис</button>
+ <button data-nav="contacts" data-help="Справочники — контрагенты и контактные лица.">♧ Справочники</button>
+ <span class="nav-fill"></span><span class="menu-separator"></span>
+ <button id="toggleTutor" data-help="Открыть меню учебных документов и отдельных сценариев.">☷ Сценарии</button>
+ <button id="showInfo" data-help="Открыть панель с объяснением назначения объектов и подсказками.">ⓘ Справка</button>
+ <button id="modeSwitch" class="mode-pill" data-help="Выбрать «Обучение» или «Экзамен». В экзамене подсказки скрыты.">◉ Обучение</button>
+ </nav>
+</header><button id="viewSwitch" class="one-c-floating" title="Вид только формы 1С: скрыть или вернуть учебную оболочку">Вид только формы 1С</button>
+<div class="tab-strip"><span class="tab-open" id="openTab">▣ Рабочий стол первой линии CRM <button id="tabReset" title="Вернуться на рабочий стол" aria-label="Закрыть вкладку">×</button></span><span class="tabs-hint">Учебная копия. Без доступа к 1С.</span></div>
+<div class="training-ribbon" id="trainingRibbon"><strong id="ribbonTitle">Режим обучения</strong><span id="ribbonTask">Выберите сценарий — поля и документы доступны для самостоятельной работы.</span><div class="progressline"><span id="ribbonProgress"></span></div><button id="ribbonHelp" title="Объяснить текущий шаг">? Подсказка</button></div>
+<div class="workspace">
+<aside class="guide-left" id="guideLeft" aria-label="Сценарии и документы">
+ <div class="guide-title">УЧЕБНЫЕ СЦЕНАРИИ <button id="leftClose" aria-label="Закрыть панель">×</button></div>
+ <div class="guide-block"><div class="guide-caption">ОТКРЫТЬ ДОКУМЕНТ</div><div id="docNav" class="doc-nav"></div></div>
+ <div class="guide-block"><div class="guide-caption">ПРАКТИЧЕСКИЕ ЗАДАНИЯ</div><div id="scenarioList"></div></div>
+ <div class="guide-bottom"><button id="resetAll" data-help="Очистить только введённые в тренажёре данные после подтверждения.">↻ Сбросить учебные данные</button><span>Автосохранение локально в браузере</span></div>
+</aside>
+<main class="work-area" id="workArea"><div id="screen"></div></main>
+<aside class="guide-right" id="guideRight" aria-label="Объяснения и текущий шаг">
+ <div class="guide-title">ПОДСКАЗКИ ПО 1С <button id="rightClose" aria-label="Закрыть панель">×</button></div>
+ <div class="help-instruction">В режиме обучения наведите мышь на элемент формы или перейдите к нему клавишей Tab. Откроется объяснение назначения и действий.</div>
+ <div class="help-topic" id="helpTopic"><strong>Знакомство с 1С</strong><p>Выберите сценарий, затем самостоятельно заполните документ. Подсказки не вводят значения вместо пользователя.</p></div>
+ <div class="guide-caption">ШАГИ ВЫБРАННОГО СЦЕНАРИЯ</div><div class="scenario-card" id="scenarioCard"></div>
+ <div class="right-footer"><button id="startHelp" data-help="Показать назначение и расположение объекта на текущем шаге.">? Подсказка по шагу</button><button id="stopScenario">Закончить сценарий</button></div>
+</aside>
+</div>
+<footer class="status-line"><span>● Готово</span><span id="statusText">Наведите курсор на элемент формы, чтобы узнать его назначение.</span><span>Учебная версия · реальная база 1С не затрагивается</span></footer>
+</div>
+<div id="modalLayer"></div><div id="toast" aria-live="polite"></div>
+<script src="src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+name: Alfa-Auto v7 Browser Regression (35 checks)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v7-20261119
+    paths:
+      - 'alfa-auto-simulator-v7/**'
+      - '.github/workflows/alfa-auto-v7-browser.yml'
+permissions:
+  contents: read
+jobs:
+  chromium:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check JavaScript
+        run: node --check alfa-auto-simulator-v7/src/app.js
+      - name: Rebuild autonomous HTML
+        run: |
+          python alfa-auto-simulator-v7/build.py
+          git diff --exit-code -- alfa-auto-simulator-v7/AlfaAuto_Trainer_v7.html
+      - name: Install Chromium
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: V4 behavior regression (9)
+        run: python alfa-auto-simulator-v7/qa/test_v4_regression.py
+      - name: V5 CRM regression (12)
+        run: python alfa-auto-simulator-v7/qa/test_v5_browser.py
+      - name: V6 quote workflow regression (6)
+        run: python alfa-auto-simulator-v7/qa/test_v6_workflows.py
+      - name: V7 real-desktop and event checks (8)
+        run: python alfa-auto-simulator-v7/qa/test_v7_desktop_events.py
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfa-auto-v7-evidence
+          path: |
+            alfa-auto-simulator-v7/qa/*.png
+            alfa-auto-simulator-v7/qa/*results.json

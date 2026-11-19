@@ -1,0 +1,40 @@
+{
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "pageErrors": [],
+  "tests": [
+    {
+      "name": "Desktop uses the three actual 1C work zones and compact top filter",
+      "passed": true
+    },
+    {
+      "name": "Responsibles are individually selected, saved and reopened",
+      "passed": true
+    },
+    {
+      "name": "Desktop search and only-with-tasks toggle affect actual visible rows",
+      "passed": true
+    },
+    {
+      "name": "Event reason does not prefill narrative; result is mandatory",
+      "passed": true
+    },
+    {
+      "name": "Event is saved with a record ID; next fresh event cannot inherit its result",
+      "passed": true
+    },
+    {
+      "name": "Desktop opens the exact saved repair appointment",
+      "passed": true
+    },
+    {
+      "name": "Three work zones remain available on 1200-pixel display",
+      "passed": true
+    },
+    {
+      "name": "Responsible filter changes the real task queue, not just its label",
+      "passed": true
+    }
+  ]
+}
