@@ -6,7 +6,9 @@ root=Path(__file__).resolve().parents[1]
 html=(root/'AlfaAuto_Trainer_v6.html').read_text(encoding='utf-8')
 results=[];errors=[]
 with sync_playwright() as pw:
- browser=pw.chromium.launch(headless=True,executable_path='/usr/bin/chromium',args=['--no-sandbox','--disable-dev-shm-usage'])
+ launch_opts={'headless':True,'args':['--no-sandbox','--disable-dev-shm-usage']}
+ if Path('/usr/bin/chromium').exists():launch_opts['executable_path']='/usr/bin/chromium'
+ browser=pw.chromium.launch(**launch_opts)
  def page_new():
   context=browser.new_context(viewport={'width':1680,'height':980},locale='ru-RU',accept_downloads=True)
   p=context.new_page();p.set_default_timeout(5500)
