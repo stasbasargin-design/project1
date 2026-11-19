@@ -24,6 +24,9 @@ public final class UpdatePolicy {
     public static String hex(byte[] bytes) {
         StringBuilder out = new StringBuilder();for (byte b : bytes) out.append(String.format("%02x", b & 255));return out.toString();
     }
+    public static boolean shouldNotify(long installed, long offered, long lastNotified) {
+        return offered>installed && offered>lastNotified && offered<=2100000000L;
+    }
     public static boolean matches(String expected, byte[] actual) {
         return MessageDigest.isEqual(expected.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
             hex(actual).getBytes(java.nio.charset.StandardCharsets.US_ASCII));

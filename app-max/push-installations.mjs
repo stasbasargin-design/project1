@@ -1,4 +1,4 @@
-import {mkdir,readFile,open,rename,rm,stat} from 'node:fs/promises';
+import {mkdir,readFile,open,rename,rm,stat,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import './assets/chat-policy.js';
@@ -83,5 +83,24 @@ export class PushInstallations{
     const chat=globalThis.ITUS_CHAT_POLICY.pushThread(data);
     if(chat&&(await this.preferences(record.userId,environment)).muted.some(x=>x.source===chat.source&&x.ref===chat.ref))return null;
     return {environment,activationId:record.activationId};
+  }
+  async confirmedAndroidSubscription(environment,input,expectedActivation){
+    const version=String(input?.version||'').replace(/^i-max-/,'');
+    if(input?.platform!=='android'||!/^\d+\.\d+\.\d+$/.test(version)||!['test','production'].includes(environment)
+      ||typeof input.token!=='string'||!input.token.trim()||input.token.length>4096||!/^\d{1,30}$/.test(String(input.userId)))return false;
+    const userId=String(input.userId);
+    if([input.maxUserId,input.authId,input.max?.userId,input.max?.maxUserId].some(x=>x!=null&&String(x)!==userId))return false;
+    const key=this.key('android',input.clientInstanceId);
+    return this.locked(key,async()=>{
+      const current=await this.read(key);
+      if(!current||current.userId!==userId||current.environment!==environment||(expectedActivation&&current.activationId!==expectedActivation))return false;
+      await this.write(key,{...current,androidUpdate:{version,token:input.token}});return true;
+    });
+  }
+  async androidInstallations(){
+    let names;try{names=await readdir(this.directory);}catch(error){if(error.code==='ENOENT')return [];throw error;}
+    const result=[];
+    for(const name of names){if(!/^[a-f0-9]{64}\.json$/.test(name))continue;const key=name.slice(0,-5),record=await this.read(key);if(record?.androidUpdate)result.push({key,record});}
+    return result;
   }
 }

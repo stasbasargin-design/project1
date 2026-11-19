@@ -2226,6 +2226,7 @@
   function normalizePushTarget(data) {
     const payload = data?.data && typeof data.data === 'object' ? data.data : data;
     const type = String(payload?.type || '').trim();
+    if(type==='app_update_available')return /^\d+\.\d+\.\d+$/.test(payload.version||'')&&/^\d{1,10}$/.test(String(payload.versionCode||''))&&Number(payload.versionCode)>0&&Number(payload.versionCode)<=2100000000?{type,eventId:String(payload.eventId||'app-update-'+payload.versionCode)}:null;
     const orderRef = String(payload?.orderRef || payload?.orderId || '').trim();
     const topicRef = String(payload?.topicRef || payload?.topicId || '').trim();
     if (type === 'internal_chat_message') return topicRef ? {type,topicRef,eventId:String(payload?.eventId || payload?.notificationId || payload?.messageId || '')} : null;
@@ -2250,6 +2251,7 @@
     toast(target.message || 'Открыт запрос выходного контроля');
   }
   async function applyPushTarget(target) {
+    if(target.type==='app_update_available'){appUpdater?.show();return;}
     if (target.type === 'internal_chat_message') {
       if (!state.views.chat) throw new Error('Внутренние чаты недоступны для вашей роли');
       await setView('chat');

@@ -21,7 +21,7 @@ const server=createServer(async(req,res)=>{
   const file=path==='/'?join(root,'index.html'):resolve(root,'.'+path);
   if(!file.startsWith(root)||!existsSync(file)){res.writeHead(404).end();return;}
   res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.css':'text/css','.js':'text/javascript','.svg':'image/svg+xml','.png':'image/png'}[extname(file)]||'text/plain'));
-  const content=readFileSync(file);res.end(file.endsWith(join('assets','app.js'))?content.toString().replace('  if (state.userId) initialize();',"  window.__updateGate=()=>({busy:state.busy,queueResume:Boolean(queueResumeJob),requests:sessionRequests.size,pendingActions:[...pendingActions],operations:state.queuedOperations,overlay:$('overlay').className});\n  if (state.userId) initialize();"):content);
+  const content=readFileSync(file);res.end(file.endsWith(join('assets','app.js'))?content.toString().replace('  if (state.userId) initialize();',"  window.__updatePush=data=>openPushTarget(data);window.__updateGate=()=>({busy:state.busy,queueResume:Boolean(queueResumeJob),requests:sessionRequests.size,pendingActions:[...pendingActions],operations:state.queuedOperations,overlay:$('overlay').className});\n  if (state.userId) initialize();"):content);
 });await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const browser=[process.env.CHROME_PATH,'/usr/bin/google-chrome','/usr/bin/chromium','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean).find(existsSync);assert.ok(browser);
 const profile=mkdtempSync(join(tmpdir(),'imax-update-browser-')),child=spawn(browser,['--headless=new','--disable-gpu','--no-first-run','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});let socket,stderr='';child.stderr.on('data',b=>stderr+=b);
@@ -41,6 +41,12 @@ try{
   assert.equal(await evaluate('__updates.checks'),1);assert.equal(await evaluate('Boolean(window.UNSAFE)'),false);assert.equal(await evaluate('document.querySelector("#appUpdateDialog img")!==null'),false,'release notes are plain text');
   await evaluate('ITUS_APP_UPDATE_CLIENT.check()');assert.equal(await evaluate('__updates.checks'),1,'ordinary resume retains bounded polling');
   await evaluate('ITUS_APP_UPDATE_CLIENT.check({login:true})');assert.equal(await evaluate('__updates.checks'),2,'each successful authorization bypasses the six-hour resume interval');
+  await evaluate('ITUS_ENVIRONMENTS.accepts=data=>data.environment==="test"&&data.activationId==="synthetic-activation";window.__releasePush={type:"app_update_available",version:"2.9.8",versionCode:"2908",eventId:"synthetic-release-event",environment:"test",activationId:"synthetic-activation"}');
+  assert.equal(await evaluate('__updatePush({...__releasePush,environment:"production"})'),false,'cross-contour release Push rejected');
+  assert.equal(await evaluate('__updates.checks'),2);
+  await evaluate('__updatePush(__releasePush)');await wait('__updates.checks===3');
+  await evaluate('__updatePush(__releasePush)');assert.equal(await evaluate('__updates.checks'),3,'same release event does not open/check twice');
+  assert.equal(calls.filter(x=>/\/orders\/get$|\/(files|messages)\/send$|\/complete$/.test(x.path)).length,0,'release Push never opens arbitrary data or replays writes');
   await evaluate('__updateNotes.splice(0,1,"Обновление приложения напрямую с Timeweb")');
   await click('[data-update-primary]');await click('[data-update-primary]');assert.equal(await evaluate('__updates.downloads'),1,'double click joins one download');
   await evaluate('__updateProgress({received:512,total:1024})');assert.equal(await evaluate('document.querySelector("#appUpdateDialog progress").value'),50);
