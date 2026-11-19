@@ -1078,6 +1078,78 @@ window.ITUS_CONFIG = {
   root.document.addEventListener('change', event => { if(event.target?.id === 'appDisplaySize') set(event.target.value); });
 })(window);
 </script>
+  <script>(function(root){
+  'use strict';
+  const START=Date.parse('2026-12-10T00:00:00+05:00'),END=Date.parse('2027-01-13T00:00:00+05:00');
+  const KEY='itus.appearance.v1';
+  let theme='system',holiday=true,timer,dialog;
+  try{const saved=JSON.parse(root.localStorage?.getItem(KEY)||'{}');if(['system','light','dark'].includes(saved.theme))theme=saved.theme;if(typeof saved.holiday==='boolean')holiday=saved.holiday;}catch{}
+  const media=root.matchMedia?.('(prefers-color-scheme: dark)');
+  const seasonActive=(time=Date.now())=>Number(time)>=START&&Number(time)<END;
+  const canPreview=()=>['max-test.ea-itus.ru','localhost','127.0.0.1'].includes(root.location?.hostname);
+  function save(){try{root.localStorage?.setItem(KEY,JSON.stringify({theme,holiday}));}catch{}}
+  function apply(){
+    const doc=root.document;if(!doc)return;
+    const effective=theme==='system'?(media?.matches?'dark':'light'):theme;
+    doc.documentElement.dataset.appearanceTheme=effective;doc.documentElement.style.colorScheme=effective;
+    doc.documentElement.classList.toggle('holiday-active',holiday&&seasonActive());
+    doc.querySelector('meta[name="theme-color"]')?.setAttribute('content',effective==='dark'?'#191e25':'#f2f4f6');
+    const garland=doc.getElementById('holidayGarland');if(garland)garland.hidden=!(holiday&&seasonActive());
+    doc.querySelectorAll('button[data-appearance-theme]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.appearanceTheme===theme)));
+    const toggle=doc.getElementById('holidayEnabled');if(toggle)toggle.checked=holiday;
+    if(dialog?.open&&(!holiday||(!seasonActive()&&dialog.dataset.preview!=='true')))dialog.close?.();
+    root.dispatchEvent?.(new root.Event('resize'));
+    clearTimeout(timer);const now=Date.now(),next=now<START?START:now<END?END:now+3600000;
+    timer=root.setTimeout?.(apply,Math.max(1000,Math.min(3600000,next-now+25)));
+  }
+  function setTheme(value){if(!['system','light','dark'].includes(value))return;theme=value;save();apply();}
+  function setHoliday(value){holiday=Boolean(value);save();apply();}
+  function greeting({preview=false}={}){
+    if(!holiday||(!seasonActive()&&!(preview&&canPreview())))return false;
+    if(!dialog)return false;
+    dialog.dataset.preview=String(preview);
+    if(!dialog.open){if(dialog.showModal)dialog.showModal();else dialog.setAttribute('open','');}
+    dialog.classList.remove('celebrate');void dialog.offsetWidth;dialog.classList.add('celebrate');
+    return true;
+  }
+  function settings(){return `<section class="settings-section"><h3>Оформление</h3><div class="settings-group"><div class="appearance-theme-field"><b>Тема приложения</b><div class="appearance-themes" role="group" aria-label="Тема приложения">${[['light','☀','Светлая'],['dark','◐','Тёмная'],['system','◒','Системная']].map(([value,symbol,label])=>`<button type="button" data-appearance-theme="${value}" aria-pressed="${theme===value}"><span aria-hidden="true">${symbol}</span>${label}</button>`).join('')}</div></div><label class="appearance-switch-row" for="holidayEnabled"><span><b>Новогоднее оформление</b><small>10.12.2026–12.01.2027 · Екатеринбург</small></span><input id="holidayEnabled" type="checkbox" role="switch" ${holiday?'checked':''}></label>${canPreview()?'<button class="settings-link" type="button" data-appearance-action="preview"><span>🎁 Предпросмотр поздравления</span><span aria-hidden="true">›</span></button>':''}</div></section>`;}
+  function mount(){
+    const doc=root.document,chrome=doc.querySelector('.app-chrome');
+    if(chrome&&!doc.getElementById('holidayGarland')){const garland=doc.createElement('div');garland.id='holidayGarland';garland.className='holiday-garland';garland.hidden=true;garland.innerHTML='<div class="holiday-lights" aria-hidden="true">'+Array.from({length:12},()=>'<span></span>').join('')+'</div><button type="button" class="holiday-gift" data-appearance-action="greeting" aria-label="Новогодний сюрприз">🎁</button>';chrome.insertBefore(garland,doc.getElementById('tabs'));}
+    dialog=doc.createElement('dialog');dialog.id='holidayGreeting';dialog.className='holiday-greeting';dialog.setAttribute('aria-labelledby','holidayGreetingTitle');
+    dialog.innerHTML='<button type="button" class="icon-button holiday-close" data-appearance-action="close" aria-label="Закрыть поздравление">×</button><div class="holiday-confetti" aria-hidden="true">'+Array.from({length:9},(_,i)=>`<span style="--piece:${i}"></span>`).join('')+'</div><div class="holiday-discovery">✦ Пасхалка найдена</div><div class="holiday-present" aria-hidden="true"><div class="holiday-box"><span class="holiday-bow"></span><span class="holiday-tag">I-MAX</span></div></div><div class="holiday-year">2027</div><h2 id="holidayGreetingTitle">С Новым годом!</h2><p>Пусть всё заводится с первого раза,<br>планы сбываются, а рядом<br>будут надёжные люди.</p><p>Спасибо за вашу работу<br>и за то, что мы — команда.</p><b>С теплом, I-MAX</b><button type="button" class="primary" data-appearance-action="close">Вернуться к работе</button>';
+    doc.body.append(dialog);dialog.addEventListener('click',event=>{if(event.target===dialog){const box=dialog.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)dialog.close?.();}});
+    doc.addEventListener('click',event=>{const themeButton=event.target.closest?.('button[data-appearance-theme]');if(themeButton){setTheme(themeButton.dataset.appearanceTheme);return;}const action=event.target.closest?.('[data-appearance-action]')?.dataset.appearanceAction;if(action==='greeting')greeting();if(action==='preview')greeting({preview:true});if(action==='close'){if(dialog.close)dialog.close();else dialog.removeAttribute('open');}});
+    doc.addEventListener('change',event=>{if(event.target.id==='holidayEnabled')setHoliday(event.target.checked);});
+    doc.addEventListener('visibilitychange',()=>{if(!doc.hidden)apply();});apply();
+  }
+  root.ITUS_APPEARANCE={get:()=>({theme,holiday,effective:theme==='system'?(media?.matches?'dark':'light'):theme}),setTheme,setHoliday,seasonActive,season:{start:START,endExclusive:END,timeZone:'Asia/Yekaterinburg'},settings,greeting,refresh:apply};
+  if(media?.addEventListener)media.addEventListener('change',apply);else media?.addListener?.(apply);
+  apply();if(root.document?.readyState==='loading')root.document.addEventListener('DOMContentLoaded',mount,{once:true});else if(root.document)mount();
+})(typeof window==='object'?window:globalThis);
+</script>
+  <script>(function(root){
+  'use strict';
+  function create({load,current,allowed,paint,onError=()=>{},now=()=>Date.now(),minInterval=10000}){
+    const jobs=new Map(),loaded=new Map();
+    async function refresh(){
+      if(!allowed())return false;
+      const context=current();if(!context?.ref||!context.scope)return false;
+      const key=context.scope+'|'+context.ref;
+      if(jobs.has(key))return jobs.get(key);
+      if(loaded.has(key)&&now()-loaded.get(key)<minInterval)return false;
+      const job=(async()=>{try{
+        await load(context.ref);const after=current();
+        if(after?.scope!==context.scope)return false;
+        loaded.set(key,now());if(after.ref===context.ref&&allowed())paint();return true;
+      }catch(error){onError(error);return false;}})();
+      jobs.set(key,job);try{return await job;}finally{if(jobs.get(key)===job)jobs.delete(key);}
+    }
+    return {refresh};
+  }
+  root.ITUS_ORDER_READ_REFRESH={create};
+})(typeof window==='object'?window:globalThis);
+</script>
   <script>(function (root) {
   'use strict';
 
@@ -2350,16 +2422,20 @@ window.ITUS_CONFIG = {
         // derive an author from the logged-in reader or from local state.
         const author=m.author || 'Отправитель не указан';
         const knownStatus={sent:'Отправлено',delivered:'Получено',read:'Прочитано',received:'Получено',отправлено:'Отправлено',получено:'Получено',прочитано:'Прочитано'}[m.status]||'';
-        return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}" tabindex="0" aria-keyshortcuts="Shift+F10"><div class="msg-author">${escape(author)}</div>${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${replyHtml(m)}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div>${messageActions(m)}</article>`;
+        return `${separator}<article class="msg-bubble ${m.side}" data-message-ref="${escape(m.id)}" tabindex="0" aria-keyshortcuts="Shift+F10"><div class="msg-bubble-head"><div class="msg-author">${escape(author)}</div><button type="button" class="msg-message-menu" data-action="msg-message-menu" data-ref="${escape(m.id)}" aria-label="Действия с сообщением">⋯</button></div>${replyHtml(m)}${m.text?`<div class="msg-text">${escape(m.text)}</div>`:''}${pollHtml(m)}${(m.attachments||[]).map((f,fi)=>fileHtml(f,start+idx,fi)).join('')}<div class="msg-time">${escape(time(m.createdAt))}${knownStatus?' · '+knownStatus:''}</div>${messageActions(m)}</article>`;
       }).join('');
       return html || `<div class="msg-empty">${busy[k]?'Загрузка сообщений…':'Сообщений пока нет'}</div>`;
+    }
+    function orderContextHtml(item){
+      if(source!=='clients'||!item.orderNumber&&!item.vehiclePlate)return '';
+      return `<div class="msg-order-context"><span aria-hidden="true">▤</span><span>${item.orderNumber?'ЗН '+escape(item.orderNumber):'Автомобиль'}${item.vehiclePlate?' · '+escape(item.vehiclePlate):''}</span></div>`;
     }
     function conversationHtml(){
       const item=current(),k=selectedKey();
       if(!item)return '<div class="msg-placeholder"><span>I-MAX</span><h2>Выберите переписку</h2><p>Клиенты и сотрудники в одном разделе</p></div>';
       const uploadState=sending[k]==='upload';
       const preference=chatPreferences()?.status(source,selected);
-      return `<header class="msg-conversation-head"><button class="msg-back" data-action="msg-back" aria-label="Назад к чатам">←</button><span class="msg-avatar">${escape(initials(item.title))}</span><div><strong>${escape(item.title)}</strong><small>${escape(item.subtitle||labels[source])}</small></div>${preference?`<button data-action="msg-chat-settings" aria-label="Уведомления этого чата">${preference.pending?'◷':preference.muted?'🔕':'🔔'}</button>`:''}<button data-action="msg-refresh-messages" aria-label="Обновить сообщения" ${busy[k]?'disabled':''}>↻</button></header>${errors[k]?`<div class="msg-error" role="alert">${escape(errors[k])}</div>`:''}<div class="msg-outbox" aria-live="polite">${threadOutboxHtml()}</div><div class="msg-history" role="log" aria-label="История переписки">${historyHtml()}</div>${uploadState?'<div class="msg-uploading" role="status"><span class="spinner"></span>Загрузка вложения в 1С…</div>':''}<div class="msg-reply-draft">${replyDraftHtml()}</div><div class="msg-emoji-picker" hidden></div><div class="msg-compose"><button data-action="msg-attach" aria-label="Прикрепить файл">＋</button><button data-action="msg-emoji" aria-label="Добавить смайлик">☺</button>${source==='clients'?'<button class="msg-poll-button" data-action="msg-poll" aria-label="Создать опрос">☑</button>':''}<textarea id="msgDraft" rows="1" aria-label="Сообщение" placeholder="Сообщение">${escape(drafts[k]||'')}</textarea><button class="msg-send" data-action="msg-send" ${sending[k]?'disabled':''} aria-label="Отправить сообщение">${sending[k]?'…':'➤'}</button></div>`;
+      return `<header class="msg-conversation-head"><button class="msg-back" data-action="msg-back" aria-label="Назад к чатам">←</button><span class="msg-avatar">${escape(initials(item.title))}</span><div><strong>${escape(item.title)}</strong><small>${escape(item.subtitle||labels[source])}</small></div>${preference?`<button data-action="msg-chat-settings" aria-label="Уведомления этого чата">${preference.pending?'◷':preference.muted?'🔕':'🔔'}</button>`:''}<button data-action="msg-refresh-messages" aria-label="Обновить сообщения" ${busy[k]?'disabled':''}>↻</button></header>${orderContextHtml(item)}${errors[k]?`<div class="msg-error" role="alert">${escape(errors[k])}</div>`:''}<div class="msg-outbox" aria-live="polite">${threadOutboxHtml()}</div><div class="msg-history" role="log" aria-label="История переписки">${historyHtml()}</div>${uploadState?'<div class="msg-uploading" role="status"><span class="spinner"></span>Загрузка вложения в 1С…</div>':''}<div class="msg-reply-draft">${replyDraftHtml()}</div><div class="msg-emoji-picker" hidden></div><div class="msg-compose"><button data-action="msg-attach" aria-label="Прикрепить файл">＋</button><button data-action="msg-emoji" aria-label="Добавить смайлик">☺</button>${source==='clients'?'<button class="msg-poll-button" data-action="msg-poll" aria-label="Создать опрос">☑</button>':''}<textarea id="msgDraft" rows="1" aria-label="Сообщение" placeholder="Сообщение">${escape(drafts[k]||'')}</textarea><button class="msg-send" data-action="msg-send" ${sending[k]?'disabled':''} aria-label="Отправить сообщение">${sending[k]?'…':'➤'}</button></div>`;
     }
     function paint({bottom=false}={}){
       if(!visible)return;
@@ -2638,6 +2714,7 @@ window.ITUS_CONFIG = {
         counts[selectedKey()]=Math.max(counts[selectedKey()]||50,items.length-index);paintHistory();
         const target=[...document.querySelectorAll('.msg-bubble')].find(x=>x.dataset.messageRef===button.dataset.ref);target?.scrollIntoView?.({block:'center',behavior:'smooth'});
       }
+      if(action==='msg-message-menu'){const node=button.closest('.msg-bubble');if(node)openActions(actionContext(node));}
       if(action==='msg-reactions'){
         const node=[...document.querySelectorAll('.msg-bubble')].find(x=>x.dataset.messageRef===button.dataset.ref);const ctx=node&&actionContext(node);if(ctx&&capabilities().reactions)reactionMenu(ctx);
       }
@@ -13109,6 +13186,135 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
 @media(max-width:390px){.sheet-body .grid.two{grid-template-columns:minmax(0,1fr)}}
 @media(max-height:560px){.sheet-head,.sheet-body{padding:.75rem}}
 </style>
+  <style>/* Shared presentation only. Transport, roles, queue and document actions keep their contracts. */
+:root{--bg:#f2f4f6;--card:#fff;--text:#202b39;--muted:#637082;--line:#dce2e9;--soft:#f2f4f6;--blue:#b92824;--red:#b92824;--ok:#23794f;--bad:#b4232a;--shadow:0 4px 18px #17203608;--ui-radius:16px;--ui-input:#f6f7f9;--ui-red-soft:#faeeec;--ui-red-text:#b12825;--ui-green-soft:#eaf5ee;--ui-disabled:#e9edf1;--ui-disabled-text:#6b7582;--ui-warning:#fff4df;--ui-warning-text:#805a16}
+:root[data-appearance-theme=dark]{--bg:#191e25;--card:#252b34;--text:#edf0f5;--muted:#b0bbca;--line:#414b5b;--soft:#303742;--blue:#c94039;--red:#c94039;--ok:#80d3a4;--bad:#f39292;--shadow:0 4px 18px #0002;--ui-input:#1c222a;--ui-red-soft:#442927;--ui-red-text:#f18d85;--ui-green-soft:#223a30;--ui-disabled:#303742;--ui-disabled-text:#a8b1be;--ui-warning:#3e3320;--ui-warning-text:#edcc8e}
+html,body{background:var(--bg);color:var(--text)}
+.top,.tabs,.app-chrome{background:var(--bg)}
+.top .logo{background:#fff}.user-panel,.sheet,.sheet-head,.card,.order,.topic,.question,.answer,.entry,.stat,.secondary,.icon-button,.notice-actions button,.order-qr-choice{background:var(--card);color:var(--text);border-color:var(--line)}
+.avatar,.msg-avatar{background:var(--ui-red-soft);color:var(--ui-red-text)}
+.user-name,.product h1{color:var(--text)}
+.tab{background:var(--card);border-color:var(--line)}
+:root[data-appearance-theme=dark] .tab:not(.active) .nav-icon{filter:brightness(0) invert(.88)}
+.tab.active{background:var(--blue);border-color:var(--blue)}
+.card,.order,.question,.entry,.stat,.topic{border-radius:var(--ui-radius)}
+.card h2,.card h3{font-weight:650}.card h2{letter-spacing:-.02em}
+input,textarea,select,#msgDraft{background:var(--ui-input);border-color:var(--line);color:var(--text)}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+.grid button,.button{background:var(--soft);color:var(--text);border:1px solid var(--line);font-weight:600}
+.primary,.grid button.primary{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:none}
+.primary:hover:not(:disabled){background:var(--blue);filter:brightness(1.07)}
+.secondary{background:var(--card)}
+.danger{background:var(--ui-red-soft)!important;color:var(--bad)!important}.success,.badge.ok{background:var(--ui-green-soft)!important;color:var(--ok)!important}.warning,.badge.warn{background:var(--ui-warning)!important;color:var(--ui-warning-text)!important}
+.badge,.order.active,.topic.active,.answer.selected{background:var(--ui-red-soft);color:var(--ui-red-text);border-color:var(--ui-red-text)}
+.badge.bad,.field-error{background:var(--ui-red-soft)!important;color:var(--bad)}
+.empty,.reason,.question,.entry,.stat,.display-size-setting{background:var(--ui-input);border-color:var(--line)}
+.question.done{background:var(--ui-green-soft);border-color:var(--ok)}
+.notice,.msg-uploading,.msg-outbox{background:var(--ui-warning);color:var(--ui-warning-text);border-color:var(--line)}
+.notice-actions button,.msg-outbox button{background:var(--card);color:var(--text);border-color:var(--line)}
+.msg-error{background:var(--ui-red-soft);color:var(--bad)}
+.production-table th,.production-table td,.setting-row{border-color:var(--line)}
+.production-table thead th,.production-table tfoot th{background:var(--soft);color:var(--text)}
+button:not(:disabled):active{transform:scale(.98);filter:brightness(.96)}
+button:disabled{cursor:not-allowed;color:var(--ui-disabled-text);background:var(--ui-disabled);opacity:.7}
+button.is-pending,button[aria-busy=true]{cursor:progress;opacity:.85}
+.grid button:disabled{border-style:dashed}
+.summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.summary .stat{display:flex;flex-direction:column;gap:6px;padding:13px;min-width:0;background:var(--card);border:1px solid var(--line);text-align:left;color:var(--text);font:inherit}
+.summary .stat>b{margin:0;font-size:.9375rem}.summary .stat>br{display:none}
+.summary .stat-label{font-size:.8125rem;font-weight:600;color:var(--text)}
+.summary .stat-note{font-size:.6875rem;color:var(--muted);font-weight:400}
+.summary .stat-action-label{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:6px;padding:8px 9px;min-height:36px;border:1px solid var(--ui-red-text);border-radius:9px;color:var(--ui-red-text);font-size:.75rem;font-weight:600}
+.summary .stat-state{align-self:flex-start;font-size:.6875rem;padding:3px 6px;border-radius:6px;background:var(--soft);color:var(--muted);font-weight:500}
+.summary .stat-state.is-present{background:var(--ui-green-soft);color:var(--ok)}
+.summary .stat-button:hover{background:var(--ui-red-soft);border-color:var(--ui-red-text);transform:none}
+.summary .stat-button:focus-visible{outline:2px solid var(--ui-red-text);outline-offset:2px;transform:none}
+.summary .stat-information{box-shadow:none}
+.settings-page{max-width:100%;min-width:0}.settings-section{margin-bottom:20px}.settings-section>h3{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;font-weight:650;color:var(--muted);margin:0 2px 9px}
+.settings-group{border:1px solid var(--line);border-radius:var(--ui-radius);background:var(--card);overflow:hidden}
+.appearance-theme-field{padding:14px}.appearance-theme-field>b{font-size:.875rem;font-weight:600}
+.appearance-themes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
+.appearance-themes button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:0;min-height:62px;padding:9px 4px;border:1px solid var(--line);border-radius:11px;background:var(--card);font-size:.75rem;color:var(--muted)}
+.appearance-themes button>span{font-size:19px;line-height:1.3}
+.appearance-themes button[aria-pressed=true]{color:var(--ui-red-text);background:var(--ui-red-soft);border-color:var(--ui-red-text);font-weight:600}
+.appearance-switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;margin:0;border-top:1px solid var(--line)}
+.appearance-switch-row>span{min-width:0;flex:1}.appearance-switch-row b,.appearance-switch-row small{display:block}.appearance-switch-row b{font-size:.875rem;font-weight:600}.appearance-switch-row small{font-size:.6875rem;line-height:1.5;margin-top:4px;color:var(--muted);font-weight:400}
+.appearance-switch-row input{appearance:none;display:block;flex:none;width:43px;height:25px;min-height:25px;margin:0;padding:2px;border-radius:20px;border:1px solid var(--line);background:var(--ui-disabled);position:relative}
+.appearance-switch-row input::after{content:'';display:block;width:19px;height:19px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .12s}
+.appearance-switch-row input:checked{background:var(--blue);border-color:var(--blue)}.appearance-switch-row input:checked::after{transform:translateX(17px)}
+.settings-link{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:55px;padding:14px;border:0;border-top:1px solid var(--line);border-radius:0;background:var(--card);color:var(--text);font-size:.875rem;font-weight:600;text-align:left}
+.settings-link:first-child{border-top:0}.settings-link small{display:block;font-size:.6875rem;color:var(--muted);font-weight:400;margin-top:3px}.settings-link>span:last-child:not(:first-child){color:var(--muted)}
+.settings-link:hover{background:var(--soft)}.settings-page .display-size-setting{border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:14px;background:var(--card)}
+.settings-version{text-align:center;font-size:.75rem;color:var(--muted);margin:18px 0 4px}.settings-logout{margin-top:8px;width:100%;background:transparent;border:0;min-height:44px;color:var(--bad);font-weight:600;border-radius:12px}
+.settings-page details{font-size:.8125rem;margin-top:16px}.settings-page details p{overflow-wrap:anywhere}
+.settings-page summary{padding:13px;min-height:44px;color:var(--text);font-weight:600}.settings-detail-body{padding:0 14px 14px}.settings-detail-body .secondary{margin:7px 0}
+/* Familiar chat: existing layout and scroll owners stay unchanged. */
+.messenger,.msg-sidebar,.msg-conversation-head,.msg-compose,.msg-emoji-picker,.msg-reaction-picker{background:var(--card);color:var(--text);border-color:var(--line)}
+.messenger button{color:var(--text)}.msg-sidebar{border-color:var(--line)}
+.msg-conversation,.msg-history{background:var(--bg)}
+.msg-order-context{display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--card);color:var(--muted);font-size:.8125rem;overflow-wrap:anywhere}
+.msg-sidebar-head h2{font-size:1.375rem;font-weight:650}
+.msg-filters button{background:var(--soft);color:var(--muted)}.msg-filters button.active{background:var(--blue);color:#fff}
+.msg-sections button.active{color:var(--ui-red-text);border-color:var(--ui-red-text)}
+#msgSearch{border-color:var(--line);background:var(--ui-input)}
+.msg-thread{border-color:var(--line)!important}.msg-thread:hover{background:var(--soft)}.msg-thread.selected{background:var(--ui-red-soft)}
+.msg-thread.common{border-left-color:var(--ui-red-text)}.msg-common-badge{background:var(--soft);color:var(--muted)}
+.msg-thread-top time,.msg-thread-bottom,.msg-conversation-head small,.msg-contact-note,.msg-empty,.msg-placeholder{color:var(--muted)}
+.msg-thread-top strong{font-weight:650}.msg-count{background:var(--blue);color:#fff}
+.msg-history{gap:12px}.msg-bubble{border-color:var(--line);background:var(--card);color:var(--text);border-radius:18px 18px 18px 5px;padding:10px 12px;max-width:88%}
+.msg-bubble.mine{background:var(--ui-red-soft);border-color:color-mix(in srgb,var(--ui-red-text) 18%,var(--line));border-radius:18px 18px 5px 18px}
+.msg-bubble.system{background:var(--ui-warning);color:var(--ui-warning-text)}
+.msg-bubble-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:-3px -4px 3px 0}.msg-author{color:var(--ui-red-text);font-size:.75rem;margin-bottom:0;font-weight:600}
+.messenger .msg-message-menu{flex:none;min-width:34px;min-height:30px;padding:0 5px;border-radius:8px;background:transparent;color:var(--muted);font-size:1.25rem;line-height:1}
+.msg-text{font-size:.9375rem;line-height:1.5}.msg-time{color:var(--muted);font-size:.6875rem}
+.msg-date{background:var(--card);color:var(--muted);font-size:.6875rem}
+.messenger .msg-quote{background:color-mix(in srgb,var(--card) 80%,transparent);color:var(--text);border-color:var(--ui-red-text);border-radius:4px 10px 10px 4px}.msg-quote b,.msg-reply-draft b{color:var(--ui-red-text)}.msg-quote span{color:var(--muted)}
+.msg-reply-draft{background:var(--card);border-color:var(--line);color:var(--muted)}
+.msg-reaction-count{background:var(--card);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:4px 8px}
+.msg-file{border-radius:12px;padding:8px;background:var(--ui-input)}.msg-file small{color:var(--muted)}.msg-file button{background:var(--card);border-color:var(--line);color:var(--ui-red-text)}
+.messenger .msg-send{background:var(--blue);color:#fff}.msg-compose>button{min-height:44px}
+#msgDraft{border-radius:20px;background:var(--ui-input);border-color:var(--line);color:var(--text)}
+.msg-new-chat{background:var(--card);color:var(--ui-red-text);border-color:var(--ui-red-text)}
+.msg-poll button,.msg-message-actions button,.msg-empty button{background:var(--card);border-color:var(--line);color:var(--ui-red-text)}
+.message-actions-dialog,.defect-forward-dialog{background:var(--card);color:var(--text);border-color:var(--line)}
+.message-actions-preview{background:var(--ui-input);border-color:var(--ui-red-text)}
+.message-actions-dialog header button,.message-actions-cancel{background:var(--ui-red-soft);color:var(--ui-red-text)}
+.message-actions-options button{background:var(--card);color:var(--text);border-color:var(--line)}.message-actions-options small{color:var(--muted)}
+.message-actions-options button:disabled{background:var(--ui-disabled);color:var(--ui-disabled-text)}
+.message-actions-options button:active,.message-swiping::after{background:var(--ui-red-soft);color:var(--ui-red-text)}
+.message-actions-emojis button{background:var(--ui-input)}
+.defect-forward-toolbar,.defect-forward-preview,.defect-forward-recipient{background:var(--ui-input);color:var(--text);border-color:var(--line)}
+.app-update-dialog{background:var(--card);color:var(--text);border-color:var(--line)}
+.defect-photo-preview{background:var(--card);border-color:var(--line)}.defect-photo-preview img{background:var(--ui-input)}.defect-photo-preview span{color:var(--text)}
+#msgOutboxCount{background:var(--ui-warning);color:var(--ui-warning-text);border-color:var(--line)}
+/* Limited festive period: JavaScript gates every entry point using UTC+05:00. */
+.holiday-garland{height:26px;display:flex;align-items:center;position:relative;margin:0 var(--app-shell-gutter);padding-right:36px}
+.holiday-garland[hidden]{display:none}.holiday-lights{display:flex;align-items:center;justify-content:space-around;width:100%;height:14px;border-top:1px solid #818b7880;border-radius:50%}
+.holiday-lights span{width:5px;height:9px;border-radius:2px 2px 4px 4px;background:#e7b967;box-shadow:0 0 7px #e7b96750;transform:rotate(12deg)}
+.holiday-lights span:nth-child(3n){background:#d85b50;box-shadow:0 0 7px #d85b5050;transform:rotate(-12deg)}.holiday-lights span:nth-child(3n+1){background:#d4c49c}
+.holiday-gift{position:absolute;right:0;top:-7px;width:38px;height:38px;border:0;border-radius:10px;background:transparent;font-size:22px}
+.holiday-active .logo{position:relative}.holiday-active .logo::after{content:'';position:absolute;z-index:2;right:1px;top:-1px;width:21px;height:16px;border-radius:100% 3px 2px 2px;background:#c9352b;border-bottom:5px solid #fff;transform:rotate(18deg);pointer-events:none;box-shadow:5px 0 0 -1px #fff}
+.holiday-greeting{position:fixed;inset:0;width:min(430px,calc(100% - 28px));max-height:calc(100dvh - 28px);margin:auto;overflow:auto;padding:29px 22px 22px;border:1px solid var(--line);border-radius:24px;background:var(--card);color:var(--text);box-shadow:0 15px 50px #0003;text-align:center}
+.holiday-greeting:not([open]){display:none}.holiday-greeting::backdrop{background:#0a101b99;backdrop-filter:blur(3px)}
+.holiday-close{position:absolute;right:5px;top:5px}.holiday-discovery{font-size:.6875rem;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin:13px 0 20px}
+.holiday-present{position:relative;width:180px;height:120px;margin:0 auto;font-size:0;line-height:1.4}
+.holiday-present::before,.holiday-present::after{content:'';position:absolute;bottom:9px;width:45px;height:82px;background:#658578;clip-path:polygon(50% 0,82% 36%,68% 36%,96% 70%,74% 70%,100% 96%,0 96%,26% 70%,4% 70%,32% 36%,18% 36%)}
+.holiday-present::before{left:3px;transform:rotate(-7deg)}.holiday-present::after{right:2px;height:68px;transform:rotate(8deg)}
+.holiday-box{position:absolute;z-index:1;left:50px;bottom:8px;width:82px;height:66px;border-radius:4px 4px 10px 10px;background:linear-gradient(110deg,#ca3b31,#a62525);transform:rotate(-6deg);box-shadow:0 7px 15px #0002}
+.holiday-box::before{content:'';position:absolute;top:-8px;left:-4px;width:90px;height:18px;border-radius:4px;background:#b9322b;box-shadow:0 3px 2px #0001}
+.holiday-box::after{content:'';position:absolute;left:35px;top:-8px;width:13px;height:74px;background:#d4b16c}
+.holiday-bow{position:absolute;left:22px;top:-30px;width:30px;height:23px;border:6px solid #d4b16c;border-radius:50% 50% 0 50%;transform:rotate(12deg)}
+.holiday-bow::after{content:'';position:absolute;left:19px;top:-6px;width:30px;height:23px;border:6px solid #d4b16c;border-radius:50% 50% 50% 0;transform:rotate(-22deg)}
+.holiday-tag{position:absolute;z-index:2;right:7px;top:30px;padding:2px 3px;background:#f0e3bf;color:#a62525;font-size:8px;font-weight:700;border-radius:2px}
+.holiday-year{font-size:52px;color:var(--ui-red-text);font-weight:750;letter-spacing:-2px;line-height:1.2;margin:7px 0}
+.holiday-greeting h2{font-size:1.65rem;line-height:1.3;margin:10px 0 17px;letter-spacing:-.04em}.holiday-greeting p{font-size:.875rem;color:var(--muted);line-height:1.65;margin:14px 0}.holiday-greeting>b{display:block;font-size:.875rem;color:var(--ui-red-text);margin:19px 0 23px}
+.holiday-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden}.holiday-confetti span{position:absolute;top:-10px;left:calc(6% + var(--piece) * 10%);width:5px;height:9px;background:#d4b16c;opacity:0}.holiday-confetti span:nth-child(2n){background:#c94039}
+.holiday-greeting.celebrate .holiday-confetti span{animation:holiday-confetti 1.6s ease-out calc(var(--piece) * .04s) 1 both}
+@keyframes holiday-confetti{0%{transform:translateY(-10px) rotate(0deg);opacity:0}10%{opacity:.9}100%{transform:translateY(460px) rotate(160deg);opacity:0}}
+@media(max-width:390px){.summary{grid-template-columns:minmax(0,1fr)}.appearance-themes{grid-template-columns:1fr}.appearance-themes button{min-height:42px;flex-direction:row;gap:8px}.msg-bubble{max-width:94%}}
+@media(pointer:coarse){.messenger .msg-message-menu{min-width:44px;min-height:36px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important}.holiday-greeting.celebrate .holiday-confetti span{animation:none}button:active{transform:none}.appearance-switch-row input::after{transition:none}}
+</style>
 </head>
 <body><div class="review-banner">Проверочный режим · тестовые данные · записи в 1С нет. Роль: <a href="?role=master">МП</a> / <a href="?role=executor">Исполнитель</a> / <a href="?role=tech">Технолог</a></div>
   <div class="brand-rail" aria-hidden="true"></div>
@@ -13519,7 +13725,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.6'
+    version: 'i-max-2.9.7'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -14126,6 +14332,14 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     }finally{if(select&&selection===orderSelectionRevision){orderLoadingRef='';render();}}
   }
 
+  const visibleOrderRefresh=window.ITUS_ORDER_READ_REFRESH?.create({
+    current:()=>({ref:currentOrder()?.orderRef||currentOrder()?.id,scope:state.userId?sessionSnapshot().scope+'|'+sessionSnapshot().generation:''}),
+    allowed:()=>Boolean(state.userId&&state.initialized&&!state.loading&&!state.busy&&!document.hidden&&['mp','executor','tech'].includes(state.view)&&$('overlay').classList.contains('hidden')&&!document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')),
+    load:ref=>loadSingleOrder(ref,{select:false}),paint:()=>render()
+  });
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void visibleOrderRefresh?.refresh();});
+  window.addEventListener('focus',()=>{void visibleOrderRefresh?.refresh();});
+
   function renderAuth() {
     if ($('botUnread')) $('botUnread').hidden = true;
     $('tabs').innerHTML = '';
@@ -14433,11 +14647,11 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
     const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
     const defectCell = defectRef
-      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
-      : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
+      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="stat-label">Дефектовка</span><span class="stat-state is-present">✓ Создана</span><span class="stat-action-label">Открыть историю <span aria-hidden="true">›</span></span></button>`
+      : `<div class="stat stat-information"><span class="stat-label">Дефектовка</span><b>Не создана</b><span class="stat-note">История появится после создания</span></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
     const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat stat-information"><span class="stat-label">Пост</span><b>${esc(order.post)}</b><span class="stat-note">Сведения из 1С</span></div><div class="stat stat-information"><span class="stat-label">Исполнитель</span><b>${esc(order.executor)}</b><span class="stat-note">Сведения из 1С</span></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="stat-label">Пакет УРВ</span><b>${esc(packageLabel)}</b><span class="stat-action-label">Выбрать пакет <span aria-hidden="true">›</span></span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
   }
 
   function renderOrdersView() {
@@ -15889,9 +16103,12 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
 
   function showSettings() {
     const display=window.ITUS_DISPLAY;
-    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
-    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
-    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid">${appUpdater?'<button data-action="check-app-update">Проверить обновление I-MAX</button>':''}<button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+    const size=display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '';
+    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button class="secondary" data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
+    const link=(action,title,hint='')=>`<button class="settings-link" type="button" data-action="${action}"><span>${title}${hint?`<small>${hint}</small>`:''}</span><span aria-hidden="true">›</span></button>`;
+    const appearance=window.ITUS_APPEARANCE?.settings() || '';
+    const appearanceWithSize=appearance.replace('<label class="appearance-switch-row"',size+'<label class="appearance-switch-row"');
+    showSheet('Настройки I-MAX','Оформление и работа приложения',`<div class="settings-page">${appearanceWithSize||size}<section class="settings-section"><h3>Работа приложения</h3><div class="settings-group">${link('notification-settings','Уведомления','Сообщения, задачи и назначения')}${link('show-operation-queue','Неотправленные','Сохранённые записи, сообщения и вложения')}${link('media-device-settings','Отправка крупных файлов','Буфер и фоновая передача')}${link('test-1c','Проверить связь с 1С')}</div></section><section class="settings-section"><h3>Подключение к 1С</h3><details class="settings-group"><summary>${esc(ENVIRONMENTS?.label||'Текущая база')} · сведения о подключении</summary><div class="settings-detail-body">${environments}<p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase||'задаётся сервером')}</p></div></details></section><section class="settings-section"><h3>О приложении и помощь</h3><div class="settings-group">${appUpdater?link('check-app-update','Проверить обновление I-MAX','Текущая версия: '+esc(CONFIG.version)):''}${link('retry-init','Перезагрузить данные','Обновить сведения из 1С')}</div><details><summary>Сведения о пользователе</summary><p>Пользователь MAX: ${esc(state.userId)}</p></details></section><button type="button" class="settings-logout" data-action="logout">Выйти из аккаунта</button><p class="settings-version">I-MAX · ${esc(CONFIG.version)}</p></div>`);
   }
 
   async function switchEnvironment(){
@@ -15997,6 +16214,7 @@ input,textarea,select,#msgDraft{font-size:max(16px,1rem)}
     messenger?.leave();
     if (!state.views[view]) view = 'orders';
     state.view = view; render();
+    void visibleOrderRefresh?.refresh();
     try {
       if (view === 'clients' && !state.clientTopics.length) await loadClientTopics();
       if (view === 'chat' && !state.chatGroups.length) await loadChatGroups();

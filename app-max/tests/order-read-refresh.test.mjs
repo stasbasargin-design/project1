@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+await import('../assets/order-read-refresh.js');
+let context={scope:'production:userA:1',ref:'one'},allowed=true,time=1000,painted=0,calls=[],release;
+const loader=globalThis.ITUS_ORDER_READ_REFRESH.create({current:()=>({...context}),allowed:()=>allowed,now:()=>time,paint:()=>painted++,load:ref=>{calls.push(ref);return new Promise(resolve=>release=resolve);}});
+const first=loader.refresh(),second=loader.refresh();assert.deepEqual(calls,['one']);release();await Promise.all([first,second]);assert.equal(painted,1);
+assert.equal(await loader.refresh(),false);assert.equal(calls.length,1,'section switches are throttled');
+time+=11000;allowed=false;assert.equal(await loader.refresh(),false);assert.equal(calls.length,1,'editing/overlay blocks reads');
+allowed=true;const old=loader.refresh();context={scope:'test:userB:2',ref:'two'};release();assert.equal(await old,false);assert.equal(painted,1,'old user response must not repaint');
+const next=loader.refresh();assert.deepEqual(calls,['one','one','two']);release();await next;assert.equal(painted,2);
+time+=11000;const pending=loader.refresh();allowed=false;release();await pending;assert.equal(painted,2,'opening an editor while read is running must prevent repaint');
+let failures=0;const failing=globalThis.ITUS_ORDER_READ_REFRESH.create({current:()=>context,allowed:()=>true,load:async()=>{throw Error('offline');},paint:()=>{throw Error('unexpected');},onError:()=>failures++});assert.equal(await failing.refresh(),false);assert.equal(await failing.refresh(),false);assert.equal(failures,2,'failed read may recover without permanent busy state');
+console.log('Order read refresh: one in-flight read, throttle, editor protection, user/environment isolation and recovery OK.');

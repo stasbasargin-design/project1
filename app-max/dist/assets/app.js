@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.6'
+    version: 'i-max-2.9.7'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -632,6 +632,14 @@
     }finally{if(select&&selection===orderSelectionRevision){orderLoadingRef='';render();}}
   }
 
+  const visibleOrderRefresh=window.ITUS_ORDER_READ_REFRESH?.create({
+    current:()=>({ref:currentOrder()?.orderRef||currentOrder()?.id,scope:state.userId?sessionSnapshot().scope+'|'+sessionSnapshot().generation:''}),
+    allowed:()=>Boolean(state.userId&&state.initialized&&!state.loading&&!state.busy&&!document.hidden&&['mp','executor','tech'].includes(state.view)&&$('overlay').classList.contains('hidden')&&!document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')),
+    load:ref=>loadSingleOrder(ref,{select:false}),paint:()=>render()
+  });
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void visibleOrderRefresh?.refresh();});
+  window.addEventListener('focus',()=>{void visibleOrderRefresh?.refresh();});
+
   function renderAuth() {
     if ($('botUnread')) $('botUnread').hidden = true;
     $('tabs').innerHTML = '';
@@ -939,11 +947,11 @@
     if (!order) return '<div class="card empty">Выберите заказ-наряд для продолжения.</div>';
     const defectRef = order.defectDocumentRef || order._defectSheet?.documentRef;
     const defectCell = defectRef
-      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="tiny">Дефектовка</span><br><b>Создана</b><span class="tiny">Открыть историю</span></button>`
-      : `<div class="stat"><span class="tiny">Дефектовка</span><br><b>Не создана</b></div>`;
+      ? `<button class="stat stat-button" data-action="open-defect-chat" title="Открыть историю дефектовки"><span class="stat-label">Дефектовка</span><span class="stat-state is-present">✓ Создана</span><span class="stat-action-label">Открыть историю <span aria-hidden="true">›</span></span></button>`
+      : `<div class="stat stat-information"><span class="stat-label">Дефектовка</span><b>Не создана</b><span class="stat-note">История появится после создания</span></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
     const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat"><span class="tiny">Пост</span><br><b>${esc(order.post)}</b></div><div class="stat"><span class="tiny">Исполнитель</span><br><b>${esc(order.executor)}</b></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="tiny">Пакет УРВ</span><br><b>${esc(packageLabel)}</b><span class="tiny">Выбрать пакет</span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat stat-information"><span class="stat-label">Пост</span><b>${esc(order.post)}</b><span class="stat-note">Сведения из 1С</span></div><div class="stat stat-information"><span class="stat-label">Исполнитель</span><b>${esc(order.executor)}</b><span class="stat-note">Сведения из 1С</span></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="stat-label">Пакет УРВ</span><b>${esc(packageLabel)}</b><span class="stat-action-label">Выбрать пакет <span aria-hidden="true">›</span></span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
   }
 
   function renderOrdersView() {
@@ -2395,9 +2403,12 @@
 
   function showSettings() {
     const display=window.ITUS_DISPLAY;
-    const size=(display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '')+'<button data-action="media-device-settings">Отправка крупных файлов</button>';
-    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
-    showSheet('Настройки I-MAX', 'Параметры приложения', `${environments}${size}<p><b>Пользователь MAX:</b><br>${esc(state.userId)}</p><p><b>Версия:</b> ${esc(CONFIG.version)}</p><div class="grid">${appUpdater?'<button data-action="check-app-update">Проверить обновление I-MAX</button>':''}<button data-action="notification-settings">Уведомления</button><button data-action="show-operation-queue">Неотправленные операции</button><button data-action="test-1c">Проверить связь с 1С</button><button data-action="retry-init">Перезагрузить данные</button><button class="danger" data-action="logout">Выйти</button></div><details><summary>Сведения о подключении</summary><p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase || 'задаётся сервером')}</p></details>`);
+    const size=display ? `<div class="display-size-setting"><label for="appDisplaySize">Размер текста и блоков</label><select id="appDisplaySize">${display.choices.map(item=>`<option value="${item.value}"${item.value===display.get()?' selected':''}>${item.label}</option>`).join('')}</select><div class="tiny">Настройка сохраняется на этом устройстве.</div></div>` : '';
+    const environments=ENVIRONMENTS?`<p><b>${esc(ENVIRONMENTS.label)}</b></p><label for="environmentChoice">Подключение к 1С</label><select id="environmentChoice"><option value="test"${ENVIRONMENTS.id==='test'?' selected':''}>Тестовая 1С</option><option value="production"${ENVIRONMENTS.id==='production'?' selected':''}>Боевая 1С</option></select><button class="secondary" data-action="switch-environment">Переключить базу</button><p class="tiny">Чаты и неотправленные файлы сохраняются отдельно для каждой базы.</p>`:'';
+    const link=(action,title,hint='')=>`<button class="settings-link" type="button" data-action="${action}"><span>${title}${hint?`<small>${hint}</small>`:''}</span><span aria-hidden="true">›</span></button>`;
+    const appearance=window.ITUS_APPEARANCE?.settings() || '';
+    const appearanceWithSize=appearance.replace('<label class="appearance-switch-row"',size+'<label class="appearance-switch-row"');
+    showSheet('Настройки I-MAX','Оформление и работа приложения',`<div class="settings-page">${appearanceWithSize||size}<section class="settings-section"><h3>Работа приложения</h3><div class="settings-group">${link('notification-settings','Уведомления','Сообщения, задачи и назначения')}${link('show-operation-queue','Неотправленные','Сохранённые записи, сообщения и вложения')}${link('media-device-settings','Отправка крупных файлов','Буфер и фоновая передача')}${link('test-1c','Проверить связь с 1С')}</div></section><section class="settings-section"><h3>Подключение к 1С</h3><details class="settings-group"><summary>${esc(ENVIRONMENTS?.label||'Текущая база')} · сведения о подключении</summary><div class="settings-detail-body">${environments}<p><b>Маршрут API:</b><br>${esc(CONFIG.apiBase)}</p><p><b>HTTP-сервис 1С:</b><br>${esc(CONFIG.publicBase||'задаётся сервером')}</p></div></details></section><section class="settings-section"><h3>О приложении и помощь</h3><div class="settings-group">${appUpdater?link('check-app-update','Проверить обновление I-MAX','Текущая версия: '+esc(CONFIG.version)):''}${link('retry-init','Перезагрузить данные','Обновить сведения из 1С')}</div><details><summary>Сведения о пользователе</summary><p>Пользователь MAX: ${esc(state.userId)}</p></details></section><button type="button" class="settings-logout" data-action="logout">Выйти из аккаунта</button><p class="settings-version">I-MAX · ${esc(CONFIG.version)}</p></div>`);
   }
 
   async function switchEnvironment(){
@@ -2503,6 +2514,7 @@
     messenger?.leave();
     if (!state.views[view]) view = 'orders';
     state.view = view; render();
+    void visibleOrderRefresh?.refresh();
     try {
       if (view === 'clients' && !state.clientTopics.length) await loadClientTopics();
       if (view === 'chat' && !state.chatGroups.length) await loadChatGroups();

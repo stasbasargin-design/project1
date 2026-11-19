@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,existsSync,mkdirSync,mkdtempSync,rmSync} from 'node:fs';
+import {createServer} from 'node:http';
+import {spawn} from 'node:child_process';
+import {join,extname,resolve} from 'node:path';
+import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
+
+const browser=[process.env.CHROME_PATH,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser','C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean).find(existsSync);
+if(!browser)throw new Error('Layout browser test requires Chrome/Chromium/Edge; set CHROME_PATH.');
+const root=fileURLToPath(new URL('../',import.meta.url));
+let html=readFileSync(join(root,'index.html'),'utf8').replace('<script src="./config/itus.config.js">','<script src="./assets/preview-fixtures.js"></script><script src="./config/itus.config.js">').replace('<script src="./assets/app.js">','<script>if(location.search.includes("loading-test")){const original=window.fetch;window.fetch=(url,options)=>String(url).endsWith("/auth/max")?new Promise(resolve=>{window.releaseLogin=()=>original(url,options).then(resolve);}):original(url,options);}</script><script src="./assets/app.js">');
+html=html.replace('<script src="./config/itus.config.js">','<script>const OriginalDate=Date;window.__uiNow=null;window.Date=class extends OriginalDate{constructor(...a){super(...(a.length?a:[window.__uiNow??OriginalDate.now()]));}static now(){return window.__uiNow??OriginalDate.now();}};</script><script src="./config/itus.config.js">');
+html=html.replace('<script src="./assets/app.js">','<script>window.__orderReason="Reason before";window.__orderCalls=[];const sourceFetch=window.fetch;window.fetch=async(input,options)=>{const path=String(input);window.__orderCalls.push(path);if(path.endsWith("/acceptance/start"))return new Response(JSON.stringify({success:true,data:{acceptance:{documentRef:"ui-test-act",photo:{required:false},form:{fields:[{id:"mileage",type:"number",label:"Пробег",value:100},{id:"reason",type:"textarea",label:"Причина",value:"Initial draft"}]},survey:{questions:[]}}}}),{status:200});const response=await sourceFetch(input,options);if(path.endsWith("/orders/get")||path.endsWith("/orders/list")){const data=await response.json();if(data.data?.order)data.data.order.reason=window.__orderReason;if(data.data?.orders)for(const order of data.data.orders)order.reason=window.__orderReason;return new Response(JSON.stringify(data),{status:200,headers:{"Content-Type":"application/json"}});}return response;};</script><script src="./assets/app.js">');
+const artifactDir=process.env.LAYOUT_ARTIFACT_DIR&&resolve(process.env.LAYOUT_ARTIFACT_DIR);
+if(artifactDir)mkdirSync(artifactDir,{recursive:true});
+const server=createServer((req,res)=>{
+  const path=new URL(req.url,'http://localhost').pathname;
+  const file=path==='/'?null:join(root,path);
+  if(file&&(!file.startsWith(root)||!existsSync(file))){res.writeHead(404);res.end();return;}
+  res.setHeader('Content-Type',file?({'.css':'text/css','.js':'text/javascript','.svg':'image/svg+xml','.png':'image/png'}[extname(file)]||'text/plain'):'text/html; charset=utf-8');
+  res.end(file?readFileSync(file):html);
+});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+const profile=mkdtempSync(join(tmpdir(),'imax-layout-'));
+const child=spawn(browser,['--headless=new','--disable-gpu','--disable-gpu-compositing','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+let stderr='',socket;
+child.stderr.on('data',c=>stderr+=c.toString());
+try{
+  const portFile=join(profile,'DevToolsActivePort');
+  for(let n=0;n<200&&!existsSync(portFile);n++){if(child.exitCode!==null)throw new Error('Headless browser exited: '+stderr);await new Promise(r=>setTimeout(r,50));}
+  assert.ok(existsSync(portFile),'headless browser did not start');
+  const debugPort=readFileSync(portFile,'utf8').split('\n')[0];
+  const pages=await(await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
+  const page=pages.find(p=>p.type==='page');assert.ok(page,'browser page missing');
+  socket=new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
+  let sequence=0;const waiting=new Map(),loaded=new Set();
+  socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.method==='Page.lifecycleEvent'&&m.params.name==='load')loaded.add(m.params.loaderId);if(m.id){const w=waiting.get(m.id);if(!w)return;waiting.delete(m.id);clearTimeout(w.timer);m.error?w.reject(new Error(JSON.stringify(m.error))):w.resolve(m.result);}};
+  const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>{waiting.delete(id);reject(new Error('CDP timeout: '+method));},10000);waiting.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
+  const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+  const settle=()=>evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  const waitFor=selector=>evaluate(`new Promise((r,j)=>{const t=setInterval(()=>{if(document.querySelector(${JSON.stringify(selector)})){clearInterval(t);r(true)}},20);setTimeout(()=>{clearInterval(t);j(new Error('Missing '+${JSON.stringify(selector)}))},3000)})`);
+  const navigate=async url=>{const {loaderId}=await send('Page.navigate',{url});for(let n=0;n<200&&!loaded.has(loaderId);n++)await new Promise(r=>setTimeout(r,25));assert.ok(loaded.has(loaderId),'new document did not load');};
+  const snap=()=>evaluate(`(()=>{const box=s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect(),c=getComputedStyle(e);return {x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom,right:r.right,display:c.display};};return {width:innerWidth,height:innerHeight,scrollY,scrollHeight:document.documentElement.scrollHeight,scrollWidth:document.documentElement.scrollWidth,header:box('.top'),logo:box('.logo'),nav:box('#tabs'),phone:box('.phone'),app:box('#app'),frame:box('.messenger'),history:box('.msg-history'),compose:box('.msg-compose')};})()`);
+  const screenshot=async name=>{if(!artifactDir)return;const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(join(artifactDir,name+'.png'),Buffer.from(shot.data,'base64'));};
+  const visibleNavigation=(m,label)=>{assert.equal(m.nav.display,'flex',label+' navigation hidden');assert.ok(m.nav.y>=m.header.bottom-1,label+' tabs overlap header');assert.ok(m.nav.bottom<=m.phone.bottom+1,label+' tabs below viewport');assert.ok(m.scrollWidth<=m.width+1,label+' horizontal document overflow');};
+  await send('Page.enable');await send('Page.setLifecycleEventsEnabled',{enabled:true});await send('Network.enable');await send('Network.setBlockedURLs',{urls:['https://*']});
+  await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:1,mobile:true});
+  await navigate(`http://127.0.0.1:${server.address().port}/?role=executor`);await waitFor('#orderSearch');
+  await evaluate(`document.querySelector('[data-view="mp"]').click()`);await waitFor('[data-action="assign-executor"]');
+  await evaluate(`new Promise((resolve,reject)=>{const t=setInterval(()=>{if(document.querySelector('.reason')?.textContent.includes('Reason before')){clearInterval(t);resolve()}},25);setTimeout(()=>{clearInterval(t);reject(Error('Initial reason missing'))},4000)})`);
+  for(const action of ['start-acceptance','open-defect-chat','choose-post','assign-executor','request-quality'])assert.equal(await evaluate(`Boolean(document.querySelector('[data-action="${action}"]'))`),true,'MP action must be preserved: '+action);
+  const initialReads=await evaluate(`__orderCalls.filter(x=>x.endsWith('/orders/get')).length`);
+  await evaluate(`__orderReason='Reason updated in 1C';__uiNow=Date.now()+11000;document.querySelector('[data-view="tech"]').click()`);
+  await evaluate(`new Promise((resolve,reject)=>{const t=setInterval(()=>{if(document.querySelector('.reason')?.textContent.includes('Reason updated in 1C')){clearInterval(t);resolve()}},25);setTimeout(()=>{clearInterval(t);reject(Error('Fresh order reason did not render'))},4000)})`);
+  assert.equal(await evaluate(`__orderCalls.filter(x=>x.endsWith('/orders/get')).length`),initialReads+1);
+  assert.equal(await evaluate(`__orderCalls.some(x=>x.endsWith('/complete')||x.endsWith('/entries/add'))`),false,'refresh must never send files or complete');
+  await evaluate(`document.querySelector('[data-view="mp"]').click()`);await waitFor('[data-action="start-acceptance"]');
+  await evaluate(`document.querySelector('[data-action="start-acceptance"]').click()`);await waitFor('[data-process-input="_acceptance"][data-field="reason"]');
+  await evaluate(`(()=>{const field=document.querySelector('[data-process-input="_acceptance"][data-field="reason"]');field.value='Unsaved draft must remain';field.dispatchEvent(new Event('input',{bubbles:true}));field.blur();__orderReason='Foreground reason';__uiNow+=11000;document.dispatchEvent(new Event('visibilitychange'));})()`);
+  await evaluate(`new Promise((resolve,reject)=>{const timer=setInterval(()=>{if(document.querySelector('.reason')?.textContent.includes('Foreground reason')){clearInterval(timer);resolve()}},20);setTimeout(()=>{clearInterval(timer);reject(Error('Foreground refresh missing'))},4000)})`);
+  assert.equal(await evaluate(`document.querySelector('[data-process-input="_acceptance"][data-field="reason"]').value`),'Unsaved draft must remain');
+  assert.equal(await evaluate(`__orderCalls.filter(x=>x.endsWith('/acceptance/start')).length`),1,'read refresh must not recreate the act');
+  await evaluate(`document.getElementById('userPanel').click()`);await waitFor('#appDisplaySize');
+  const light=await evaluate(`getComputedStyle(document.querySelector('.sheet')).backgroundColor`);
+  await evaluate(`document.querySelector('button[data-appearance-theme="dark"]').click()`);await settle();
+  assert.equal(await evaluate(`document.documentElement.dataset.appearanceTheme`),'dark');
+  assert.notEqual(await evaluate(`getComputedStyle(document.querySelector('.sheet')).backgroundColor`),light);
+  await evaluate(`__uiNow=Date.parse('2026-12-10T00:00:00+05:00');ITUS_APPEARANCE.refresh()`);await settle();
+  assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),false);
+  await evaluate(`document.getElementById('holidayEnabled').click()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),true);
+  await evaluate(`document.getElementById('holidayEnabled').click();document.querySelector('[data-appearance-action="preview"]').click()`);assert.equal(await evaluate(`document.getElementById('holidayGreeting').open`),true);
+  await screenshot('holiday-dark');await evaluate(`document.querySelector('#holidayGreeting [data-appearance-action="close"]').click()`);
+  assert.equal(await evaluate(`document.getElementById('overlay').classList.contains('hidden')`),false,'greeting must preserve settings sheet');
+  await evaluate(`__uiNow=Date.parse('2027-01-12T23:59:59.999+05:00');ITUS_APPEARANCE.refresh()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),false);
+  await evaluate(`__uiNow=Date.parse('2027-01-13T00:00:00+05:00');ITUS_APPEARANCE.refresh()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),true);
+  for(const [width,size] of [[320,'extra'],[393,'normal'],[1200,'normal']]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height:852,deviceScaleFactor:1,mobile:true});
+    await evaluate(`ITUS_DISPLAY.set(${JSON.stringify(size)});document.querySelector('#sheetBody details').open=true`);await settle();
+    const box=await evaluate(`(()=>{const body=document.querySelector('.sheet-body'),sheet=document.querySelector('.sheet').getBoundingClientRect();return{overflow:document.documentElement.scrollWidth>innerWidth||body.scrollWidth>body.clientWidth+1,left:sheet.left,right:sheet.right,bottom:sheet.bottom}})()`);
+    assert.equal(box.overflow,false,'settings must fit '+width+' '+size);assert.ok(box.left>=0&&box.right<=width+1&&box.bottom<=853);await screenshot('settings-dark-'+width);
+  }
+  await evaluate(`document.getElementById('closeSheetButton').click();ITUS_DISPLAY.set('normal');document.querySelector('[data-view="executor"]').click()`);await settle();
+  for(const action of ['start-executor-work','open-defect-chat','package-create','package-start','package-pause','package-close','production'])assert.equal(await evaluate(`Boolean(document.querySelector('[data-action="${action}"]'))`),true,'Executor action must be preserved: '+action);
+  await evaluate(`document.querySelector('[data-view="chat"]').click()`);await waitFor('.msg-thread');
+  await evaluate(`document.querySelector('[data-action="msg-source"][data-source="staff"]').click()`);await waitFor('.msg-thread');await evaluate(`document.querySelector('.msg-thread').click()`);await waitFor('.msg-bubble');
+  assert.equal(await evaluate(`Boolean(document.querySelector('[data-action="msg-message-menu"]'))`),true);
+  await evaluate(`document.querySelector('[data-action="msg-message-menu"]').click()`);await waitFor('.message-actions-dialog[open]');await screenshot('chat-actions-dark');
+  await evaluate(`document.querySelector('.message-actions-dialog').close()`);
+  console.log('Appearance browser: holiday boundaries/off switch, light/dark settings at 320–1200px, preserved role actions, visible message menu, read-only reason refresh OK.');
+  await send('Browser.close');socket.close();
+}finally{
+  socket?.close();child.kill();server.close();
+  try{rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:100});}catch{}
+}
