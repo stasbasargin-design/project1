@@ -1,4 +1,4 @@
-name: Alfa-Auto Trainer V8: 49 browser checks
+name: "Alfa-Auto Trainer V8 — 49 browser checks"
 on:
   workflow_dispatch:
   push:
