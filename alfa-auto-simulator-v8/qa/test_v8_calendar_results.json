@@ -1,0 +1,44 @@
+{
+  "total": 9,
+  "passed": 9,
+  "failed": 0,
+  "pageErrors": [],
+  "tests": [
+    {
+      "name": "Booking produces exactly one simulated SMS invitation when no active chat",
+      "passed": true
+    },
+    {
+      "name": "Planning calendar opens the exact appointment and shows its details",
+      "passed": true
+    },
+    {
+      "name": "Automatic MAX reminders are blocked without consent and active chat",
+      "passed": true
+    },
+    {
+      "name": "MAX chat requires consent, activates on simulated consent, records only educational message",
+      "passed": true
+    },
+    {
+      "name": "Three reminders run at 10, 12, 14 hours without duplicates",
+      "passed": true
+    },
+    {
+      "name": "At 15:30 unanswered booking creates one CRM call task with calendar link",
+      "passed": true
+    },
+    {
+      "name": "Withdrawal of consent blocks employee messages again",
+      "passed": true
+    },
+    {
+      "name": "Booking with an active MAX chat creates chat notice, not SMS invitation",
+      "passed": true
+    },
+    {
+      "name": "Calendar filtering by date and previous/next buttons actually works",
+      "passed": true
+    }
+  ]
+}

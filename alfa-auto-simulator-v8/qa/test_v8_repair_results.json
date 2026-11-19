@@ -1,0 +1,28 @@
+{
+  "total": 5,
+  "passed": 5,
+  "failed": 0,
+  "pageErrors": [],
+  "tests": [
+    {
+      "name": "Booking creates linked ZN and ZN requires at least one valid auto-work",
+      "passed": true
+    },
+    {
+      "name": "Two separate ZNs are saved in a document register, each with its own number",
+      "passed": true
+    },
+    {
+      "name": "Switching two ZNs restores each document work rows and vehicle",
+      "passed": true
+    },
+    {
+      "name": "Closing one ZN does not change the status of the other ZN",
+      "passed": true
+    },
+    {
+      "name": "Appointment document tree opens precisely its saved linked ZN",
+      "passed": true
+    }
+  ]
+}

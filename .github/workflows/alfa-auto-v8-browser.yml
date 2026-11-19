@@ -1,0 +1,52 @@
+name: Alfa-Auto Trainer V8: 49 browser checks
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v8-20261119
+    paths:
+      - 'alfa-auto-simulator-v8/**'
+      - '.github/workflows/alfa-auto-v8-browser.yml'
+permissions:
+  contents: read
+jobs:
+  browser-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate JS syntax
+        run: node --check alfa-auto-simulator-v8/src/app.js
+      - name: Verify standalone HTML can be rebuilt
+        run: |
+          python alfa-auto-simulator-v8/build.py
+          git diff --exit-code -- alfa-auto-simulator-v8/AlfaAuto_Trainer_v8.html
+      - name: Install Chromium
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: KP booking and repair regressions (9)
+        run: python alfa-auto-simulator-v8/qa/test_v4_regression.py
+      - name: CRM auto quote regressions (12)
+        run: python alfa-auto-simulator-v8/qa/test_v5_browser.py
+      - name: OZCH and quote document regressions (6)
+        run: python alfa-auto-simulator-v8/qa/test_v6_workflows.py
+      - name: Desktop and Event regressions (8)
+        run: python alfa-auto-simulator-v8/qa/test_v7_desktop_events.py
+      - name: Calendar and MAX workflows (9)
+        run: python alfa-auto-simulator-v8/qa/test_v8_calendar_max.py
+      - name: Separate repair orders (5)
+        run: python alfa-auto-simulator-v8/qa/test_v8_repair_documents.py
+      - name: Upload QA screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfa-auto-v8-qa
+          path: |
+            alfa-auto-simulator-v8/qa/*.png
+            alfa-auto-simulator-v8/qa/*results.json
