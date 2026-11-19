@@ -1,0 +1,43 @@
+name: "Test 1C read-only external connectivity"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-test1c-network-probe-20261119
+    paths:
+      - ".github/workflows/alfa-auto-test1c-access.yml"
+permissions:
+  contents: read
+jobs:
+  check-public-test-1c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: DNS and anonymous HTTPS access
+        run: |
+          python3 - <<'PY'
+          import socket, ssl, http.client, urllib.parse, ipaddress
+          host = "1c.eazia.ru"
+          path = "/aa6_ea_test9/"
+          print("URL https://" + host + path)
+          try:
+              addrs = sorted({x[4][0] for x in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)})
+              print("DNS_RESOLVED", len(addrs), "address(es)")
+              print("DNS_IP_CLASSES", [("public" if ipaddress.ip_address(ip).is_global else "private_or_reserved") for ip in addrs])
+          except Exception as e:
+              print("DNS_ERROR", type(e).__name__, str(e)[:180])
+              raise SystemExit(0)
+          try:
+              conn = http.client.HTTPSConnection(host, 443, context=ssl.create_default_context(), timeout=18)
+              conn.request("GET", path, headers={"User-Agent":"ReadOnlyTest1C-AvailabilityProbe/1.0", "Accept":"text/html"})
+              resp = conn.getresponse()
+              print("HTTPS_STATUS", resp.status, resp.reason)
+              print("CONTENT_TYPE", resp.getheader("Content-Type", ""))
+              loc = resp.getheader("Location", "")
+              if loc: print("REDIRECT_HOST", urllib.parse.urlparse(loc).hostname or "(same host)")
+              data = resp.read(12000).decode("utf-8", "replace").lower()
+              print("PAGE_INDICATORS", {"login":("login" in data or "вход" in data or "авторизац" in data), "onec":("1c" in data or "1с" in data or "webclient" in data)})
+              conn.close()
+          except Exception as e:
+              print("HTTPS_ERROR", type(e).__name__, str(e)[:300])
+          PY
