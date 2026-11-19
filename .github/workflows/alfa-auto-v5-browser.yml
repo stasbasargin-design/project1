@@ -1,0 +1,40 @@
+name: Alfa-Auto Trainer V5 Linked Workflows QA
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v5-workflows-20261119
+    paths:
+      - 'alfa-auto-simulator-v5/**'
+      - '.github/workflows/alfa-auto-v5-browser.yml'
+permissions:
+  contents: read
+jobs:
+  browser-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate JavaScript syntax
+        run: node --check alfa-auto-simulator-v5/src/app.js
+      - name: Install browser
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Run 12 new linked-workflow checks
+        run: python alfa-auto-simulator-v5/qa/test_v5_browser.py
+      - name: Run 9 prior-version regression checks
+        run: python alfa-auto-simulator-v5/qa/test_v4_regression.py
+      - name: Keep screenshots and QA reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfa-auto-v5-qa
+          path: |
+            alfa-auto-simulator-v5/qa/*.png
+            alfa-auto-simulator-v5/qa/*results.json
