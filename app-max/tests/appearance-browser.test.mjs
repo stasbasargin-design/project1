@@ -70,8 +70,9 @@ try{
   await evaluate(`__uiNow=Date.parse('2026-12-10T00:00:00+05:00');ITUS_APPEARANCE.refresh()`);await settle();
   assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),false);
   await evaluate(`document.getElementById('holidayEnabled').click()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),true);
+  assert.equal(await evaluate(`document.querySelector('[data-appearance-action="preview"]').disabled`),true);
   await evaluate(`document.getElementById('holidayEnabled').click();document.querySelector('[data-appearance-action="preview"]').click()`);assert.equal(await evaluate(`document.getElementById('holidayGreeting').open`),true);
-  await screenshot('holiday-dark');await evaluate(`document.querySelector('#holidayGreeting [data-appearance-action="close"]').click()`);
+  await screenshot('holiday-dark');assert.equal(await evaluate(`ITUS_BACK()`),true);assert.equal(await evaluate(`document.getElementById('holidayGreeting').open`),false);
   assert.equal(await evaluate(`document.getElementById('overlay').classList.contains('hidden')`),false,'greeting must preserve settings sheet');
   await evaluate(`__uiNow=Date.parse('2027-01-12T23:59:59.999+05:00');ITUS_APPEARANCE.refresh()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),false);
   await evaluate(`__uiNow=Date.parse('2027-01-13T00:00:00+05:00');ITUS_APPEARANCE.refresh()`);assert.equal(await evaluate(`document.getElementById('holidayGarland').hidden`),true);

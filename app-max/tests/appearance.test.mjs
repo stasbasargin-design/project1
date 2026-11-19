@@ -22,5 +22,7 @@ assert.equal(JSON.parse(saved.get('itus.appearance.v1')).holiday,false);
 assert.match(api.settings(),/10\.12\.2026–12\.01\.2027/);
 assert.match(api.settings(),/Предпросмотр поздравления/);
 assert.equal(api.greeting({preview:true}),false,'disabled holiday cannot open greeting');
+assert.match(api.settings(),/data-appearance-action="preview" disabled/,'off switch must visibly disable preview');
+assert.equal(api.back(),false,'Back must not consume navigation when greeting is closed');
 assert.ok(!readFileSync(new URL('../assets/appearance.js',import.meta.url),'utf8').match(/fetch\s*\(|XMLHttpRequest/),'appearance never calls 1C');
 console.log('Appearance: inclusive holiday dates in UTC+05, year limit, device preferences, system/light/dark and off switch OK.');

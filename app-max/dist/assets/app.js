@@ -2719,6 +2719,7 @@
   }
 
   window.ITUS_BACK = () => {
+    if(window.ITUS_APPEARANCE?.back?.())return true;
     if(window.ITUS_MESSAGE_MENU_CLIENT?.back?.())return true;
     if (window.ITUS_APP_UPDATE_CLIENT?.back()) return true;
     if (window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.back()) return true;

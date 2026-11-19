@@ -1097,6 +1097,7 @@ window.ITUS_CONFIG = {
     const garland=doc.getElementById('holidayGarland');if(garland)garland.hidden=!(holiday&&seasonActive());
     doc.querySelectorAll('button[data-appearance-theme]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.appearanceTheme===theme)));
     const toggle=doc.getElementById('holidayEnabled');if(toggle)toggle.checked=holiday;
+    doc.querySelectorAll('button[data-appearance-action="preview"]').forEach(button=>button.disabled=!holiday);
     if(dialog?.open&&(!holiday||(!seasonActive()&&dialog.dataset.preview!=='true')))dialog.close?.();
     root.dispatchEvent?.(new root.Event('resize'));
     clearTimeout(timer);const now=Date.now(),next=now<START?START:now<END?END:now+3600000;
@@ -1104,6 +1105,7 @@ window.ITUS_CONFIG = {
   }
   function setTheme(value){if(!['system','light','dark'].includes(value))return;theme=value;save();apply();}
   function setHoliday(value){holiday=Boolean(value);save();apply();}
+  function back(){if(!dialog?.open)return false;if(dialog.close)dialog.close();else dialog.removeAttribute('open');return true;}
   function greeting({preview=false}={}){
     if(!holiday||(!seasonActive()&&!(preview&&canPreview())))return false;
     if(!dialog)return false;
@@ -1112,7 +1114,11 @@ window.ITUS_CONFIG = {
     dialog.classList.remove('celebrate');void dialog.offsetWidth;dialog.classList.add('celebrate');
     return true;
   }
-  function settings(){return `<section class="settings-section"><h3>Оформление</h3><div class="settings-group"><div class="appearance-theme-field"><b>Тема приложения</b><div class="appearance-themes" role="group" aria-label="Тема приложения">${[['light','☀','Светлая'],['dark','◐','Тёмная'],['system','◒','Системная']].map(([value,symbol,label])=>`<button type="button" data-appearance-theme="${value}" aria-pressed="${theme===value}"><span aria-hidden="true">${symbol}</span>${label}</button>`).join('')}</div></div><label class="appearance-switch-row" for="holidayEnabled"><span><b>Новогоднее оформление</b><small>10.12.2026–12.01.2027 · Екатеринбург</small></span><input id="holidayEnabled" type="checkbox" role="switch" ${holiday?'checked':''}></label>${canPreview()?'<button class="settings-link" type="button" data-appearance-action="preview"><span>🎁 Предпросмотр поздравления</span><span aria-hidden="true">›</span></button>':''}</div></section>`;}
+  function settings(){
+    const preview=canPreview()?`<button class="settings-link" type="button" data-appearance-action="preview" ${holiday?'':'disabled'}><span>🎁 Предпросмотр поздравления</span><span aria-hidden="true">›</span></button>`:'';
+    const themes=[['light','☀','Светлая'],['dark','◐','Тёмная'],['system','◒','Системная']].map(([value,symbol,label])=>`<button type="button" data-appearance-theme="${value}" aria-pressed="${theme===value}"><span aria-hidden="true">${symbol}</span>${label}</button>`).join('');
+    return `<section class="settings-section"><h3>Оформление</h3><div class="settings-group"><div class="appearance-theme-field"><b>Тема приложения</b><div class="appearance-themes" role="group" aria-label="Тема приложения">${themes}</div></div><label class="appearance-switch-row" for="holidayEnabled"><span><b>Новогоднее оформление</b><small>10.12.2026–12.01.2027 · Екатеринбург</small></span><input id="holidayEnabled" type="checkbox" role="switch" ${holiday?'checked':''}></label>${preview}</div></section>`;
+  }
   function mount(){
     const doc=root.document,chrome=doc.querySelector('.app-chrome');
     if(chrome&&!doc.getElementById('holidayGarland')){const garland=doc.createElement('div');garland.id='holidayGarland';garland.className='holiday-garland';garland.hidden=true;garland.innerHTML='<div class="holiday-lights" aria-hidden="true">'+Array.from({length:12},()=>'<span></span>').join('')+'</div><button type="button" class="holiday-gift" data-appearance-action="greeting" aria-label="Новогодний сюрприз">🎁</button>';chrome.insertBefore(garland,doc.getElementById('tabs'));}
@@ -1123,7 +1129,7 @@ window.ITUS_CONFIG = {
     doc.addEventListener('change',event=>{if(event.target.id==='holidayEnabled')setHoliday(event.target.checked);});
     doc.addEventListener('visibilitychange',()=>{if(!doc.hidden)apply();});apply();
   }
-  root.ITUS_APPEARANCE={get:()=>({theme,holiday,effective:theme==='system'?(media?.matches?'dark':'light'):theme}),setTheme,setHoliday,seasonActive,season:{start:START,endExclusive:END,timeZone:'Asia/Yekaterinburg'},settings,greeting,refresh:apply};
+  root.ITUS_APPEARANCE={get:()=>({theme,holiday,effective:theme==='system'?(media?.matches?'dark':'light'):theme}),setTheme,setHoliday,seasonActive,season:{start:START,endExclusive:END,timeZone:'Asia/Yekaterinburg'},settings,greeting,back,refresh:apply};
   if(media?.addEventListener)media.addEventListener('change',apply);else media?.addListener?.(apply);
   apply();if(root.document?.readyState==='loading')root.document.addEventListener('DOMContentLoaded',mount,{once:true});else if(root.document)mount();
 })(typeof window==='object'?window:globalThis);
@@ -16419,6 +16425,7 @@ button.is-pending,button[aria-busy=true]{cursor:progress;opacity:.85}
   }
 
   window.ITUS_BACK = () => {
+    if(window.ITUS_APPEARANCE?.back?.())return true;
     if(window.ITUS_MESSAGE_MENU_CLIENT?.back?.())return true;
     if (window.ITUS_APP_UPDATE_CLIENT?.back()) return true;
     if (window.ITUS_DOCUMENT_MEDIA_VIEWER_CLIENT?.back()) return true;
