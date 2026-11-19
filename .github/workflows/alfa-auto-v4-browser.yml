@@ -1,0 +1,38 @@
+name: Alfa-Auto Trainer V4 Browser QA
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v4-20261119
+    paths:
+      - 'alfa-auto-simulator-v4/**'
+      - '.github/workflows/alfa-auto-v4-browser.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate JavaScript
+        run: node --check alfa-auto-simulator-v4/src/app.js
+      - name: Install test browser
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Run booking, quote, repair and scenario tests
+        run: python alfa-auto-simulator-v4/qa/test_v4_browser.py
+      - name: Keep screenshots and QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfa-auto-v4-qa
+          path: |
+            alfa-auto-simulator-v4/qa/*.png
+            alfa-auto-simulator-v4/qa/*results.json
