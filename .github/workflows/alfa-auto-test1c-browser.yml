@@ -42,6 +42,10 @@ jobs:
                   body=page.locator("body").inner_text(timeout=5000)
                   print("VISIBLE_BODY_CHARACTERS",len(body))
                   if len(body)<=120: print("VISIBLE_BODY_SHORT_TEXT",repr(body))
+                  checks=["пользователь","имя пользователя","пароль","войти","вход","авторизац","ошибка","загрузка","соединение","подключение","сеанс","рабочий стол","главное","crm","предприятие","список","отмена","учетная запись","login","password","error"]
+                  print("SAFE_UI_KEYWORDS",[term for term in checks if term in body.lower()])
+                  print("CUSTOM_CLICKABLE_COUNT",page.locator('[role="button"], [tabindex]').count())
+                  print("DOCUMENT_BODY_CHILDREN",page.locator("body > *").count())
                   print("IFRAME_COUNT",len(page.frames)-1)
                   print("IFRAME_PASSWORD_FIELDS",sum(fr.locator("input[type=password]").count() for fr in page.frames[1:]))
                   print("PASSWORD_FIELDS",page.locator("input[type=password]").count())
