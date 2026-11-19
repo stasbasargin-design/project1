@@ -21,7 +21,7 @@ const server=createServer(async(req,res)=>{
     calls.push({path,body});let data={};
     if(path.endsWith('/environments/config'))data={test:true,production:true,isolatedPush:true};
     else if(path.endsWith('/push/web/config')||path.endsWith('/push/installation'))data={enabled:false};
-    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true},clients:{replies:true,reactions:true}}};
+    else if(path.endsWith('/auth/max'))data={user:{name:'Synthetic employee',roleName:'admin'},availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true,reactionEncoding:'code-v1'},clients:{replies:true,reactions:true}}};
     else if(path.endsWith('/orders/list'))data={orders:[order]};
     else if(path.endsWith('/orders/get'))data={order};
     else if(path.endsWith('/defects/start'))data={documentRef:'defect-one',entries};
@@ -37,7 +37,9 @@ const server=createServer(async(req,res)=>{
       data={muted};
     }
     else if(path.endsWith('/internal-chat/messages/react')){
-      const message=staffHistory.find(x=>x.messageRef===body.messageRef),data={messageRef:body.messageRef,myReaction:body.emoji,reactions:body.emoji?[{emoji:body.emoji,count:1}]:[]};
+      assert.equal(Object.hasOwn(body,'emoji'),false,'raw emoji must never enter 1C reaction request');
+      assert.equal(typeof body.emojiCode,'string');assert.match(body.emojiCode,/^[a-z_]*$/);
+      const message=staffHistory.find(x=>x.messageRef===body.messageRef),data={messageRef:body.messageRef,myReactionCode:body.emojiCode,reactions:body.emojiCode?[{emojiCode:body.emojiCode,count:1}]:[]};
       // A rejected request does not mutate the mock server's saved history.
       reactionResponses.push({res,data,accept(){Object.assign(message,data);res.end(JSON.stringify({success:true,data}));}});return;
     }
@@ -139,7 +141,7 @@ try{
   await click('[data-action="msg-back"]');await click('[data-action="msg-open"]');
   try{await wait('document.querySelector(".msg-reaction-count")');}catch(error){console.log(JSON.stringify({stage:'reopen-reactions',remote:staffHistory.find(x=>x.messageRef==='message-54'),calls:calls.slice(-5),dom:await evaluate('document.querySelector(".msg-conversation").textContent.slice(-1800)')}));throw error;}
   await reaction('message-54');
-  for(let n=0;n<100&&reactionResponses.length<2;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,2);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).at(-1).body.emoji,'');
+  for(let n=0;n<100&&reactionResponses.length<2;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,2);assert.equal(calls.filter(x=>x.path.endsWith('/messages/react')).at(-1).body.emojiCode,'');
   reactionResponses[1].accept();await wait('!document.querySelector(".msg-reaction-count")');
   await reaction('message-54');
   for(let n=0;n<100&&reactionResponses.length<3;n++)await new Promise(r=>setTimeout(r,20));assert.equal(reactionResponses.length,3);

@@ -8,6 +8,29 @@
     return ['string', 'number', 'boolean'].includes(typeof value) ? String(value) : fallback;
   };
   const bool = (value, fallback = false) => value === undefined || value === null ? fallback : Boolean(value);
+  const reactionCodes=Object.freeze({thumbs_up:'👍',heart:'❤️',laugh:'😂',wow:'😮',sad:'😢',thanks:'🙏',check:'✅',thumbs_down:'👎'});
+  const reactionCode=emoji=>Object.keys(reactionCodes).find(code=>reactionCodes[code]===emoji)||(emoji==='❤'?'heart':'');
+  const reactionEmoji=code=>typeof code==='string'&&Object.prototype.hasOwnProperty.call(reactionCodes,code)?reactionCodes[code]:'';
+  const reactionCodesSupported=capabilities=>capabilities?.reactions===true&&capabilities?.reactionEncoding==='code-v1';
+  function normalizeReactions(value){
+    const result=[],seen=new Set();
+    for(const entry of asArray(value)){
+      if(!isObject(entry)||!Number.isSafeInteger(entry.count)||entry.count<=0)continue;
+      const emoji=Object.prototype.hasOwnProperty.call(entry,'emojiCode')?reactionEmoji(entry.emojiCode):reactionEmoji(reactionCode(entry.emoji));
+      if(!emoji||seen.has(emoji))continue;seen.add(emoji);result.push({emoji,count:entry.count});
+    }
+    return result;
+  }
+  function reactionResponseValid(data,messageRef,expectedCode){
+    if(!isObject(data)||data.messageRef!==messageRef||data.myReactionCode!==expectedCode||!Array.isArray(data.reactions))return false;
+    if(expectedCode!==''&&!reactionEmoji(expectedCode))return false;
+    const seen=new Set();
+    for(const entry of data.reactions){
+      if(!isObject(entry)||!reactionEmoji(entry.emojiCode)||!Number.isSafeInteger(entry.count)||entry.count<=0||seen.has(entry.emojiCode))return false;
+      seen.add(entry.emojiCode);
+    }
+    return expectedCode===''||seen.has(expectedCode);
+  }
 
   function normalizeUser(value) {
     const x = Array.isArray(value) ? Object.assign({}, ...value.filter(isObject)) : value;
@@ -286,8 +309,8 @@
       status,
       replyToMessageRef:text(x.replyToMessageRef || x.replyTo?.messageRef),
       replyTo:isObject(x.replyTo)?{messageRef:text(x.replyTo.messageRef),author:text(x.replyTo.authorName || x.replyTo.author),text:text(x.replyTo.text),fileName:text(x.replyTo.fileName)}:null,
-      reactions:asArray(x.reactions).filter(r=>isObject(r)&&typeof r.emoji==='string'&&Number.isSafeInteger(r.count)&&r.count>0).map(r=>({emoji:r.emoji,count:r.count})),
-      myReaction:text(x.myReaction),
+      reactions:normalizeReactions(x.reactions),
+      myReaction:Object.prototype.hasOwnProperty.call(x,'myReactionCode')?reactionEmoji(x.myReactionCode):reactionEmoji(reactionCode(x.myReaction)),
       poll
     };
   }
@@ -312,6 +335,6 @@
     asArray, extractItems, extractOrders, isObject, mapOrder, normalizeFile,
     normalizeForm, normalizeMessage, normalizeOption, normalizeProcess,
     normalizeQuestion, normalizeResource, normalizeSurvey, normalizeTopic,
-    normalizeUser, acceptanceState, text
+    normalizeUser, acceptanceState, text, reactionCodes, reactionCode, reactionEmoji, reactionCodesSupported, normalizeReactions, reactionResponseValid
   });
 })(typeof window !== 'undefined' ? window : globalThis);

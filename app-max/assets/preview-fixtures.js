@@ -20,7 +20,7 @@
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
     let data = {};
-    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
+    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true,reactionEncoding:'code-v1'}}};
     else if(method === '/orders/list') data={orders:allowedRole === 'executor' ? [reviewOrder()] : []};
     else if(method === '/orders/get') data={order:reviewOrder()};
     else if(method.startsWith('/worktime/')) {
@@ -53,8 +53,9 @@
     else if(method==='/internal-chat/messages/react'){
       const message=staffMessages.get(body.groupRef)?.find(x=>(x.messageRef||x.id)===body.messageRef);
       if(!message)return new Response(JSON.stringify({success:false,error:{message:'Сообщение недоступно'}}),{status:404});
-      message.myReaction=body.emoji;message.reactions=body.emoji?[{emoji:body.emoji,count:1}]:[];
-      data={messageRef:body.messageRef,myReaction:message.myReaction,reactions:message.reactions};
+      if(typeof body.emojiCode!=='string'||body.emojiCode&&!window.ITUS_API.reactionEmoji(body.emojiCode)||Object.prototype.hasOwnProperty.call(body,'emoji'))return new Response(JSON.stringify({success:false,error:{message:'Ожидается emojiCode'}}),{status:422});
+      message.myReactionCode=body.emojiCode;message.reactions=body.emojiCode?[{emojiCode:body.emojiCode,count:1}]:[];
+      data={messageRef:body.messageRef,myReactionCode:message.myReactionCode,reactions:message.reactions};
     }
     else if(method.endsWith('/messages/list')) data={messages:method.startsWith('/internal-chat/')?(staffMessages.get(body.groupRef)||[]):messages};
     else if(method.endsWith('/messages/send') || method.endsWith('/files/send') || method.endsWith('/polls/send')) {

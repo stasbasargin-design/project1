@@ -294,7 +294,7 @@ body.messenger-view footer{display:none}
     const method = String(url).replace('/review-api','');
     let body={};try {body=JSON.parse(options.body || '{}');}catch{}
     let data = {};
-    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true}}};
+    if(method === '/auth/max') data = {employeeRef:'review-self',workshopRef:'review-workshop',name:'Тестовый сотрудник ИТУС',role:allowedRole,roleName:{master:'Мастер-приёмщик',executor:'Исполнитель',tech:'Технолог'}[allowedRole],availableTabs:['orders','mp','executor','tech','clients','chat'],chatCapabilities:{internal:{replies:true,reactions:true,reactionEncoding:'code-v1'}}};
     else if(method === '/orders/list') data={orders:allowedRole === 'executor' ? [reviewOrder()] : []};
     else if(method === '/orders/get') data={order:reviewOrder()};
     else if(method.startsWith('/worktime/')) {
@@ -327,8 +327,9 @@ body.messenger-view footer{display:none}
     else if(method==='/internal-chat/messages/react'){
       const message=staffMessages.get(body.groupRef)?.find(x=>(x.messageRef||x.id)===body.messageRef);
       if(!message)return new Response(JSON.stringify({success:false,error:{message:'Сообщение недоступно'}}),{status:404});
-      message.myReaction=body.emoji;message.reactions=body.emoji?[{emoji:body.emoji,count:1}]:[];
-      data={messageRef:body.messageRef,myReaction:message.myReaction,reactions:message.reactions};
+      if(typeof body.emojiCode!=='string'||body.emojiCode&&!window.ITUS_API.reactionEmoji(body.emojiCode)||Object.prototype.hasOwnProperty.call(body,'emoji'))return new Response(JSON.stringify({success:false,error:{message:'Ожидается emojiCode'}}),{status:422});
+      message.myReactionCode=body.emojiCode;message.reactions=body.emojiCode?[{emojiCode:body.emojiCode,count:1}]:[];
+      data={messageRef:body.messageRef,myReactionCode:message.myReactionCode,reactions:message.reactions};
     }
     else if(method.endsWith('/messages/list')) data={messages:method.startsWith('/internal-chat/')?(staffMessages.get(body.groupRef)||[]):messages};
     else if(method.endsWith('/messages/send') || method.endsWith('/files/send') || method.endsWith('/polls/send')) {
@@ -1166,6 +1167,29 @@ window.ITUS_CONFIG = {
     return ['string', 'number', 'boolean'].includes(typeof value) ? String(value) : fallback;
   };
   const bool = (value, fallback = false) => value === undefined || value === null ? fallback : Boolean(value);
+  const reactionCodes=Object.freeze({thumbs_up:'👍',heart:'❤️',laugh:'😂',wow:'😮',sad:'😢',thanks:'🙏',check:'✅',thumbs_down:'👎'});
+  const reactionCode=emoji=>Object.keys(reactionCodes).find(code=>reactionCodes[code]===emoji)||(emoji==='❤'?'heart':'');
+  const reactionEmoji=code=>typeof code==='string'&&Object.prototype.hasOwnProperty.call(reactionCodes,code)?reactionCodes[code]:'';
+  const reactionCodesSupported=capabilities=>capabilities?.reactions===true&&capabilities?.reactionEncoding==='code-v1';
+  function normalizeReactions(value){
+    const result=[],seen=new Set();
+    for(const entry of asArray(value)){
+      if(!isObject(entry)||!Number.isSafeInteger(entry.count)||entry.count<=0)continue;
+      const emoji=Object.prototype.hasOwnProperty.call(entry,'emojiCode')?reactionEmoji(entry.emojiCode):reactionEmoji(reactionCode(entry.emoji));
+      if(!emoji||seen.has(emoji))continue;seen.add(emoji);result.push({emoji,count:entry.count});
+    }
+    return result;
+  }
+  function reactionResponseValid(data,messageRef,expectedCode){
+    if(!isObject(data)||data.messageRef!==messageRef||data.myReactionCode!==expectedCode||!Array.isArray(data.reactions))return false;
+    if(expectedCode!==''&&!reactionEmoji(expectedCode))return false;
+    const seen=new Set();
+    for(const entry of data.reactions){
+      if(!isObject(entry)||!reactionEmoji(entry.emojiCode)||!Number.isSafeInteger(entry.count)||entry.count<=0||seen.has(entry.emojiCode))return false;
+      seen.add(entry.emojiCode);
+    }
+    return expectedCode===''||seen.has(expectedCode);
+  }
 
   function normalizeUser(value) {
     const x = Array.isArray(value) ? Object.assign({}, ...value.filter(isObject)) : value;
@@ -1444,8 +1468,8 @@ window.ITUS_CONFIG = {
       status,
       replyToMessageRef:text(x.replyToMessageRef || x.replyTo?.messageRef),
       replyTo:isObject(x.replyTo)?{messageRef:text(x.replyTo.messageRef),author:text(x.replyTo.authorName || x.replyTo.author),text:text(x.replyTo.text),fileName:text(x.replyTo.fileName)}:null,
-      reactions:asArray(x.reactions).filter(r=>isObject(r)&&typeof r.emoji==='string'&&Number.isSafeInteger(r.count)&&r.count>0).map(r=>({emoji:r.emoji,count:r.count})),
-      myReaction:text(x.myReaction),
+      reactions:normalizeReactions(x.reactions),
+      myReaction:Object.prototype.hasOwnProperty.call(x,'myReactionCode')?reactionEmoji(x.myReactionCode):reactionEmoji(reactionCode(x.myReaction)),
       poll
     };
   }
@@ -1470,7 +1494,7 @@ window.ITUS_CONFIG = {
     asArray, extractItems, extractOrders, isObject, mapOrder, normalizeFile,
     normalizeForm, normalizeMessage, normalizeOption, normalizeProcess,
     normalizeQuestion, normalizeResource, normalizeSurvey, normalizeTopic,
-    normalizeUser, acceptanceState, text
+    normalizeUser, acceptanceState, text, reactionCodes, reactionCode, reactionEmoji, reactionCodesSupported, normalizeReactions, reactionResponseValid
   });
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -2101,7 +2125,7 @@ window.ITUS_CONFIG = {
     let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={},refreshPending={};
     let replies={},reactionBusy=new Set(),reactionAttempts={};
     const chatCapabilities=()=>options.chatCapabilities?.()||{};
-    const capabilities=(s=source)=>s==='staff'?chatCapabilities():{replies:false,reactions:false};
+    const capabilities=(s=source)=>s==='staff'?{...chatCapabilities(),reactions:api.reactionCodesSupported?.(chatCapabilities())===true}:{replies:false,reactions:false};
     const chatPreferences=()=>options.chatPreferences?.();
     const emojis=()=>root.ITUS_CHAT_POLICY?.emojis||['👍','❤️','😂','😮','😢','🙏','✅','👎'];
     const blobUrls=new Map();
@@ -2403,15 +2427,16 @@ window.ITUS_CONFIG = {
       if(!capabilities().reactions||!emojis().includes(emoji))return;
       const s=source,id=selected,k=key(s,id),message=cache[k]?.find(x=>x.messageRef===ref&&x.hasServerMessageRef),lock=k+':'+ref;
       if(!message||reactionBusy.has(lock))return;
-      const desired=message.myReaction===emoji?'':emoji,signature=lock+':'+desired;
+      const desired=message.myReaction===emoji?'':emoji,emojiCode=desired?api.reactionCode(desired):'',signature=lock+':'+emojiCode;
+      if(desired&&!emojiCode)return;
       const requestId=reactionAttempts[signature]||(reactionAttempts[signature]=newMessageId()),generation=epoch;
       reactionBusy.add(lock);paintHistory();
       try{
-        const response=await call(endpoints(s)+'/messages/react',{...params(s,id),messageRef:ref,emoji:desired,requestId},{silent:true,requestId});
+        const response=await call(endpoints(s)+'/messages/react',{...params(s,id),messageRef:ref,emojiCode,requestId},{silent:true,requestId});
         if(generation!==epoch)return;
         const data=response.data||response;
-        if(data.messageRef!==ref||data.myReaction!==desired||!Array.isArray(data.reactions))throw Error('1С не подтвердила реакцию');
-        const normalized=api.normalizeMessage({...message,reactions:data.reactions,myReaction:data.myReaction});
+        if(!api.reactionResponseValid(data,ref,emojiCode))throw Error('1С не подтвердила реакцию в формате code-v1');
+        const normalized=api.normalizeMessage({...message,reactions:data.reactions,myReactionCode:data.myReactionCode});
         const currentMessage=cache[k]?.find(x=>x.messageRef===ref);
         if(currentMessage){currentMessage.reactions=normalized.reactions;currentMessage.myReaction=normalized.myReaction;}
         delete reactionAttempts[signature];if(busy[k])refreshPending[k]=true;void persistThread(k);toast(desired?'Реакция сохранена':'Реакция снята');
@@ -13731,7 +13756,7 @@ button.is-pending,button[aria-busy=true]{cursor:progress;opacity:.85}
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.7'
+    version: 'i-max-2.9.8'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -14270,7 +14295,7 @@ button.is-pending,button[aria-busy=true]{cursor:progress;opacity:.85}
       else if (CONFIG.enforceTabs) {
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
-      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:authData.chatCapabilities?.internal?.reactions===true};
+      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:API.reactionCodesSupported(authData.chatCapabilities?.internal),reactionEncoding:authData.chatCapabilities?.internal?.reactionEncoding||''};
       state.updateCheckReady=true;
       void appUpdater?.check({login:!readOnlyRecovery});
       void window.ITUS_CHAT_PREFERENCES_CLIENT?.load();

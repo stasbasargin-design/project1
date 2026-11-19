@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.7'
+    version: 'i-max-2.9.8'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -564,7 +564,7 @@
       else if (CONFIG.enforceTabs) {
         state.views = Object.fromEntries(Object.entries(ALL_VIEWS).filter(([key]) => Array.isArray(tabs) && tabs.includes(key)));
       } else state.views = { ...ALL_VIEWS };
-      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:authData.chatCapabilities?.internal?.reactions===true};
+      state.chatCapabilities={replies:authData.chatCapabilities?.internal?.replies===true,reactions:API.reactionCodesSupported(authData.chatCapabilities?.internal),reactionEncoding:authData.chatCapabilities?.internal?.reactionEncoding||''};
       state.updateCheckReady=true;
       void appUpdater?.check({login:!readOnlyRecovery});
       void window.ITUS_CHAT_PREFERENCES_CLIENT?.load();

@@ -12,7 +12,7 @@
     let records={clients:[],staff:[]},contacts=[],contactsLoaded=false,loaded={},listBusy={},listError={},cache={},busy={},errors={},drafts={},sending={},counts={},attempts={},refreshPending={};
     let replies={},reactionBusy=new Set(),reactionAttempts={};
     const chatCapabilities=()=>options.chatCapabilities?.()||{};
-    const capabilities=(s=source)=>s==='staff'?chatCapabilities():{replies:false,reactions:false};
+    const capabilities=(s=source)=>s==='staff'?{...chatCapabilities(),reactions:api.reactionCodesSupported?.(chatCapabilities())===true}:{replies:false,reactions:false};
     const chatPreferences=()=>options.chatPreferences?.();
     const emojis=()=>root.ITUS_CHAT_POLICY?.emojis||['👍','❤️','😂','😮','😢','🙏','✅','👎'];
     const blobUrls=new Map();
@@ -314,15 +314,16 @@
       if(!capabilities().reactions||!emojis().includes(emoji))return;
       const s=source,id=selected,k=key(s,id),message=cache[k]?.find(x=>x.messageRef===ref&&x.hasServerMessageRef),lock=k+':'+ref;
       if(!message||reactionBusy.has(lock))return;
-      const desired=message.myReaction===emoji?'':emoji,signature=lock+':'+desired;
+      const desired=message.myReaction===emoji?'':emoji,emojiCode=desired?api.reactionCode(desired):'',signature=lock+':'+emojiCode;
+      if(desired&&!emojiCode)return;
       const requestId=reactionAttempts[signature]||(reactionAttempts[signature]=newMessageId()),generation=epoch;
       reactionBusy.add(lock);paintHistory();
       try{
-        const response=await call(endpoints(s)+'/messages/react',{...params(s,id),messageRef:ref,emoji:desired,requestId},{silent:true,requestId});
+        const response=await call(endpoints(s)+'/messages/react',{...params(s,id),messageRef:ref,emojiCode,requestId},{silent:true,requestId});
         if(generation!==epoch)return;
         const data=response.data||response;
-        if(data.messageRef!==ref||data.myReaction!==desired||!Array.isArray(data.reactions))throw Error('1С не подтвердила реакцию');
-        const normalized=api.normalizeMessage({...message,reactions:data.reactions,myReaction:data.myReaction});
+        if(!api.reactionResponseValid(data,ref,emojiCode))throw Error('1С не подтвердила реакцию в формате code-v1');
+        const normalized=api.normalizeMessage({...message,reactions:data.reactions,myReactionCode:data.myReactionCode});
         const currentMessage=cache[k]?.find(x=>x.messageRef===ref);
         if(currentMessage){currentMessage.reactions=normalized.reactions;currentMessage.myReaction=normalized.myReaction;}
         delete reactionAttempts[signature];if(busy[k])refreshPending[k]=true;void persistThread(k);toast(desired?'Реакция сохранена':'Реакция снята');

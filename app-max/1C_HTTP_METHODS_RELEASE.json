@@ -132,7 +132,14 @@
           "tech",
           "clients",
           "chat"
-        ]
+        ],
+        "chatCapabilities": {
+          "internal": {
+            "replies": true,
+            "reactions": true,
+            "reactionEncoding": "code-v1"
+          }
+        }
       }
     },
     "/auth/qr/start": {
@@ -1034,6 +1041,39 @@
       "responseData": {
         "valid": true
       }
+    },
+    "/internal-chat/messages/react": {
+      "purpose": "Set or remove the authenticated employee reaction using ASCII codes only. Requires reactions=true and reactionEncoding=code-v1 in auth. Legacy clients must not be enabled.",
+      "request": {
+        "groupRef": "GROUP_GUID",
+        "groupId": "GROUP_GUID",
+        "messageRef": "MESSAGE_GUID",
+        "emojiCode": "thumbs_up",
+        "requestId": "REQUEST_UUID"
+      },
+      "responseData": {
+        "messageRef": "MESSAGE_GUID",
+        "myReactionCode": "thumbs_up",
+        "reactions": [
+          {
+            "emojiCode": "thumbs_up",
+            "count": 2
+          }
+        ]
+      },
+      "allowedCodes": [
+        "thumbs_up",
+        "heart",
+        "laugh",
+        "wow",
+        "sad",
+        "thanks",
+        "check",
+        "thumbs_down",
+        ""
+      ],
+      "semantics": "Empty emojiCode removes the employee reaction. One current reaction per employee/message/contour. Set desired state, never toggle. Repeated requestId returns the original result; repeated desired state does not increment counts.",
+      "history": "Return myReactionCode and reactions[].emojiCode/count in /internal-chat/messages/list. Do not serialize emoji or myReaction Unicode fields."
     }
   },
   "requiredHttpStatuses": {
