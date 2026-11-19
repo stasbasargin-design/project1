@@ -2,7 +2,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 import json, traceback
 root=Path(__file__).resolve().parents[1]
-html=(root/'Альфа-Авто_Тренажер_v3_ИНТЕРАКТИВНЫЙ.html').read_text(encoding='utf-8')
+html=(root/'AlfaAuto_Trainer_v3.html').read_text(encoding='utf-8')
 results=[];errors=[]
 
 def check(name,fn):
@@ -10,7 +10,9 @@ def check(name,fn):
  except Exception as e:results.append({'name':name,'pass':False,'error':str(e)[:550]});print('FAIL',name,str(e)[:280]);traceback.print_exc(limit=1)
 
 with sync_playwright() as p:
- browser=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+ launch_kwargs={'headless':True,'args':['--no-sandbox','--disable-dev-shm-usage']}
+ if Path('/usr/bin/chromium').exists():launch_kwargs['executable_path']='/usr/bin/chromium'
+ browser=p.chromium.launch(**launch_kwargs)
  page=browser.new_page(viewport={'width':1600,'height':900},device_scale_factor=1)
  page.on('pageerror',lambda e:errors.append(str(e)))
  page.on('dialog',lambda d:d.accept())
