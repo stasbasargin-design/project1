@@ -1,0 +1,47 @@
+{
+  "passed": 10,
+  "total": 10,
+  "tests": [
+    {
+      "name": "15 document screens render",
+      "pass": true
+    },
+    {
+      "name": "event blank contact + reason transfer",
+      "pass": true
+    },
+    {
+      "name": "rich hover tooltip on real field",
+      "pass": true
+    },
+    {
+      "name": "counterparty: manual INN → selection → fill",
+      "pass": true
+    },
+    {
+      "name": "catalog filter, select row, open real data",
+      "pass": true
+    },
+    {
+      "name": "vehicle: VIN/chassis → interactive 1C triple lookup → Apply",
+      "pass": true
+    },
+    {
+      "name": "estimate: blank lines then multi-pick and quantity input",
+      "pass": true
+    },
+    {
+      "name": "exam mode disables tips and hides scenario answers",
+      "pass": true
+    },
+    {
+      "name": "help overlay is optional and contextual",
+      "pass": true
+    },
+    {
+      "name": "screenshot regression: event, counterparty, vehicle",
+      "pass": true
+    }
+  ],
+  "pageErrors": []
+}
