@@ -1,0 +1,23 @@
+name: Alfa-Auto Simulator V2 Static Checks
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v2-20261119
+    paths:
+      - 'alfa-auto-simulator-v2/**'
+      - '.github/workflows/alfa-auto-v2-static.yml'
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify JavaScript syntax
+        run: node --check alfa-auto-simulator-v2/src/app.js
+      - name: Run all static scenario assertions
+        run: node alfa-auto-simulator-v2/qa/test_static.js
