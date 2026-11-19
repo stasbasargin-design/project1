@@ -1,0 +1,43 @@
+{
+  "total": 9,
+  "passed": 9,
+  "tests": [
+    {
+      "name": "KP matches source grouping and empty document",
+      "passed": true
+    },
+    {
+      "name": "KP selection, related parts, quantities, supplier and delivery",
+      "passed": true
+    },
+    {
+      "name": "KP exclusive statuses, save and OЗЧ assignment",
+      "passed": true
+    },
+    {
+      "name": "Repair gets only agreed works, customer parts in proper tab",
+      "passed": true
+    },
+    {
+      "name": "Booking: manual data, date+time, save, reopen, send to repair",
+      "passed": true
+    },
+    {
+      "name": "Recommendations from KP shown on linked vehicle",
+      "passed": true
+    },
+    {
+      "name": "All four КП print variants and email handoff",
+      "passed": true
+    },
+    {
+      "name": "Hover help and exam mode",
+      "passed": true
+    },
+    {
+      "name": "All 15 document screens render without exceptions",
+      "passed": true
+    }
+  ],
+  "pageErrors": []
+}
