@@ -1,0 +1,30 @@
+name: Alfa-Auto Simulator V3 Browser Checks
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - alfa-auto-simulator-v3-hifi-20261119
+    paths:
+      - 'alfa-auto-simulator-v3/**'
+      - '.github/workflows/alfa-auto-v3-browser.yml'
+permissions:
+  contents: read
+jobs:
+  browser-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: JavaScript syntax verification
+        run: node --check alfa-auto-simulator-v3/src/app.js
+      - name: Install Playwright browser
+        run: |
+          python -m pip install playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Interaction regression (no network or production 1C)
+        run: python alfa-auto-simulator-v3/qa/test_browser.py
