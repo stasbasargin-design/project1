@@ -4,6 +4,10 @@ buildscript {
     
     repositories {
         google()
+        // Some CI runners receive intermittent 404s from Maven Central's primary endpoint.
+        if (System.getenv('GITHUB_ACTIONS') == 'true') {
+            maven { url = uri('https://maven-central.storage-download.googleapis.com/maven2/') }
+        }
         mavenCentral()
     }
     dependencies {
@@ -20,6 +24,9 @@ apply from: "variables.gradle"
 allprojects {
     repositories {
         google()
+        if (System.getenv('GITHUB_ACTIONS') == 'true') {
+            maven { url = uri('https://maven-central.storage-download.googleapis.com/maven2/') }
+        }
         mavenCentral()
     }
 }
