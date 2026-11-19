@@ -1,0 +1,100 @@
+{
+  "tests": [
+    {
+      "test": "Render desktop",
+      "pass": true
+    },
+    {
+      "test": "Render event",
+      "pass": true
+    },
+    {
+      "test": "Render task",
+      "pass": true
+    },
+    {
+      "test": "Render contacts",
+      "pass": true
+    },
+    {
+      "test": "Render counterparty",
+      "pass": true
+    },
+    {
+      "test": "Render vehicles",
+      "pass": true
+    },
+    {
+      "test": "Render vehicle",
+      "pass": true
+    },
+    {
+      "test": "Render estimate",
+      "pass": true
+    },
+    {
+      "test": "Render repair",
+      "pass": true
+    },
+    {
+      "test": "Render express",
+      "pass": true
+    },
+    {
+      "test": "Render max",
+      "pass": true
+    },
+    {
+      "test": "Render blocked",
+      "pass": true
+    },
+    {
+      "test": "Render email",
+      "pass": true
+    },
+    {
+      "test": "Render appointment",
+      "pass": true
+    },
+    {
+      "test": "Render progress",
+      "pass": true
+    },
+    {
+      "test": "event reason transfers to agreement without full script",
+      "pass": true
+    },
+    {
+      "test": "vehicle VIN+chassis before brand/model",
+      "pass": true
+    },
+    {
+      "test": "vehicle wizard rejects missing VIN",
+      "pass": true
+    },
+    {
+      "test": "vehicle wizard shows manual selector and test match",
+      "pass": true
+    },
+    {
+      "test": "counterparty lookup does not auto-fill before selection",
+      "pass": true
+    },
+    {
+      "test": "task KO dates contain time",
+      "pass": true
+    },
+    {
+      "test": "task KO dates included in content after valid save",
+      "pass": true
+    },
+    {
+      "test": "estimate requires 4 header fields and at least one real work",
+      "pass": true
+    },
+    {
+      "test": "bulk picker supports multiple items",
+      "pass": true
+    }
+  ]
+}
