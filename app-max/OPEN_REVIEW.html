@@ -1086,7 +1086,7 @@ window.ITUS_CONFIG = {
   try{const saved=JSON.parse(root.localStorage?.getItem(KEY)||'{}');if(['system','light','dark'].includes(saved.theme))theme=saved.theme;if(typeof saved.holiday==='boolean')holiday=saved.holiday;}catch{}
   const media=root.matchMedia?.('(prefers-color-scheme: dark)');
   const seasonActive=(time=Date.now())=>Number(time)>=START&&Number(time)<END;
-  const canPreview=()=>['max-test.ea-itus.ru','localhost','127.0.0.1'].includes(root.location?.hostname);
+  const canPreview=()=>root.location?.hostname==='max-test.ea-itus.ru'||String(root.__ITUS_API_BASE__||'').startsWith('https://max-test.ea-itus.ru/')||(['localhost','127.0.0.1'].includes(root.location?.hostname)&&!root.Capacitor);
   function save(){try{root.localStorage?.setItem(KEY,JSON.stringify({theme,holiday}));}catch{}}
   function apply(){
     const doc=root.document;if(!doc)return;

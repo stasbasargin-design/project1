@@ -24,5 +24,7 @@ assert.match(api.settings(),/Предпросмотр поздравления/)
 assert.equal(api.greeting({preview:true}),false,'disabled holiday cannot open greeting');
 assert.match(api.settings(),/data-appearance-action="preview" disabled/,'off switch must visibly disable preview');
 assert.equal(api.back(),false,'Back must not consume navigation when greeting is closed');
+window.Capacitor={};window.location.hostname='localhost';assert.doesNotMatch(api.settings(),/Предпросмотр поздравления/,'production native localhost must not enable test preview');
+window.__ITUS_API_BASE__='https://max-test.ea-itus.ru/api/1c';assert.match(api.settings(),/Предпросмотр поздравления/,'locked TEST native profile may preview');
 assert.ok(!readFileSync(new URL('../assets/appearance.js',import.meta.url),'utf8').match(/fetch\s*\(|XMLHttpRequest/),'appearance never calls 1C');
 console.log('Appearance: inclusive holiday dates in UTC+05, year limit, device preferences, system/light/dark and off switch OK.');
