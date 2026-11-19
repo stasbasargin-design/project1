@@ -1,0 +1,56 @@
+{
+  "total": 12,
+  "passed": 12,
+  "failed": 0,
+  "pageErrors": [],
+  "tests": [
+    {
+      "test": "System defect event creates a real group task in the training desktop",
+      "passed": true
+    },
+    {
+      "test": "Group task requires confirmation and changes responsible on acceptance",
+      "passed": true
+    },
+    {
+      "test": "Task subject opens the system-generated quote with training defect data",
+      "passed": true
+    },
+    {
+      "test": "Quote status transition closes preparation and creates one agreement task",
+      "passed": true
+    },
+    {
+      "test": "Repeat defect does not generate duplicate quote or duplicate open review task",
+      "passed": true
+    },
+    {
+      "test": "Pricing creates OZCH task, acceptance and completion returns quote to master",
+      "passed": true
+    },
+    {
+      "test": "Appointment reschedule generates a group task which can be accepted",
+      "passed": true
+    },
+    {
+      "test": "Cancelled event creates real training follow-up CRM task",
+      "passed": true
+    },
+    {
+      "test": "Manually saved CRM task appears on desktop and is not only a success toast",
+      "passed": true
+    },
+    {
+      "test": "Agreement task cannot finish until quote has factual final status",
+      "passed": true
+    },
+    {
+      "test": "Confirmed visit does not trigger follow-up task and blank visit cannot be replied to",
+      "passed": true
+    },
+    {
+      "test": "Manual quote never triggers automatic-defect negotiation task",
+      "passed": true
+    }
+  ]
+}
