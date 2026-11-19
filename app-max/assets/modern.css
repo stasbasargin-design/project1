@@ -19,7 +19,7 @@ body::after{display:none}.brand-rail{width:3px;background:#ba2925}
 .grid button{background:#f1f2f4;color:#343d4b;border:1px solid #e9ebef}.primary{background:#b92824;color:#fff;box-shadow:0 4px 9px #b928241c;border:1px solid #b92824}.primary:hover:not(:disabled){background:#a7211e}.secondary{box-shadow:none}.question>button{border:1px solid var(--line);background:#fff;color:var(--blue)}
 button:active:not(:disabled){transform:translateY(1px)}button:disabled{cursor:not-allowed;opacity:.45}.grid{gap:9px}
 input,textarea,select{font-size:1rem;min-height:48px;border-radius:12px;background:#fafbfc;border:1px solid #dfe3e8;padding:12px;color:var(--text);box-shadow:inset 0 1px 2px #20263203;margin-top:6px;margin-bottom:12px}
-input:focus,textarea:focus,select:focus{background:#fff;border-color:var(--focus);outline:3px solid #ba292512}label{font-size:0.875rem;font-weight:650}.error-text{font-size:0.8125rem}textarea{min-height:104px}
+input:focus,textarea:focus,select:focus{background:var(--card);border-color:var(--focus);outline:3px solid #ba292512}label{font-size:0.875rem;font-weight:650}.error-text{font-size:0.8125rem}textarea{min-height:104px}
 button:focus-visible,a:focus-visible{outline:3px solid #b9282470;outline-offset:3px}
 .order{padding:15px;border-radius:16px;box-shadow:none}.order.active{border-color:#d9807b;background:#fff8f7;box-shadow:inset 3px 0 #b92824}.order b{font-weight:700}.order .tiny{margin-top:7px}
 .badge{font-size:0.75rem;line-height:1.4;font-weight:650;padding:5px 9px;border-radius:8px;background:#f0f1f3;color:#596171;white-space:normal}.badge.warn{background:#fff4dc;color:#8a5b0a}.badge.ok{background:#eaf6ef}.badge.bad{background:#fcebea}

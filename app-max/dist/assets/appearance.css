@@ -61,7 +61,7 @@ button.is-pending,button[aria-busy=true]{cursor:progress;opacity:.85}
 .settings-page details{font-size:.8125rem;margin-top:16px}.settings-page details p{overflow-wrap:anywhere}
 .settings-page summary{padding:13px;min-height:44px;color:var(--text);font-weight:600}.settings-detail-body{padding:0 14px 14px}.settings-detail-body .secondary{margin:7px 0}
 /* Familiar chat: existing layout and scroll owners stay unchanged. */
-.messenger,.msg-sidebar,.msg-conversation-head,.msg-compose,.msg-emoji-picker,.msg-reaction-picker{background:var(--card);color:var(--text);border-color:var(--line)}
+.messenger,.msg-sidebar,.msg-conversation-head,.msg-compose,.msg-reaction-picker{background:var(--card);color:var(--text);border-color:var(--line)}
 .messenger button{color:var(--text)}.msg-sidebar{border-color:var(--line)}
 .msg-conversation,.msg-history{background:var(--bg)}
 .msg-order-context{display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--card);color:var(--muted);font-size:.8125rem;overflow-wrap:anywhere}

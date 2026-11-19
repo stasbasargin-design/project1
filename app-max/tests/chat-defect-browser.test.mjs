@@ -131,8 +131,23 @@ try{
     await gesture('.msg-bubble[data-message-ref="message-54"]','swipe');
     if(source==='staff'){assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.includes("Synthetic history line 54")'),true,'internal swipe selects quote');await click('[data-action="msg-reply-cancel"]');}
     else{assert.equal(await evaluate('document.querySelector(".msg-reply-draft").textContent.trim()'),'');assert.equal(await evaluate('Boolean(document.querySelector(".message-swiping"))'),false);await menu('message-54');assert.equal(await evaluate('Boolean(document.querySelector("[data-message-choice=reply],[data-message-choice=reaction]"))'),false,'client menu has no excluded actions');await screenshot('client-forward-menu');await click('[data-message-choice="cancel"]');}
-    await draft('АБВ');await evaluate('document.getElementById("msgDraft").setSelectionRange(1,2)');await click('[data-action="msg-emoji"]');await click('[data-action="msg-insert-emoji"][data-emoji="😂"]');
-    assert.equal(await evaluate('document.getElementById("msgDraft").value'),'А😂В','emoji replaces the selected range');
+    const controls=await evaluate("Array.from(document.querySelectorAll('.msg-compose > *'), el=>el.dataset.action || el.id)");
+    assert.deepEqual(controls,source==='clients'?['msg-attach','msg-poll','msgDraft','msg-send']:['msg-attach','msgDraft','msg-send']);
+    for(const width of [320,393]){
+      await send('Emulation.setDeviceMetricsOverride',{width,height:852,deviceScaleFactor:1,mobile:true});
+      await settle();
+      const fits=await evaluate(`(()=>{
+        const draft=document.getElementById('msgDraft'), box=draft.getBoundingClientRect();
+        const gap=parseFloat(getComputedStyle(draft.parentElement).columnGap);
+        const left=draft.previousElementSibling.getBoundingClientRect().right;
+        const right=draft.nextElementSibling.getBoundingClientRect().left;
+        return box.width>0 && Math.abs(box.left-left-gap)<1 && Math.abs(right-box.right-gap)<1;
+      })()`);
+      assert.ok(fits,source+' composer must fill the space between its buttons at '+width+'px');
+    }
+    await draft('АБВ');await evaluate('{const field=document.getElementById("msgDraft");field.focus();field.setSelectionRange(1,2)}');
+    await send('Input.insertText',{text:'😂'});
+    assert.equal(await evaluate('document.getElementById("msgDraft").value'),'А😂В','keyboard emoji replaces the selected range');
     const initial=await draft('');await evaluate('window.__draftNode=document.getElementById("msgDraft");document.querySelector(".msg-history").scrollTop=120;window.__historyTop=document.querySelector(".msg-history").scrollTop');
     const expanded=await draft('Первая строка\nВторая строка\nТретья строка');assert.ok(expanded>initial+20,source+' multiline growth');
     assert.equal(await evaluate('__draftNode===document.getElementById("msgDraft")'),true);
@@ -196,10 +211,30 @@ try{
   assert.equal(calls.filter(x=>x.path.endsWith('/clients/messages/react')).length,0);assert.ok(calls.filter(x=>x.path.includes('/clients/')&&/\/(files|messages)\/send$/.test(x.path)).every(x=>!x.body.replyToMessageRef));
   // Each role opens an existing document. Media is an independent top layer,
   // never a replacement of the defect sheet or its unsent draft.
+  function luminance(rgb){
+    const channels=rgb.match(/\d+/g).slice(0,3).map(Number).map(value=>{
+      const v=value/255;
+      return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;
+    });
+    return channels[0]*0.2126+channels[1]*0.7152+channels[2]*0.0722;
+  }
   for(const role of ['mp','executor','tech']){
     await click('[data-view="'+role+'"]');await wait('document.querySelector("[data-action=open-defect-chat]")');await click('[data-action="open-defect-chat"]');await wait('document.querySelector(".defect-history .entry")');
     assert.equal(await evaluate('Boolean(document.querySelector("[data-action=select-defect-forward]"))'),role==='mp');
     assert.equal(await evaluate('Boolean(document.querySelector("[data-action=verify-defect-entry]"))'),role==='tech');
+    for(const theme of ['dark','light']){
+      await evaluate(`ITUS_APPEARANCE.setTheme(${JSON.stringify(theme)});document.getElementById('defectText').focus()`);
+      await send('Input.insertText',{text:'Дефект'});
+      const field=await evaluate(`(()=>{
+        const el=document.getElementById('defectText'),style=getComputedStyle(el);
+        return {focused:el===document.activeElement,value:el.value,ink:style.color,paper:style.backgroundColor};
+      })()`);
+      assert.ok(field.focused && field.value.endsWith('Дефект'));
+      const ink=luminance(field.ink),paper=luminance(field.paper);
+      assert.ok((Math.max(ink,paper)+0.05)/(Math.min(ink,paper)+0.05)>=4.5,
+        role+' '+theme+' defect text contrast: '+field.ink+' on '+field.paper);
+      await evaluate("document.getElementById('defectText').blur()");
+    }
     await evaluate('window.__historyNode=document.querySelector(".defect-history");document.getElementById("defectText").value="Unsent defect draft";document.getElementById("sheetBody").scrollTop=140;window.__sheetTop=document.getElementById("sheetBody").scrollTop');
     const before=calls.filter(x=>x.path.endsWith('/defects/start')).length;
     for(const index of [1,2]){
