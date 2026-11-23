@@ -526,7 +526,15 @@
           {
             "packageRef": "PACKAGE_GUID",
             "packageNumber": "УРВ-0007",
-            "status": "Не стартовал | В работе | Перерыв"
+              "status": "Не стартовал | В работе | Перерыв",
+              "works": [
+                {"workRef":"ORDER_WORK_ROW_GUID","name":"Замена передних тормозных колодок","normHours":2},
+                {"workRef":"SECOND_WORK_ROW_GUID","name":"Проверка тормозной системы","normHours":0.5}
+              ],
+              "participants": [
+                {"employeeRef":"EMPLOYEE_A_GUID","name":"Антон Орлов","percent":60},
+                {"employeeRef":"EMPLOYEE_B_GUID","name":"Илья Соколов","percent":40}
+              ]
           }
         ]
       },

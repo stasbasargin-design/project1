@@ -25,7 +25,7 @@
     maxDocumentBytes: Number(window.ITUS_CONFIG?.MAX_DOCUMENT_UPLOAD_BYTES ?? 0),
     enforceTabs: window.ITUS_CONFIG?.ENFORCE_SERVER_TABS === true,
     pingFallback: window.ITUS_CONFIG?.PING_FALLBACK_TO_AUTH !== false,
-    version: 'i-max-2.9.9'
+    version: 'i-max-2.9.10'
   };
   let buildCommit = '';
   async function loadBuildInfo() {
@@ -951,7 +951,7 @@
       : `<div class="stat stat-information"><span class="stat-label">Дефектовка</span><b>Не создана</b><span class="stat-note">История появится после создания</span></div>`;
     const packageLabel = order.packageNumber ? `${order.packageNumber} · ${order.packageStatus}` : order.packageStatus;
     const mileage = order.mileage ? ` · Пробег: ${esc(order.mileage)} км` : '';
-    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat stat-information"><span class="stat-label">Пост</span><b>${esc(order.post)}</b><span class="stat-note">Сведения из 1С</span></div><div class="stat stat-information"><span class="stat-label">Исполнитель</span><b>${esc(order.executor)}</b><span class="stat-note">Сведения из 1С</span></div><button class="stat stat-button" data-action="package-select" title="Выбрать незакрытый пакет работ"><span class="stat-label">Пакет УРВ</span><b>${esc(packageLabel)}</b><span class="stat-action-label">Выбрать пакет <span aria-hidden="true">›</span></span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
+    return `<div class="card"><div class="row"><h2>ЗН ${esc(order.num)}</h2><span class="badge ${statusClass(order.status)}">${esc(order.status)}</span></div><p><b>${esc(order.car)}</b> · ${esc(order.plate)}${mileage}</p><p class="tiny">${esc(order.client)}${order.contact ? ` / ${esc(order.contact)}` : ''}</p>${order.reason ? `<p class="reason"><b>Причина обращения:</b><br>${esc(order.reason)}</p>` : ''}<div class="summary"><div class="stat stat-information"><span class="stat-label">Пост</span><b>${esc(order.post)}</b><span class="stat-note">Сведения из 1С</span></div><div class="stat stat-information"><span class="stat-label">Исполнитель</span><b>${esc(order.executor)}</b><span class="stat-note">Сведения из 1С</span></div><button class="stat stat-button" data-action="package-select" title="Посмотреть открытые пакеты и их состав"><span class="stat-label">Пакет УРВ</span><b>${esc(packageLabel)}</b><span class="stat-action-label">Смотреть пакеты <span aria-hidden="true">›</span></span></button>${defectCell}</div>${queuedOperationsStatus(order)}</div>`;
   }
 
   function renderOrdersView() {
@@ -1349,7 +1349,8 @@
 
   function normalizeWorktimePackage(item) {
     const status = item?.status?.title || item?.status?.name || item?.statusTitle || (typeof item?.status === 'string' ? item.status : '') || item?.status?.code || 'Не стартовал';
-    return { packageRef:String(item?.packageRef || item?.ref || item?.id || ''), number:String(item?.packageNumber || item?.number || item?.name || ''), status:String(status) };
+    return { packageRef:String(item?.packageRef || item?.ref || item?.id || ''), number:String(item?.packageNumber || item?.number || item?.name || ''), status:String(status),
+      works:Array.isArray(item?.works) ? item.works : null, participants:Array.isArray(item?.participants) ? item.participants : null };
   }
 
   function availablePackages(order, remote = []) {
@@ -1358,8 +1359,33 @@
       .filter((item, index, all) => item.packageRef && !/закрыт|closed/i.test(item.status) && all.findIndex(x => x.packageRef === item.packageRef) === index);
   }
 
-  function renderPackageChoices(packages, warning = '') {
-    $('sheetBody').innerHTML = `${warning ? `<p class="tiny">${esc(warning)}</p>` : ''}${packages.length ? `<div class="grid">${packages.map(item => `<button data-action="package-use" data-ref="${escAttr(item.packageRef)}" data-number="${escAttr(item.number)}" data-status="${escAttr(item.status)}"><b>${esc(item.number || 'Пакет УРВ')}</b><br><span class="tiny">${esc(item.status)}</span></button>`).join('')}</div>` : '<div class="empty">У этого ЗН нет незакрытых пакетов работ.</div>'}`;
+  const packageNumberFormat = new Intl.NumberFormat('ru-RU', {maximumFractionDigits:2});
+  function packageDetails(item) {
+    const {works, participants} = item;
+    const validHours = hours => Number.isFinite(hours) && hours >= 0;
+    const hoursText = hours => validHours(hours) ? packageNumberFormat.format(hours) + ' н·ч' : 'Не указано';
+    const total = works && works.every(work => validHours(work?.normHours))
+      ? works.reduce((sum, work) => sum + work.normHours, 0) : null;
+    const workList = works?.length ? `<ul class="urv-works">${works.map(work => `<li><span>${esc(work?.name || 'Название не указано')}</span><span>${hoursText(work?.normHours)}</span></li>`).join('')}</ul>`
+      : `<p class="tiny">${works ? 'В пакете нет работ.' : 'Состав пока не получен из 1С.'}</p>`;
+    const rows = participants?.map(person => {
+      const share = person?.percent;
+      const validShare = Number.isFinite(share) && share >= 0 && share <= 100;
+      return `<tr><th scope="row">${esc(person?.name || 'Имя не указано')}</th><td>${validShare ? packageNumberFormat.format(share) + ' %' : '—'}</td><td>${validShare && validHours(total) ? packageNumberFormat.format(total * share / 100) : '—'}</td></tr>`;
+    }).join('');
+    const team = rows ? `<table class="urv-team"><caption>Исполнители пакета</caption><thead><tr><th scope="col">Сотрудник</th><th scope="col">Доля</th><th scope="col">Нормо-часы</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="tiny">${participants ? 'Исполнители пакета не назначены.' : 'Сведения об исполнителях пока не получены из 1С.'}</p>`;
+    return `<details class="urv-details"><summary>Состав пакета${works ? ` · ${works.length}` : ''}</summary>${workList}<p class="urv-total"><b>Норма пакета</b><b>${hoursText(total)}</b></p>${team}</details>`;
+  }
+
+  function renderPackageChoices(packages, selectedRef, warning = '') {
+    const cards = packages.map(item => {
+      const selected = item.packageRef === selectedRef;
+      const label = esc(item.number || 'Пакет УРВ');
+      const choose = selected ? '' : `<button data-action="package-use" data-ref="${escAttr(item.packageRef)}" data-number="${escAttr(item.number)}" data-status="${escAttr(item.status)}">Выбрать пакет${item.number ? ' ' + label : ''}</button>`;
+      return `<article class="urv-package"><header><b>${label}</b>${selected ? '<span class="badge">✓ Выбран</span>' : ''}</header><div class="tiny">${esc(item.status)}</div>${packageDetails(item)}${choose}</article>`;
+    }).join('');
+    $('sheetBody').innerHTML = (warning ? `<p class="tiny">${esc(warning)}</p>` : '') + (cards || '<div class="empty">У этого ЗН нет незакрытых пакетов работ.</div>');
   }
 
   async function selectPackage() {
@@ -1369,12 +1395,12 @@
     try {
       const response = await call1C('/worktime/packages/list', orderPayloadFor(order,{onlyOpen:true}));
       if(!sheetCurrent(context))return;
-      const remote = API.extractItems(response, ['packages','worktimePackages']).map(normalizeWorktimePackage);
-      renderPackageChoices(availablePackages(order, remote));
+      const remote = API.extractItems(response, ['packages','worktimePackages']);
+      renderPackageChoices(availablePackages(order, remote), order.packageRef);
     } catch (error) {
       if(!sheetCurrent(context))return;
       const embedded = availablePackages(order);
-      if (embedded.length) renderPackageChoices(embedded, 'Показаны пакеты из карточки ЗН; обновить полный список из 1С не удалось.');
+      if (embedded.length) renderPackageChoices(embedded, order.packageRef, 'Показаны пакеты из карточки ЗН. Обновить полный список из 1С не удалось.');
       else $('sheetBody').innerHTML = `<div class="empty">${esc(error.message)}</div><button data-action="package-select">Повторить</button>`;
     }
   }
