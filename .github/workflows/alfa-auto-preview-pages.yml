@@ -1,0 +1,44 @@
+name: Alfa-Auto trainer temporary browser preview
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: alfa-auto-trainer-browser-preview
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Fetch current restore branch
+        uses: actions/checkout@v4
+      - name: Build standalone training preview (no internal videos)
+        run: |
+          set -euo pipefail
+          mkdir -p site/alfa-auto-trainer-preview
+          cp alfa-auto-trainer-original/{index.html,styles.css,config.js,integration.js,exam-history.js,app.js,portal.js} site/alfa-auto-trainer-preview/
+          tar -xzvf alfa-auto-trainer-original/preview-assets.tar.gz -C site/alfa-auto-trainer-preview >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          f=Path('site/alfa-auto-trainer-preview/index.html')
+          text=f.read_text(encoding='utf-8')
+          text=text.replace('<head>', '<head><meta name="robots" content="noindex,nofollow">',1)
+          text=text.replace('<body>', '<body><div style="position:fixed;right:12px;bottom:12px;z-index:99999;background:#fff3cd;color:#614c11;border:1px solid #d9bb68;padding:7px 10px;border-radius:7px;font:12px Arial,sans-serif;max-width:380px;box-shadow:0 2px 9px #0002">ТЕСТОВАЯ СРЕДА. Работа локально, без 1С. Видеозаписи не публикуются в открытом доступе.</div>',1)
+          f.write_text(text,encoding='utf-8')
+          PY
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Upload static preview
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy preview
+        id: deployment
+        uses: actions/deploy-pages@v4
