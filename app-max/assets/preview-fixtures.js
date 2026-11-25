@@ -13,7 +13,11 @@
   let clientUnread = 1;
   const staffGroups = [{groupRef:'review-group',title:'Передача смены',subtitle:'Все внутренние пользователи',unreadCount:2,isCommon:true}];
   const staffMessages = new Map([['review-group',[{id:'shift-message',authorName:'Сотрудник смены',text:'Информация по передаче смены.',createdAt:'2026-09-24T09:10:00Z'}]]]);
-  let packageData = {packageRef:'review-existing-package',packageNumber:'УРВ-0007',status:'Не стартовал'};
+  let packageData = {
+    packageRef:'review-existing-package', packageNumber:'УРВ-0007', status:'Не стартовал',
+    works:[{workRef:'review-brakes',name:'Замена передних тормозных колодок',normHours:2},{workRef:'review-check',name:'Проверка тормозной системы',normHours:0.5}],
+    participants:[{employeeRef:'review-person-a',name:'Антон Орлов',percent:60},{employeeRef:'review-person-b',name:'Илья Соколов',percent:40}]
+  };
   const created = new Map();
   const defectDocumentRef = 'review-defect-sheet';
   const defectEntries = [{entryRef:'review-defect-1',type:'text',text:'При осмотре обнаружена царапина на правом крыле.',author:'Мастер-приёмщик'}];

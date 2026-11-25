@@ -16,6 +16,7 @@ const elements=new Map(), calls=[];
 let selectedEmployees=['self','colleague'];
 let pollData={unreadMessagesCount:0}, resolvePoll=null;
 let percent=40, rejectValidation=false, missingPackage=false, failCreate=false;
+let packageList = [{packageRef:'open-package',packageNumber:'УРВ-7',status:'Не стартовал'},{packageRef:'closed-package',packageNumber:'УРВ-6',status:'Закрыт'}];
 function element(id){
   if(!elements.has(id)) elements.set(id,{innerHTML:'',textContent:'',value:'',dataset:{},style:{},classList:{add(){},remove(){},toggle(){},contains(){return true;}},addEventListener(){},setAttribute(){},
     querySelector(){return {disabled:false};},querySelectorAll(selector){
@@ -33,7 +34,7 @@ const c=vm.createContext({console,URL,URLSearchParams,AbortController,crypto:web
     const body=JSON.parse(options.body);calls.push({url,body});let data={};
     if(url.endsWith('/notifications/poll')) data=resolvePoll === true ? await new Promise(resolve=>{resolvePoll=resolve;}) : pollData;
     if(url.endsWith('/orders/works'))data={workshopRef:'shop',works:[{workRef:'row',name:'Работа'},{workRef:'blocked',name:'Активный пакет',hasActivePackage:true},{workRef:'blocked2',name:'Ссылка активного пакета',activePackageRef:'active'}]};
-    if(url.endsWith('/packages/list'))data={packages:[{packageRef:'open-package',packageNumber:'УРВ-7',status:'Не стартовал'},{packageRef:'closed-package',packageNumber:'УРВ-6',status:'Закрыт'}]};
+    if(url.endsWith('/packages/list'))data={packages:packageList};
     if(url.endsWith('/executors/list'))data={executors:[{employeeRef:'self',name:'Я'},{employeeRef:'colleague',name:'Коллега'}]};
     if(url.endsWith('/worktime/production'))data={production:{grades:[{grade:'3 разряд',closedHours:2.5},{grade:'4 разряд',closedHours:1.25}]}};
     if(url.endsWith('/participation/validate'))data={valid:!rejectValidation};
@@ -71,6 +72,30 @@ assert.ok(creates.every(x=>!('packageRef' in x.body)));
 assert.deepEqual(creates.at(-1).body.participants,participants);
 assert.equal(creates.at(-1).body.userId,'123');assert.ok(creates.at(-1).body.max);
 await app.selectPackage();assert.match(element('sheetBody').innerHTML,/УРВ-7/);assert.doesNotMatch(element('sheetBody').innerHTML,/УРВ-6/);
+assert.match(element('sheetBody').innerHTML,/Состав пока не получен из 1С/);
+const detailsPackage = packageList[0];
+detailsPackage.works=[{name:'<Тормоза>',normHours:2},{name:'Проверка',normHours:0.5}];
+detailsPackage.participants=[{employeeRef:'a',name:'А',percent:60},{employeeRef:'b',name:'Б',percent:40}];
+const selectedBefore = app.state.orders[0].packageRef;
+const callsBefore = calls.length;
+await app.selectPackage();
+const detailsHTML = element('sheetBody').innerHTML;
+assert.match(detailsHTML,/&lt;Тормоза&gt;/);
+assert.match(detailsHTML,/Норма пакета<\/b><b>2,5 н·ч/);
+assert.match(detailsHTML,/60 %<\/td><td>1,5/);
+assert.match(detailsHTML,/40 %<\/td><td>1</);
+assert.equal((detailsHTML.match(/Исполнители пакета/g)||[]).length,1);
+assert.doesNotMatch(detailsHTML.split('</ul>')[0],/60 %|40 %/);
+assert.equal(app.state.orders[0].packageRef,selectedBefore);
+assert.deepEqual(calls.slice(callsBefore).map(c=>c.url),['/api/1c/worktime/packages/list']);
+detailsPackage.works[0].normHours=null;
+await app.selectPackage();
+assert.match(element('sheetBody').innerHTML,/Норма пакета<\/b><b>Не указано/);
+assert.match(element('sheetBody').innerHTML,/60 %<\/td><td>—/);
+detailsPackage.works=[];detailsPackage.participants=[];
+await app.selectPackage();
+assert.match(element('sheetBody').innerHTML,/В пакете нет работ/);
+assert.match(element('sheetBody').innerHTML,/Исполнители пакета не назначены/);
 app.usePackage('open-package','УРВ-7','Не стартовал');assert.equal(app.state.orders[0].packageRef,'open-package');
 await app.packageAction('start');assert.equal(calls.at(-1).body.packageRef,'open-package');
 await app.showProduction();

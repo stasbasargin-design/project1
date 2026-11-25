@@ -31,6 +31,23 @@ input,textarea,select{width:100%;margin:4px 0 8px;padding:12px 13px;border:1px s
 @media(max-width:390px){.phone{padding-right:11px;padding-left:11px}.logo{flex-basis:49px;width:49px;height:49px}.product h1{font-size:1.125rem}.product p{font-size:0.5625rem}.user-panel{min-width:112px;max-width:136px;padding:7px}.avatar{display:none}.tabs{top:65px}.tab{flex-basis:57px;width:57px;height:51px}.grid.two,.grid.three{grid-template-columns:1fr}.quick-actions{grid-template-columns:repeat(3,1fr)}.summary{grid-template-columns:1fr}.message.mine{margin-left:22px}.message.theirs{margin-right:22px}}
 
 /* Responsive layout additions. These rules only change presentation. */
+.urv-package{margin:0 0 12px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text)}
+.urv-package header,.urv-works li,.urv-total{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.urv-package header>b,.urv-works li>span:first-child,.urv-team th{overflow-wrap:anywhere;min-width:0}
+.urv-package summary{padding:12px 0;cursor:pointer;font-weight:650}
+.urv-package summary:focus-visible{outline:2px solid currentColor;outline-offset:1px}
+.urv-details{margin-top:6px;border-top:1px solid var(--line)}
+.urv-works{list-style:none;padding:0;margin:0}
+.urv-works li,.urv-total{padding:8px 0;border-bottom:1px solid var(--line)}
+.urv-total{margin:0}
+.urv-works li>span:last-child,.urv-total>b:last-child,.urv-team td{white-space:nowrap;font-variant-numeric:tabular-nums}
+.urv-team{width:100%;border-collapse:collapse;color:inherit}
+.urv-team caption{text-align:left;font-weight:650;padding:12px 0 4px}
+.urv-team th,.urv-team td{text-align:right;padding:5px 0 5px 6px}
+.urv-team tr>:first-child{text-align:left;padding-left:0}
+.urv-team thead th{font-size:.75rem;color:var(--muted);border-bottom:1px solid var(--line)}
+.urv-team tbody th{font-weight:500}
+.urv-package>button{margin-top:6px;width:100%}
 .phone,.card,.sheet,.question,.entry,.stat{min-width:0}
 img,video,canvas,svg{max-width:100%}
 .order-qr-video{display:block;width:100%;min-height:240px;max-height:58dvh;border-radius:17px;background:#000;object-fit:cover}.order-qr-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.order-qr-choice{display:block;width:100%;margin-bottom:8px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--text);text-align:left}.order-qr-choice b,.order-qr-choice span{display:block}.order-qr-choice span{margin-top:3px;color:var(--muted);font-size:0.75rem}
